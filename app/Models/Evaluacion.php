@@ -2,16 +2,34 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Evaluacion extends Model
 {
-    protected $table = 'evaluaciones';
-    protected $fillable = ['tipo', 'actividades', 'instrumentos', 'evidencias', 'cronograma_id'];
+    use HasFactory;
 
-    public function cronograma(): BelongsTo
+    protected $table = 'evaluaciones';
+
+    protected $fillable = [
+        'nombre',
+        'parcial',
+        'fecha_examen',
+        'hora_inicio',
+        'duracion_minutos',
+        'mezclar_preguntas',
+        'mezclar_opciones',
+        'estado',
+        'asignatura_id'
+    ];
+
+    public function asignatura()
     {
-        return $this->belongsTo(Cronograma::class);
+        return $this->belongsTo(Asignatura::class);
+    }
+
+    public function examenesGenerados()
+    {
+        return $this->hasMany(ExamenGenerado::class);
     }
 }

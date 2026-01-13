@@ -87,4 +87,13 @@ Route::get('/test-publico', [AsignaturaController::class, 'index']); // RUTA TEM
 
     // Bibliografía (General)
     Route::resource('bibliografias', BibliografiaController::class)->except(['create', 'edit', 'show']);
+
+    // Module 7: Evaluaciones
+    Route::prefix('evaluaciones')->group(function () {
+        Route::get('/', [\App\Http\Controllers\EvaluacionController::class, 'index']); // ?asignatura_id=X
+        Route::post('/', [\App\Http\Controllers\EvaluacionController::class, 'store']); // Create & Generate
+    });
+    
+    // Module 7b: Vista Patrón de Examen
+    Route::get('/examenes-generados/{id}/patron', [\App\Http\Controllers\EvaluacionController::class, 'patron']);
 // });
