@@ -25,10 +25,10 @@ return new class extends Migration
             $table->date('fecha');
             $table->integer('numero_sesion');
             $table->text('observaciones')->nullable();
-            
+
             $table->foreignId('asignatura_id')->constrained('asignaturas')->cascadeOnDelete();
             $table->foreignId('tema_id')->nullable()->constrained('temas')->nullOnDelete();
-            
+
             $table->timestamps();
         });
 
@@ -52,8 +52,8 @@ return new class extends Migration
             $table->timestamps();
         });
 
-        // EVALUACIONES
-        Schema::create('evaluaciones', function (Blueprint $table) {
+        // EVALUACIONES (Nivel Cronograma/Sesion)
+        Schema::create('evaluaciones_cronograma', function (Blueprint $table) {
             $table->id();
             $table->string('tipo')->nullable(); // Diagnostica, Formativa, Sumativa
             $table->text('actividades')->nullable();
@@ -76,7 +76,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('asistencias');
-        Schema::dropIfExists('evaluaciones');
+        Schema::dropIfExists('evaluaciones_cronograma');
         Schema::dropIfExists('estrategias_didacticas');
         Schema::dropIfExists('secuencias_didacticas');
         Schema::dropIfExists('cronogramas');

@@ -15,7 +15,13 @@ return new class extends Migration
         Schema::create('roles', function (Blueprint $table) {
             $table->id();
             $table->string('nombre');
+            $table->string('codigo')->unique(); // SUPER_ADMIN
             $table->string('descripcion')->nullable();
+            $table->string('color')->default('#1976d2');
+            $table->string('icono')->default('badge');
+            $table->text('permisos')->nullable(); // Changed from json to text for SQLite compatibility
+            $table->boolean('activo')->default(true);
+            $table->integer('orden')->default(0);
             $table->timestamps();
         });
 
@@ -24,6 +30,13 @@ return new class extends Migration
             $table->id();
             $table->string('username')->unique()->nullable(); // Para login con user externo si aplica
             $table->string('email')->unique();
+            // Profile Data (Added for Frontend Integration)
+            $table->string('nombre')->nullable();
+            $table->string('apellido')->nullable();
+            $table->string('ci')->nullable();
+            $table->string('telefono')->nullable();
+            $table->string('carrera')->nullable();
+
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->boolean('estado')->default(true);
