@@ -11,8 +11,10 @@ class CarreraSeeder extends Seeder
     public function run()
     {
         // 1. Obtener Sede Cochabamba (CBA) para asignar carreras base
-        $sedeCBA = Sede::where('codigo', 'CBA')->first();
-        if (!$sedeCBA) return;
+        $sedeCBA = Sede::firstOrCreate(
+            ['codigo' => 'CBA'],
+            ['nombre' => 'Cochabamba', 'ciudad' => 'Cochabamba', 'activo' => true]
+        );
 
         // 2. Definir Carreras Base (Simuladas de la API pero con datos ricos)
         $carreras = [

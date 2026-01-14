@@ -11,10 +11,12 @@ use Illuminate\Support\Facades\DB;
 class AsignaturaController extends Controller
 {
     protected $universityService;
+    protected $syncService;
 
-    public function __construct(UniversityService $service)
+    public function __construct(UniversityService $universityService, \App\Services\AsignaturaSyncService $syncService)
     {
-        $this->universityService = $service;
+        $this->universityService = $universityService;
+        $this->syncService = $syncService;
     }
 
     /**
@@ -27,22 +29,49 @@ class AsignaturaController extends Controller
         $branchCode = $request->input('branch_code');
         $careerCode = $request->input('career_code');
 
-        if (!$branchCode && !$careerCode) {
-            // "Hack" para cargar todo lo local si no hay filtros (petición del usuario)
-            $localAsignaturas = Asignatura::with(['carrera.sede'])->limit(20000)->get();
-        } elseif ($branchCode && !$careerCode) {
-            // Filtrar solo por Sede (Local data only)
-            $localAsignaturas = Asignatura::with(['carrera.sede'])
-                ->whereHas('carrera.sede', function ($q) use ($branchCode) {
-                    $q->where('codigo', $branchCode); // Asumiendo que branch_code es el código de la sede (CBA, LPZ...)
-                })
-                ->limit(20000)
-                ->get();
+        if (isset($localAsignaturas)) {
+            // If we already loaded locals (e.g. no filters), ensure we respect eager loading if requested
+            // Note: $localAsignaturas above might not have loaded them if we stick to lines 32/35.
+            // Let's refactor the initial load or lazily load here if needed.
+            // Or better: Modify the query above.
         }
+
+        // REFACTORING QUERY LOGIC TO SUPPORT EAGER LOADING
+        $query = Asignatura::with(['carrera.sede']);
+
+        if ($request->has('include_details') && $request->include_details) {
+            $query->with(['unidades.temas', 'bibliografias']);
+        }
+
+        if ($branchCode && !$careerCode) {
+            $query->whereHas('carrera.sede', function ($q) use ($branchCode) {
+                $q->where('codigo', $branchCode);
+            });
+        }
+
+        // If filtering by career...
+        if ($careerCode) {
+            $query->whereHas('carrera', function ($q) use ($careerCode) {
+                $q->where('codigo', $careerCode);
+            });
+        }
+
+        // Search Filter
+        if ($request->has('search') && $request->search) {
+            $term = $request->search;
+            $query->where(function ($q) use ($term) {
+                $q->where('nombre', 'like', "%{$term}%")
+                    ->orWhere('codigo', 'like', "%{$term}%");
+            });
+        }
+
+        // Limit only if not specific (dashboard needs all? or pagination?)
+        // For stats we might need all, but 20k is safe for now.
+        $localAsignaturas = $query->limit(1000)->get();
 
         if (isset($localAsignaturas)) {
             return response()->json($localAsignaturas->map(function ($a) {
-                return [
+                $base = [
                     'id' => $a->id,
                     'codigo' => $a->codigo,
                     'nombre' => $a->nombre,
@@ -54,6 +83,16 @@ class AsignaturaController extends Controller
                     'sede_nombre' => $a->carrera->sede->nombre ?? \App\Models\Sede::find($a->carrera->sede_id ?? 0)?->nombre ?? 'N/A',
                     'origen' => 'LOCAL_' . ($a->carrera->sede->codigo ?? 'UNKNOWN')
                 ];
+
+                if ($a->relationLoaded('unidades')) {
+                    $base['unidades'] = $a->unidades; // Serializes recursively (temas)
+                }
+                // Or just mapped counts if we wanted lightweight, but frontend uses .length on array
+                if ($a->relationLoaded('bibliografias')) {
+                    $base['bibliografias'] = $a->bibliografias;
+                }
+
+                return $base;
             }));
         }
 
@@ -137,13 +176,26 @@ class AsignaturaController extends Controller
         $branchCode = $request->input('branch_code', 'CBA');
         $careerCode = $request->input('career_code', 'CARELE');
 
-        // 2. Buscar primero en base de datos local
-        $local = Asignatura::where('codigo', $codigo)
-            ->with(['unidades', 'bibliografias', 'docente']) // Eager loading
+        // 2. Buscar primero en base de datos local (por ID o por Código)
+        $local = Asignatura::where('id', $codigo)
+            ->orWhere('codigo', $codigo)
+            ->with(['unidades', 'bibliografias', 'docentes', 'carrera.sede']) // Eager loading
             ->first();
 
         // 3. Si existe localmente, retornamos eso (con alias para el frontend)
         if ($local) {
+            // AUTO-SYNC: Si la asignatura no tiene unidades (está vacía), intentamos poblarla desde la API
+            if ($local->unidades()->count() === 0) {
+                // Determinar códigos correctos desde la relación local si existen
+                $actualBranchCode = $local->carrera->sede->codigo ?? $branchCode;
+                $actualCareerCode = $local->carrera->codigo ?? $careerCode;
+
+                $this->syncService->syncAnalyticalProgram($local, $actualBranchCode, $actualCareerCode);
+
+                // Recargar para mostrar los nuevos datos
+                $local->load(['unidades.temas', 'bibliografias', 'docentes']);
+            }
+
             $response = $local->toArray();
             // Inyectar alias para que el formulario se llene solo
             $response['objetivo_general'] = $local->proposito_general;
@@ -154,8 +206,7 @@ class AsignaturaController extends Controller
             return response()->json($response);
         }
 
-        // 4. Si NO existe localmente, consultamos a la API del University
-        // para obtener el "Programa Analítico" y mostrárselo al usuario (preview).
+        // 4. Si NO existe localmente, consultamos a la API y CREAMOS la asignatura localmente (Sync On Demand)
         try {
             $program = $this->universityService->getAnalyticalProgram($codigo, $branchCode, $careerCode);
 
@@ -163,20 +214,40 @@ class AsignaturaController extends Controller
                 return response()->json(['message' => 'No encontrado en API ni localmente.'], 404);
             }
 
-            // Mapeamos respuesta de la API a una estructura similar a la local
-            return response()->json([
-                'id' => null, // Indica que no está guardado
+            // Crear Asignatura Local
+            $newAsignatura = Asignatura::create([
                 'codigo' => $codigo,
-                'nombre' => $program['identification']['name'] ?? 'Desconocido',
+                'nombre' => $program['title'] ?? $program['identification']['name'] ?? 'Desconocido',
                 'creditos' => $program['identification']['credits'] ?? 0,
-                'semestre' => $program['identification']['semester'] ?? null,
-                'programa_analitico_preview' => $program, // Data cruda del API
-                'origen' => 'API_PREVIEW'
+                'semestre' => $program['identification']['semester'] ?? 1,
+                // Llenar otros campos por defecto si es necesario
             ]);
+
+            // Poblar Carrera (Hack: Asignar a la primera carrera que coincida con el codigo o crear dummy)
+            // Por ahora asumimos que la relación carrera se maneja aparte o se inferirá después.
+            // Ojo: Asignatura requires 'carrera_id'. Necesitamos manejar esto.
+            // Para evitar errores, buscamos la carrera por codigo 'careerCode'
+            $carrera = Carrera::where('codigo', $careerCode)->first();
+            if ($carrera) {
+                $newAsignatura->carrera_id = $carrera->id;
+                $newAsignatura->save();
+            }
+
+            // Sync contenido recursivo
+            $this->syncAnalyticalProgram($newAsignatura, $branchCode, $careerCode, $program);
+
+            return $this->show($request, $codigo); // Llamada recursiva para retornar formato local estandar
+
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Error al consultar API: ' . $e->getMessage()], 503);
+            \Illuminate\Support\Facades\Log::error('Error syncing asignatura: ' . $e->getMessage());
+            return response()->json(['error' => 'Error al sincronizar con API: ' . $e->getMessage()], 503);
         }
     }
+
+    /**
+     * Sincroniza Unidades, Temas y Bibliografía desde la API al modelo Local.
+     */
+    // Método syncAnalyticalProgram eliminado y movido a AsignaturaSyncService
 
     /**
      * Actualizar campos extendidos (Justificación, Metodología, etc).

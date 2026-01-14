@@ -4,18 +4,31 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Asignatura extends Model
 {
     protected $fillable = [
-        'codigo', 'nombre', 'semestre', 'creditos',
-        'area_desempenio', 'tipo_curso', 'modalidad',
-        'carga_horaria_total', 'horas_teoricas', 'horas_practicas',
-        'sesiones_semanales_teoricas', 'sesiones_semanales_practicas',
-        'requisitos', 'justificacion', 'proposito_general', 
-        'metodologia_general', 'sistema_evaluacion',
-        'carrera_id', 'docente_id'
+        'codigo',
+        'nombre',
+        'semestre',
+        'creditos',
+        'area_desempenio',
+        'tipo_curso',
+        'modalidad',
+        'carga_horaria_total',
+        'horas_teoricas',
+        'horas_practicas',
+        'sesiones_semanales_teoricas',
+        'sesiones_semanales_practicas',
+        'requisitos',
+        'justificacion',
+        'proposito_general',
+        'metodologia_general',
+        'sistema_evaluacion',
+        'carrera_id',
+        'docente_id'
     ];
 
     public function carrera(): BelongsTo
@@ -23,9 +36,11 @@ class Asignatura extends Model
         return $this->belongsTo(Carrera::class);
     }
 
-    public function docente(): BelongsTo
+    public function docentes()
     {
-        return $this->belongsTo(Docente::class);
+        return $this->belongsToMany(Docente::class, 'asignatura_docente')
+            ->withPivot(['grupo', 'aula', 'horario', 'cupo', 'estudiantes_inscritos'])
+            ->withTimestamps();
     }
 
     // Estructura

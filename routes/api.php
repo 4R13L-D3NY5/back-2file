@@ -2,13 +2,15 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\AuthController;
 use App\Http\Controllers\AsignaturaController;
-use App\Http\Controllers\CarreraController;
-use App\Http\Controllers\PlanificacionController;
+use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BancoPreguntaController;
-use App\Http\Controllers\PlanificacionSemestralController;
 use App\Http\Controllers\BibliografiaController;
+use App\Http\Controllers\CarreraController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\GrupoController;
+use App\Http\Controllers\PlanificacionController;
+use App\Http\Controllers\PlanificacionSemestralController;
 
 // Public Routes
 Route::post('/login', [AuthController::class, 'login'])->name('login');
@@ -22,12 +24,16 @@ Route::post('/logout', [AuthController::class, 'logout']);
 Route::get('/me', [AuthController::class, 'me']);
 
 // Carreras
-Route::get('/carreras', [CarreraController::class, 'index']);
+Route::apiResource('carreras', CarreraController::class)->only(['index', 'update']);
 
 // Asignaturas
-Route::get('/asignaturas', [AsignaturaController::class, 'index']);
-Route::get('/asignaturas/{codigo}', [AsignaturaController::class, 'show']);
-Route::put('/asignaturas/{id}', [AsignaturaController::class, 'update']);
+Route::apiResource('asignaturas', AsignaturaController::class);
+
+// Grupos
+Route::get('grupos', [GrupoController::class, 'index']);
+
+// Stats
+Route::get('admin/stats', [DashboardController::class, 'index']);
 
 // Planificación (Temas y Subniveles)
 Route::prefix('planificacion')->group(function () {
@@ -98,6 +104,7 @@ Route::prefix('evaluaciones')->group(function () {
 Route::apiResource('roles', \App\Http\Controllers\RolController::class);
 Route::apiResource('usuarios', \App\Http\Controllers\UserController::class);
 Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
+Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
 
 // Module 7b: Vista Patrón de Examen
 Route::get('/examenes-generados/{id}/patron', [\App\Http\Controllers\EvaluacionController::class, 'patron']);

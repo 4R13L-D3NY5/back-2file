@@ -4,19 +4,41 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Docente extends Model
 {
-    protected $fillable = ['nombre_completo', 'celular', 'user_id'];
+    protected $fillable = [
+        'nombre_completo',
+        'celular',
+        'user_id',
+        'email',
+        'foto',
+        'especialidad',
+        'grado_academico',
+        'tipo_dedicacion',
+        'sede_id',
+        'estado'
+    ];
+
+    protected $casts = [
+        'estado' => 'boolean'
+    ];
 
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
     }
 
-    public function asignaturas(): HasMany
+    public function sede(): BelongsTo
     {
-        return $this->hasMany(Asignatura::class);
+        return $this->belongsTo(Sede::class);
+    }
+
+    public function asignaturas(): BelongsToMany
+    {
+        return $this->belongsToMany(Asignatura::class, 'asignatura_docente')
+            ->withPivot('grupo')
+            ->withTimestamps();
     }
 }
