@@ -8,11 +8,32 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Carrera extends Model
 {
-    protected $fillable = ['nombre', 'codigo', 'sede_id', 'facultad', 'sede', 'director_id'];
+    protected $fillable = [
+        'nombre',
+        'codigo',
+        'sede_id',
+        'facultad',
+        'director_id',
+        'area',
+        'mision',
+        'vision',
+        'perfil_profesional',
+        'imagen',
+        'activo'
+    ];
+
+    protected $casts = [
+        'activo' => 'boolean'
+    ];
 
     public function director(): BelongsTo
     {
         return $this->belongsTo(Director::class);
+    }
+
+    public function sede(): BelongsTo
+    {
+        return $this->belongsTo(\App\Models\Sede::class);
     }
 
     public function asignaturas(): HasMany

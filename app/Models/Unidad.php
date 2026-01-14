@@ -8,6 +8,8 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Unidad extends Model
 {
+    protected $table = 'unidades';
+
     protected $fillable = ['numero', 'titulo', 'objetivo', 'contenido_minimo', 'asignatura_id'];
 
     public function asignatura(): BelongsTo

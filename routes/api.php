@@ -96,7 +96,8 @@ Route::prefix('evaluaciones')->group(function () {
 
 // Roles & Users
 Route::apiResource('roles', \App\Http\Controllers\RolController::class);
-Route::apiResource('usuarios', \App\Http\Controllers\UserController::class); // Frontend calls it 'usuarios'
+Route::apiResource('usuarios', \App\Http\Controllers\UserController::class);
+Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
 
 // Module 7b: Vista Patrón de Examen
 Route::get('/examenes-generados/{id}/patron', [\App\Http\Controllers\EvaluacionController::class, 'patron']);

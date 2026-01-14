@@ -23,18 +23,55 @@ class AsignaturaController extends Controller
      */
     public function index(Request $request)
     {
-        // 1. Obtener parámetros (Default: CBA/CARSIS si no se envían)
-        $branchCode = $request->input('branch_code', 'CBA'); 
-        $careerCode = $request->input('career_code', 'CARELE'); 
+        // 1. Obtener parámetros (Si no se envían, retornamos data local)
+        $branchCode = $request->input('branch_code');
+        $careerCode = $request->input('career_code');
 
-        if (!$branchCode || !$careerCode) {
-            return response()->json(['error' => 'Faltan parámetros branch_code o career_code'], 400);
-        } 
-        
+        if (!$branchCode && !$careerCode) {
+            // "Hack" para cargar todo lo local si no hay filtros (petición del usuario)
+            $localAsignaturas = Asignatura::with(['carrera.sede'])->limit(20000)->get();
+        } elseif ($branchCode && !$careerCode) {
+            // Filtrar solo por Sede (Local data only)
+            $localAsignaturas = Asignatura::with(['carrera.sede'])
+                ->whereHas('carrera.sede', function ($q) use ($branchCode) {
+                    $q->where('codigo', $branchCode); // Asumiendo que branch_code es el código de la sede (CBA, LPZ...)
+                })
+                ->limit(20000)
+                ->get();
+        }
+
+        if (isset($localAsignaturas)) {
+            return response()->json($localAsignaturas->map(function ($a) {
+                return [
+                    'id' => $a->id,
+                    'codigo' => $a->codigo,
+                    'nombre' => $a->nombre,
+                    'creditos' => $a->creditos,
+                    'semestre' => $a->semestre,
+                    'horas_teoricas' => $a->horas_teoricas,
+                    'horas_practicas' => $a->horas_practicas,
+                    'carrera_nombre' => $a->carrera->nombre ?? 'N/A',
+                    'sede_nombre' => $a->carrera->sede->nombre ?? \App\Models\Sede::find($a->carrera->sede_id ?? 0)?->nombre ?? 'N/A',
+                    'origen' => 'LOCAL_' . ($a->carrera->sede->codigo ?? 'UNKNOWN')
+                ];
+            }));
+        }
+
         try {
             // Llamada a University Service
-            $externalCourses = $this->universityService->getCourses($branchCode, $careerCode);
-            
+            $externalCoursesRaw = $this->universityService->getCourses($branchCode, $careerCode);
+            // Deduplicar por código (el API retorna grupos múltiples)
+            $externalCourses = collect($externalCoursesRaw)->unique('courseCode')->values()->all();
+
+            // Buscar nombre de la sede si tenemos el código
+            $sedeNameFilter = 'N/A';
+            if ($branchCode) {
+                $sedeObj = \App\Models\Sede::where('codigo', $branchCode)->first();
+                if ($sedeObj) {
+                    $sedeNameFilter = $sedeObj->nombre;
+                }
+            }
+
             // Transformar/Fusionar data en memoria o DB local bajo demanda
             $fusedData = [];
 
@@ -42,14 +79,14 @@ class AsignaturaController extends Controller
                 // Mapeo seguro de llaves (API vs Local)
                 $code = $external['courseCode'] ?? $external['code'] ?? null;
                 $name = $external['courseName'] ?? $external['name'] ?? 'Sin Nombre';
-                
+
                 if (!$code) continue; // Skip bad data
 
                 // Buscamos si ya tenemos una "copia" local extendida
                 $local = Asignatura::where('codigo', $code)->first();
-                
+
                 if (!$local) {
-                    // Si no existe, podemos retornarlo tal cual del API o crearlo al vuelo. 
+                    // Si no existe, podemos retornarlo tal cual del API o crearlo al vuelo.
                     // Para este MVP, retornamos la estructura mixta.
                     $fusedData[] = [
                         'id' => null, // No persistido aún
@@ -57,7 +94,11 @@ class AsignaturaController extends Controller
                         'nombre' => $name,
                         'creditos' => $external['credits'] ?? 0,
                         'semestre' => $external['semester'] ?? 0,
-                        'origen' => 'API_ONLY'
+                        'horas_teoricas' => $external['theoryHours'] ?? 0,
+                        'horas_practicas' => $external['practiceHours'] ?? 0,
+                        'origen' => 'API_ONLY',
+                        'carrera_nombre' => 'API (No guardado)',
+                        'sede_nombre' => $sedeNameFilter != 'N/A' ? $sedeNameFilter : 'API'
                     ];
                 } else {
                     $fusedData[] = [
@@ -66,7 +107,11 @@ class AsignaturaController extends Controller
                         'nombre' => $local->nombre, // O el del API si queremos frescura
                         'creditos' => $local->creditos,
                         'semestre' => $local->semestre,
-                        
+                        'horas_teoricas' => $local->horas_teoricas,
+                        'horas_practicas' => $local->horas_practicas,
+                        'carrera_nombre' => $local->carrera->nombre ?? 'N/A',
+                        'sede_nombre' => $local->carrera->sede->nombre ?? $sedeNameFilter, // Fallback al filtro
+
                         // Datos Locales Extendidos
                         'justificacion' => $local->justificacion ? 'Cargado' : null,
                         'avance_unidad' => $local->unidades()->count(),
@@ -74,10 +119,10 @@ class AsignaturaController extends Controller
                     ];
                 }
             }
-            
-            return response()->json($fusedData);
 
+            return response()->json($fusedData);
         } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Error fetching asignaturas: ' . $e->getMessage());
             return response()->json(['error' => $e->getMessage()], 503);
         }
     }
@@ -105,15 +150,15 @@ class AsignaturaController extends Controller
             $response['saberes_previos'] = $local->requisitos;
             $response['metodologia_ensenanza'] = $local->metodologia_general;
             $response['criterios_evaluacion'] = $local->sistema_evaluacion;
-            
+
             return response()->json($response);
         }
 
-        // 4. Si NO existe localmente, consultamos a la API del University 
+        // 4. Si NO existe localmente, consultamos a la API del University
         // para obtener el "Programa Analítico" y mostrárselo al usuario (preview).
         try {
             $program = $this->universityService->getAnalyticalProgram($codigo, $branchCode, $careerCode);
-            
+
             if (!$program) {
                 return response()->json(['message' => 'No encontrado en API ni localmente.'], 404);
             }
@@ -128,23 +173,28 @@ class AsignaturaController extends Controller
                 'programa_analitico_preview' => $program, // Data cruda del API
                 'origen' => 'API_PREVIEW'
             ]);
-
         } catch (\Exception $e) {
             return response()->json(['error' => 'Error al consultar API: ' . $e->getMessage()], 503);
         }
     }
-    
+
     /**
      * Actualizar campos extendidos (Justificación, Metodología, etc).
      */
     public function update(Request $request, $id)
     {
         $local = Asignatura::findOrFail($id);
-        
+
         // Frontend -> DB Mapping
         $data = $request->only([
-            'sigla', 'descripcion', 'creditos', 'semestre', 'nombre',
-            'horas_teoricas', 'horas_practicas', 'horas_laboratorio',
+            'sigla',
+            'descripcion',
+            'creditos',
+            'semestre',
+            'nombre',
+            'horas_teoricas',
+            'horas_practicas',
+            'horas_laboratorio',
             'contenidos_minimos', // Frontend key inconsistent? checking vue... formDatos.contenido_minimo
             'contenido_minimo'
         ]);
@@ -155,7 +205,7 @@ class AsignaturaController extends Controller
         if ($request->has('metodologia_ensenanza')) $local->metodologia_general = $request->metodologia_ensenanza;
         if ($request->has('criterios_evaluacion')) $local->sistema_evaluacion = $request->criterios_evaluacion;
         if ($request->has('contenido_minimo')) $local->contenido_minimo = $request->contenido_minimo; // Direct but explicit
-        
+
         $local->fill($data); // Fill the rest
         $local->save();
 
