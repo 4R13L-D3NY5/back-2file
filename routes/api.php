@@ -117,4 +117,16 @@ Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
 
 // Module 7b: Vista Patrón de Examen
 Route::get('/examenes-generados/{id}/patron', [\App\Http\Controllers\EvaluacionController::class, 'patron']);
+
+// Rol de Exámenes (Director de Carrera)
+Route::prefix('rol-examenes')->group(function () {
+    Route::get('/', [\App\Http\Controllers\RolExamenController::class, 'index']);
+    Route::post('/', [\App\Http\Controllers\RolExamenController::class, 'store']);
+    Route::post('/upload', [\App\Http\Controllers\RolExamenController::class, 'upload']);
+    Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
+    Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
+    Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
+    Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
+});
 // });
+
