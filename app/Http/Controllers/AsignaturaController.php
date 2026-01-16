@@ -179,7 +179,7 @@ class AsignaturaController extends Controller
         // 2. Buscar primero en base de datos local (por ID o por Código)
         $local = Asignatura::where('id', $codigo)
             ->orWhere('codigo', $codigo)
-            ->with(['unidades', 'bibliografias', 'docentes', 'carrera.sede']) // Eager loading
+            ->with(['unidades.temas', 'bibliografias', 'docentes', 'carrera.sede']) // Eager loading with temas
             ->first();
 
         // 3. Si existe localmente, retornamos eso (con alias para el frontend)
@@ -234,7 +234,7 @@ class AsignaturaController extends Controller
             }
 
             // Sync contenido recursivo
-            $this->syncAnalyticalProgram($newAsignatura, $branchCode, $careerCode, $program);
+            $this->syncService->syncAnalyticalProgram($newAsignatura, $branchCode, $careerCode, true, $program->toArray());
 
             return $this->show($request, $codigo); // Llamada recursiva para retornar formato local estandar
 
@@ -267,7 +267,8 @@ class AsignaturaController extends Controller
             'horas_practicas',
             'horas_laboratorio',
             'contenidos_minimos', // Frontend key inconsistent? checking vue... formDatos.contenido_minimo
-            'contenido_minimo'
+            'contenido_minimo',
+            'activa'
         ]);
 
         // Mapeo manual de llaves inconsistentes
@@ -280,6 +281,44 @@ class AsignaturaController extends Controller
         $local->fill($data); // Fill the rest
         $local->save();
 
+        // Handle Carrera change if provided
+        if ($request->has('carrera_id') && $request->carrera_id) {
+            $local->carrera_id = $request->carrera_id;
+            $local->save();
+        }
+
         return response()->json($local);
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'codigo' => 'required|unique:asignaturas,codigo',
+            'nombre' => 'required',
+            'carrera_id' => 'required|exists:carreras,id',
+            'semestre' => 'required|integer'
+        ]);
+
+        $asignatura = Asignatura::create($request->all());
+        return response()->json($asignatura, 201);
+    }
+
+    public function destroy($id)
+    {
+        $asignatura = Asignatura::findOrFail($id);
+        $asignatura->delete();
+        return response()->json(['message' => 'Asignatura eliminada correctamente']);
+    }
+
+    public function assignDocentes(Request $request, $id)
+    {
+        $asignatura = Asignatura::findOrFail($id);
+        $docentes = $request->input('docentes', []); // Array of IDs
+
+        // Sync without detaching existing ones? Or replace all?
+        // Usually, the UI sends the full list of desired docentes, so sync is appropriate.
+        $asignatura->docentes()->sync($docentes);
+
+        return response()->json(['message' => 'Docentes asignados correctamente', 'docentes' => $asignatura->docentes]);
     }
 }

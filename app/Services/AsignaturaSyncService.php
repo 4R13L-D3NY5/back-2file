@@ -25,23 +25,25 @@ class AsignaturaSyncService
      * @param bool $force Si es true, sincroniza aunque ya existan datos (sobrescribe/actualiza).
      * @return bool True si se sincronizó correctamente, False si falló.
      */
-    public function syncAnalyticalProgram(Asignatura $asignatura, $branchCode, $careerCode, $force = false)
+    public function syncAnalyticalProgram(Asignatura $asignatura, $branchCode, $careerCode, $force = false, $providedData = null)
     {
-        // Si no forzamos y ya tiene unidades, no hacemos nada (lógica original)
-        // Nota: Para sincronización masiva periódica, probablemente querremos usar $force = true
-        // o comprobar fechas de actualización. Por ahora mantenemos lógica simple.
+        // Si no forzamos y ya tiene unidades, no hacemos nada
         if (!$force && $asignatura->unidades()->count() > 0) {
             return false;
         }
 
         Log::info("Sync: Iniciando sincronización para {$asignatura->codigo} ($branchCode - $careerCode)");
 
-        $apiData = null;
-        try {
-            $apiData = $this->universityService->getAnalyticalProgram($asignatura->codigo, $branchCode, $careerCode);
-        } catch (\Exception $e) {
-            Log::error("Sync: Falló API para {$asignatura->codigo}: " . $e->getMessage());
-            return false;
+        $apiData = $providedData;
+
+        // Si no se proveyeron datos, buscarlos en la API
+        if (!$apiData) {
+            try {
+                $apiData = $this->universityService->getAnalyticalProgram($asignatura->codigo, $branchCode, $careerCode);
+            } catch (\Exception $e) {
+                Log::error("Sync: Falló API para {$asignatura->codigo}: " . $e->getMessage());
+                return false;
+            }
         }
 
         if (!$apiData) {
@@ -55,11 +57,8 @@ class AsignaturaSyncService
         ]);
 
         DB::transaction(function () use ($asignatura, $apiData) {
-            // Limpiar datos existentes si es actualización forzada o re-sync
-            // Ojo: Si ya tenía notas asociadas a temas, esto sería destructivo.
-            // Por ahora asumimos que es seguro borrar para regenerar estructura académica.
+            // Limpiar datos existentes
             $asignatura->bibliografias()->delete();
-            // Para unidades, si borramos cascada los temas.
             $asignatura->unidades()->delete();
 
             // 1. Unidades y Temas
@@ -81,7 +80,7 @@ class AsignaturaSyncService
                                     'descripcion' => $topic['description'] ?? ''
                                 ],
                                 'horas_teoricas' => 0,
-                                'horas_practicas' => 0,
+                                'horas_practicas' => 0, // Por ahora 0, luego se puede distribuir
                                 'estrategias_metodologicas' => '',
                                 'estrategias_aprendizaje' => '',
                                 'estrategias_recursos' => [],

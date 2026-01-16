@@ -28,6 +28,10 @@ Route::apiResource('carreras', CarreraController::class)->only(['index', 'update
 
 // Asignaturas
 Route::apiResource('asignaturas', AsignaturaController::class);
+Route::post('/asignaturas/{id}/docentes', [AsignaturaController::class, 'assignDocentes']);
+
+// Docentes
+Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
 
 // Grupos
 Route::get('grupos', [GrupoController::class, 'index']);
