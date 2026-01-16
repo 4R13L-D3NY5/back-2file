@@ -11,6 +11,8 @@ class BancoPreguntaController extends Controller
 {
     /**
      * Listar preguntas de un logro específico.
+     * Por defecto solo muestra las del docente actual (Personal).
+     * Si all_docentes=true, muestra todas (para generación de exámenes).
      */
     public function index(Request $request)
     {
@@ -18,6 +20,14 @@ class BancoPreguntaController extends Controller
         
         if ($request->has('logro_id')) {
             $questions->where('logro_esperado_id', $request->logro_id);
+        }
+        
+        // Filtrar por docente actual (a menos que se pida todas)
+        if (!$request->boolean('all_docentes')) {
+            $userId = auth()->id();
+            if ($userId) {
+                $questions->where('created_by', $userId);
+            }
         }
         
         return response()->json($questions->get());
@@ -110,7 +120,8 @@ class BancoPreguntaController extends Controller
                     'respuesta_correcta' => $respuesta,
                     'dificultad' => $row[7] ?? 'MEDIA',
                     'peso' => (int)($row[8] ?? 1),
-                    'logro_esperado_id' => $logroId
+                    'logro_esperado_id' => $logroId,
+                    'created_by' => auth()->id()
                 ]);
                 $count++;
             }
