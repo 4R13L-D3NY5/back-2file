@@ -16,6 +16,7 @@ class SedeController extends Controller
             ->map(function ($sede) {
                 return [
                     'id' => $sede->id,
+                    'id_api' => $sede->id_api, // ID para API externa
                     'nombre' => $sede->nombre,
                     'codigo' => $sede->codigo,
                     'ciudad' => $sede->ciudad,

@@ -9,6 +9,7 @@ use App\Http\Controllers\BibliografiaController;
 use App\Http\Controllers\CarreraController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\GrupoController;
+use App\Http\Controllers\GruposExternoController;
 use App\Http\Controllers\PlanificacionController;
 use App\Http\Controllers\PlanificacionSemestralController;
 
@@ -35,6 +36,10 @@ Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']
 
 // Grupos
 Route::get('grupos', [GrupoController::class, 'index']);
+
+// Grupos Externos (API externa)
+Route::get('grupos-externo', [GruposExternoController::class, 'index']);
+Route::post('grupos-externo/refresh', [GruposExternoController::class, 'refresh']);
 
 // Stats
 Route::get('admin/stats', [DashboardController::class, 'index']);

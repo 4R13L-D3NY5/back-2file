@@ -42,4 +42,8 @@ return [
         'client_secret' => env('UNIVERSITY_CLIENT_SECRET'),
     ],
 
+    'grupos_api' => [
+        'url' => env('GRUPOS_API_URL', 'http://181.188.185.211:9098'),
+    ],
+
 ];
