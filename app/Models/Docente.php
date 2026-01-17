@@ -38,7 +38,7 @@ class Docente extends Model
     public function asignaturas(): BelongsToMany
     {
         return $this->belongsToMany(Asignatura::class, 'asignatura_docente')
-            ->withPivot('grupo')
+            ->withPivot(['grupo', 'aula', 'horario', 'cupo', 'estudiantes_inscritos'])
             ->withTimestamps();
     }
 }

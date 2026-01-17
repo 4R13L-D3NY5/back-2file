@@ -8,3 +8,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 \Illuminate\Support\Facades\Schedule::command('app:sync-university-data')->dailyAt('03:00');
+\Illuminate\Support\Facades\Schedule::command('sync:grupos-externos')->dailyAt('04:00');

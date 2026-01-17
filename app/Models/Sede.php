@@ -13,6 +13,7 @@ class Sede extends Model
     protected $fillable = [
         'nombre',
         'codigo',
+        'id_api',
         'ciudad',
         'direccion',
         'telefono',

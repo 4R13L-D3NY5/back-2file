@@ -37,7 +37,7 @@ class AsignaturaController extends Controller
         }
 
         // REFACTORING QUERY LOGIC TO SUPPORT EAGER LOADING
-        $query = Asignatura::with(['carrera.sede']);
+        $query = Asignatura::with(['carrera.sede', 'docentes']);
 
         if ($request->has('include_details') && $request->include_details) {
             $query->with(['unidades.temas', 'bibliografias']);
@@ -71,6 +71,8 @@ class AsignaturaController extends Controller
 
         if (isset($localAsignaturas)) {
             return response()->json($localAsignaturas->map(function ($a) {
+                $docentesNombres = $a->docentes->map(fn($d) => $d->nombre_completo)->unique()->implode(', ');
+
                 $base = [
                     'id' => $a->id,
                     'codigo' => $a->codigo,
@@ -81,6 +83,7 @@ class AsignaturaController extends Controller
                     'horas_practicas' => $a->horas_practicas,
                     'carrera_nombre' => $a->carrera->nombre ?? 'N/A',
                     'sede_nombre' => $a->carrera->sede->nombre ?? \App\Models\Sede::find($a->carrera->sede_id ?? 0)?->nombre ?? 'N/A',
+                    'docente_nombre' => $docentesNombres ?: 'Sin Docente',
                     'origen' => 'LOCAL_' . ($a->carrera->sede->codigo ?? 'UNKNOWN')
                 ];
 
@@ -202,6 +205,19 @@ class AsignaturaController extends Controller
             $response['saberes_previos'] = $local->requisitos;
             $response['metodologia_ensenanza'] = $local->metodologia_general;
             $response['criterios_evaluacion'] = $local->sistema_evaluacion;
+
+            // Manualmente inyectar TODOS los horarios (incluyendo múltiples grupos por docente)
+            $response['horarios_data'] = DB::table('asignatura_docente')
+                ->join('docentes', 'asignatura_docente.docente_id', '=', 'docentes.id')
+                ->where('asignatura_docente.asignatura_id', $local->id)
+                ->select(
+                    'asignatura_docente.grupo',
+                    'asignatura_docente.horario',
+                    'asignatura_docente.aula',
+                    'asignatura_docente.cupo',
+                    'docentes.nombre_completo as docente_nombre'
+                )
+                ->get();
 
             return response()->json($response);
         }

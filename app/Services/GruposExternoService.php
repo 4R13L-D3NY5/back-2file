@@ -106,7 +106,7 @@ class GruposExternoService
                 'id_horario' => $item['idHorario'],
                 'grupo' => $item['grupo'],
                 'tipo_clase' => $item['tipoClase'],
-                'docente' => $item['docente'],
+                'docente' => $this->limpiarNombre($item['docente']),
                 'docente_ci' => $item['ci'],
                 'dia' => $item['dia'],
                 'hora_inicio' => $item['horaInicio'],
@@ -129,5 +129,44 @@ class GruposExternoService
         });
 
         return $resultado;
+    }
+    private function limpiarNombre($nombre)
+    {
+        // Lista de prefijos a eliminar (con y sin punto, mayus/minus)
+        $prefijos = [
+            'Lic.',
+            'Ing.',
+            'Dr.',
+            'Dra.',
+            'Msc.',
+            'PhD.',
+            'Arq.',
+            'Abg.',
+            'LIC.',
+            'ING.',
+            'DR.',
+            'DRA.',
+            'MSC.',
+            'PHD.',
+            'ARQ.',
+            'ABG.',
+            'Lic ',
+            'Ing ',
+            'Dr ',
+            'Dra ',
+            'Msc ',
+            'PhD ',
+            'Arq ',
+            'Abg '
+        ];
+
+        $nombreLimpio = trim($nombre);
+        foreach ($prefijos as $prefijo) {
+            if (str_starts_with($nombreLimpio, $prefijo)) {
+                $nombreLimpio = trim(substr($nombreLimpio, strlen($prefijo)));
+            }
+        }
+
+        return $nombreLimpio;
     }
 }
