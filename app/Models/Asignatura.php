@@ -24,9 +24,11 @@ class Asignatura extends Model
         'sesiones_semanales_practicas',
         'requisitos',
         'justificacion',
+        'descripcion',
         'proposito_general',
         'metodologia_general',
         'sistema_evaluacion',
+        'contenido_minimo',
         'carrera_id',
         'docente_id'
     ];

@@ -82,8 +82,34 @@ class AsignaturaController extends Controller
                     'horas_teoricas' => $a->horas_teoricas,
                     'horas_practicas' => $a->horas_practicas,
                     'carrera_nombre' => $a->carrera->nombre ?? 'N/A',
+                    'carrera_nombre' => $a->carrera->nombre ?? 'N/A',
                     'sede_nombre' => $a->carrera->sede->nombre ?? \App\Models\Sede::find($a->carrera->sede_id ?? 0)?->nombre ?? 'N/A',
                     'docente_nombre' => $docentesNombres ?: 'Sin Docente',
+                    // Data estructurada agrupada por docente
+                    'docentes_data' => $a->docentes->groupBy('id')->map(function ($docenteGroup) {
+                        $docente = $docenteGroup->first();
+
+                        // Clasificar grupos
+                        $grupos = $docenteGroup->pluck('pivot.grupo')->filter();
+                        $teoricos = $grupos->filter(fn($g) => is_numeric($g));
+                        $practicos = $grupos->filter(fn($g) => !is_numeric($g)); // Asumiendo letras
+
+                        $etiquetas = [];
+                        if ($teoricos->isNotEmpty()) $etiquetas[] = 'Grupos Teóricos';
+                        if ($practicos->isNotEmpty()) $etiquetas[] = 'Grupos Prácticos';
+
+                        $descripcion = empty($etiquetas) ? 'Sin asignación' : implode(' y ', $etiquetas);
+
+                        // Si queremos mostrar detalle: "Grupos Teóricos (1, 2)"
+                        // El usuario pidió "juntalo en uno e indicas que es grupos teoricos"
+
+                        return [
+                            'id' => $docente->id,
+                            'nombre' => $docente->nombre_completo,
+                            'descripcion_grupos' => $descripcion,
+                            // 'grupos_detalle' => $grupos->values() // Optional
+                        ];
+                    })->values(),
                     'origen' => 'LOCAL_' . ($a->carrera->sede->codigo ?? 'UNKNOWN')
                 ];
 
@@ -187,16 +213,36 @@ class AsignaturaController extends Controller
 
         // 3. Si existe localmente, retornamos eso (con alias para el frontend)
         if ($local) {
-            // AUTO-SYNC: Si la asignatura no tiene unidades (está vacía), intentamos poblarla desde la API
+            // AUTO-SYNC: Si la asignatura no tiene unidades...
             if ($local->unidades()->count() === 0) {
-                // Determinar códigos correctos desde la relación local si existen
+                // ... (código existente de sync service) ...
                 $actualBranchCode = $local->carrera->sede->codigo ?? $branchCode;
                 $actualCareerCode = $local->carrera->codigo ?? $careerCode;
-
                 $this->syncService->syncAnalyticalProgram($local, $actualBranchCode, $actualCareerCode);
-
-                // Recargar para mostrar los nuevos datos
                 $local->load(['unidades.temas', 'bibliografias', 'docentes']);
+            }
+
+            // AUTO-SYNC (CONTENIDO DESCRIPTIVO): Si falta descripción/justificación, intentar copiar de COCHABAMBA (Sede 1)
+            // Solo si esta sede NO es Cochabamba (evitar bucles, aunque la condición de vacío ya protege)
+            $sedeId = $local->carrera->sede_id ?? 0;
+            if ($sedeId != 1 && (empty($local->descripcion) || empty($local->justificacion))) {
+                $central = Asignatura::where('codigo', $local->codigo)
+                    ->whereHas('carrera', function ($q) {
+                        $q->where('sede_id', 1);
+                    })
+                    ->first();
+
+                if ($central && (!empty($central->descripcion) || !empty($central->justificacion))) {
+                    // Copiar datos de Central a Local
+                    $local->descripcion = $central->descripcion;
+                    $local->justificacion = $central->justificacion;
+                    $local->proposito_general = $central->proposito_general;
+                    $local->metodologia_general = $central->metodologia_general;
+                    $local->sistema_evaluacion = $central->sistema_evaluacion;
+                    $local->contenido_minimo = $central->contenido_minimo;
+                    $local->requisitos = $central->requisitos;
+                    $local->save(); // Persistir la copia
+                }
             }
 
             $response = $local->toArray();
@@ -205,6 +251,8 @@ class AsignaturaController extends Controller
             $response['saberes_previos'] = $local->requisitos;
             $response['metodologia_ensenanza'] = $local->metodologia_general;
             $response['criterios_evaluacion'] = $local->sistema_evaluacion;
+            $response['contenido_minimo'] = $local->contenido_minimo;
+            $response['justificacion'] = $local->justificacion;
 
             // Manualmente inyectar TODOS los horarios (incluyendo múltiples grupos por docente)
             $response['horarios_data'] = DB::table('asignatura_docente')
@@ -294,7 +342,12 @@ class AsignaturaController extends Controller
         if ($request->has('criterios_evaluacion')) $local->sistema_evaluacion = $request->criterios_evaluacion;
         if ($request->has('contenido_minimo')) $local->contenido_minimo = $request->contenido_minimo; // Direct but explicit
 
+        // FIX: Justificación no se estaba mapeando porque no está en $request->only() ni aquí
+        if ($request->has('justificacion')) $local->justificacion = $request->justificacion;
+
         $local->fill($data); // Fill the rest
+        $local->save();
+
         $local->save();
 
         // Handle Carrera change if provided
@@ -303,7 +356,37 @@ class AsignaturaController extends Controller
             $local->save();
         }
 
-        return response()->json($local);
+        // Construir respuesta con alias para el frontend (igual que en show)
+        $response = $local->toArray();
+        $response['objetivo_general'] = $local->proposito_general;
+        $response['saberes_previos'] = $local->requisitos;
+        $response['metodologia_ensenanza'] = $local->metodologia_general;
+        $response['criterios_evaluacion'] = $local->sistema_evaluacion;
+        $response['contenido_minimo'] = $local->contenido_minimo;
+        $response['justificacion'] = $local->justificacion;
+
+        // Necesario reload para relaciones si se ocupara, pero aqui es update simple
+        // Si el frontend necesita carrera/sede, habría que cargarlas:
+        $local->load(['carrera.sede']);
+        $response['carrera'] = $local->carrera;
+
+        // PROPAGACION DE DATOS: Si es Cochabamba (ID 1), actualizar "espejos" en otras sedes
+        if ($local->carrera && $local->carrera->sede_id == 1) { // 1 = Cochabamba (Central)
+            Asignatura::where('codigo', $local->codigo)
+                ->where('id', '!=', $local->id)
+                ->update([
+                    'descripcion' => $local->descripcion,
+                    'justificacion' => $local->justificacion,
+                    'proposito_general' => $local->proposito_general, // Db column
+                    'metodologia_general' => $local->metodologia_general, // Db column
+                    'sistema_evaluacion' => $local->sistema_evaluacion, // Db column
+                    'contenido_minimo' => $local->contenido_minimo,
+                    'requisitos' => $local->requisitos,
+                    'updated_at' => now()
+                ]);
+        }
+
+        return response()->json($response);
     }
 
     public function store(Request $request)
