@@ -30,7 +30,12 @@ class Asignatura extends Model
         'sistema_evaluacion',
         'contenido_minimo',
         'carrera_id',
-        'docente_id'
+        'docente_id',
+        'elementos_competencia',
+        'competencia_asignatura',
+        'competencia_global_especifica', // CGE del Word
+        'reglamento_normativa',          // Reglamento y Normativa
+        'organizacion_calendario'        // Organización y Calendario
     ];
 
     public function carrera(): BelongsTo

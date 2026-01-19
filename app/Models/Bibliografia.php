@@ -8,7 +8,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Bibliografia extends Model
 {
     protected $fillable = [
-        'titulo', 'autor', 'editorial', 'edicion', 'anio', 'tipo', 'isbn', 'paginas', 'asignatura_id'
+        'titulo',
+        'autor',
+        'editorial',
+        'edicion',
+        'anio',
+        'tipo',
+        'isbn',
+        'paginas',
+        'asignatura_id',
+        'descripcion'
     ];
 
     public function asignatura(): BelongsTo

@@ -10,7 +10,7 @@ class Unidad extends Model
 {
     protected $table = 'unidades';
 
-    protected $fillable = ['numero', 'titulo', 'objetivo', 'contenido_minimo', 'asignatura_id'];
+    protected $fillable = ['numero', 'titulo', 'objetivo', 'contenido_minimo', 'asignatura_id', 'elemento_competencia'];
 
     public function asignatura(): BelongsTo
     {

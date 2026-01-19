@@ -30,6 +30,7 @@ Route::apiResource('carreras', CarreraController::class)->only(['index', 'update
 // Asignaturas
 Route::apiResource('asignaturas', AsignaturaController::class);
 Route::post('/asignaturas/{id}/docentes', [AsignaturaController::class, 'assignDocentes']);
+Route::post('/asignaturas/{id}/import-word', [AsignaturaController::class, 'importWord']);
 
 // Docentes
 Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
@@ -129,4 +130,3 @@ Route::prefix('rol-examenes')->group(function () {
     Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
 });
 // });
-
