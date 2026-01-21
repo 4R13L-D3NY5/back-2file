@@ -204,7 +204,8 @@ class SyncGruposExternos extends Command
                 'apellido' => $apellidos,
                 'ci' => $ci,
                 'telefono' => '',
-                'carrera' => ''
+                'carrera' => '',
+                'password_change_required' => true,
             ]);
         }
 

@@ -10,25 +10,33 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
-    // Login
+    /**
+     * Login - Acepta email O username (CI)
+     */
     public function login(Request $request)
     {
         $request->validate([
-            'email' => 'required|email',
+            'username' => 'required',
             'password' => 'required',
         ]);
 
-        $user = User::where('email', $request->email)->first();
+        $loginField = $request->username;
+
+        // Buscar por email o username (CI)
+        $user = User::where('email', $loginField)
+            ->orWhere('username', $loginField)
+            ->orWhere('ci', $loginField)
+            ->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
             throw ValidationException::withMessages([
-                'email' => ['Credenciales incorrectas.'],
+                'username' => ['Credenciales incorrectas.'],
             ]);
         }
-        
+
         if (! $user->estado) {
-             throw ValidationException::withMessages([
-                'email' => ['El usuario está inactivo.'],
+            throw ValidationException::withMessages([
+                'username' => ['El usuario está inactivo.'],
             ]);
         }
 
@@ -38,11 +46,45 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Login exitoso',
             'token' => $token,
-            'user' => $user->load('rol')
+            'user' => $user->load(['rol', 'docente.asignaturas']),
+            'password_change_required' => (bool) $user->password_change_required,
         ]);
     }
 
-    // Register (Opcional, para testing rápido o admin)
+    /**
+     * Cambiar contraseña
+     */
+    public function changePassword(Request $request)
+    {
+        $request->validate([
+            'current_password' => 'required',
+            'new_password' => 'required|min:6|confirmed',
+        ]);
+
+        $user = $request->user();
+
+        if (!Hash::check($request->current_password, $user->password)) {
+            throw ValidationException::withMessages([
+                'current_password' => ['La contraseña actual es incorrecta.'],
+            ]);
+        }
+
+        if (Hash::check($request->new_password, $user->password)) {
+            throw ValidationException::withMessages([
+                'new_password' => ['La nueva contraseña no puede ser igual a la anterior.'],
+            ]);
+        }
+
+        $user->password = Hash::make($request->new_password);
+        $user->password_change_required = false;
+        $user->save();
+
+        return response()->json(['message' => 'Contraseña actualizada exitosamente.']);
+    }
+
+    /**
+     * Register (Opcional, para testing rápido o admin)
+     */
     public function register(Request $request)
     {
         $request->validate([
@@ -55,7 +97,8 @@ class AuthController extends Controller
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
-            'rol_id' => 1, // Default Role ID (Ajustar según seeds)
+            'rol_id' => 1,
+            'password_change_required' => true,
         ]);
 
         $token = $user->createToken('auth-token')->plainTextToken;
@@ -66,7 +109,9 @@ class AuthController extends Controller
         ]);
     }
 
-    // Logout
+    /**
+     * Logout
+     */
     public function logout(Request $request)
     {
         $request->user()->currentAccessToken()->delete();
@@ -74,9 +119,13 @@ class AuthController extends Controller
         return response()->json(['message' => 'Sesión cerrada exitosamente']);
     }
 
-    // Me (Perfil)
+    /**
+     * Me (Perfil)
+     */
     public function me(Request $request)
     {
-        return $request->user()->load('rol', 'docente', 'director');
+        $user = $request->user()->load(['rol', 'docente.asignaturas', 'director']);
+        $user->password_change_required = (bool) $user->password_change_required;
+        return $user;
     }
 }

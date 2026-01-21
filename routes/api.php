@@ -19,114 +19,115 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::get('/test-publico', [AsignaturaController::class, 'index']); // RUTA TEMPORAL DE PRUEBA
 
 // Protected Routes
-// Route::middleware('auth:sanctum')->group(function () {
-// Auth
-Route::post('/logout', [AuthController::class, 'logout']);
-Route::get('/me', [AuthController::class, 'me']);
+Route::middleware('auth:sanctum')->group(function () {
+    // Auth
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/me', [AuthController::class, 'me']);
+    Route::post('/change-password', [AuthController::class, 'changePassword']);
 
-// Carreras
-Route::apiResource('carreras', CarreraController::class)->only(['index', 'update']);
+    // Carreras
+    Route::apiResource('carreras', CarreraController::class)->only(['index', 'update']);
 
-// Asignaturas
-Route::apiResource('asignaturas', AsignaturaController::class);
-Route::post('/asignaturas/{id}/docentes', [AsignaturaController::class, 'assignDocentes']);
-Route::post('/asignaturas/{id}/import-word', [AsignaturaController::class, 'importWord']);
+    // Asignaturas
+    Route::apiResource('asignaturas', AsignaturaController::class);
+    Route::post('/asignaturas/{id}/docentes', [AsignaturaController::class, 'assignDocentes']);
+    Route::post('/asignaturas/{id}/import-word', [AsignaturaController::class, 'importWord']);
 
-// Docentes
-Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
+    // Docentes
+    Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
 
-// Grupos
-Route::get('grupos', [GrupoController::class, 'index']);
+    // Grupos
+    Route::get('grupos', [GrupoController::class, 'index']);
 
-// Grupos Externos (API externa)
-Route::get('grupos-externo', [GruposExternoController::class, 'index']);
-Route::post('grupos-externo/refresh', [GruposExternoController::class, 'refresh']);
+    // Grupos Externos (API externa)
+    Route::get('grupos-externo', [GruposExternoController::class, 'index']);
+    Route::post('grupos-externo/refresh', [GruposExternoController::class, 'refresh']);
 
-// Stats
-Route::get('admin/stats', [DashboardController::class, 'index']);
+    // Stats
+    Route::get('admin/stats', [DashboardController::class, 'index']);
 
-// Planificación (Temas y Subniveles)
-Route::prefix('planificacion')->group(function () {
-    // Unidades
-    Route::put('/unidades/{id}', [PlanificacionController::class, 'updateUnidad']);
+    // Planificación (Temas y Subniveles)
+    Route::prefix('planificacion')->group(function () {
+        // Unidades
+        Route::put('/unidades/{id}', [PlanificacionController::class, 'updateUnidad']);
 
-    // Contenidos (Saberes) - Corregido updateContenido -> updateTema
-    Route::put('/temas/{id}/contenido', [PlanificacionController::class, 'updateTema']);
-    Route::get('/temas/{id}/full', [PlanificacionController::class, 'getFullTema']);
+        // Contenidos (Saberes) - Corregido updateContenido -> updateTema
+        Route::put('/temas/{id}/contenido', [PlanificacionController::class, 'updateTema']);
+        Route::get('/temas/{id}/full', [PlanificacionController::class, 'getFullTema']);
 
-    // Estrategias
-    Route::post('/temas/{id}/estrategias', [PlanificacionController::class, 'storeEstrategia']);
-    Route::delete('/estrategias/{id}', [PlanificacionController::class, 'destroyEstrategia']);
+        // Estrategias
+        Route::post('/temas/{id}/estrategias', [PlanificacionController::class, 'storeEstrategia']);
+        Route::delete('/estrategias/{id}', [PlanificacionController::class, 'destroyEstrategia']);
 
-    // Evaluaciones
-    Route::post('/temas/{id}/evaluaciones', [PlanificacionController::class, 'storeEvaluacion']);
-    Route::delete('/evaluaciones/{id}', [PlanificacionController::class, 'destroyEvaluacion']);
+        // Evaluaciones
+        Route::post('/temas/{id}/evaluaciones', [PlanificacionController::class, 'storeEvaluacion']);
+        Route::delete('/evaluaciones/{id}', [PlanificacionController::class, 'destroyEvaluacion']);
 
-    // Secuencias
-    Route::post('/temas/{id}/secuencias', [PlanificacionController::class, 'storeSecuencia']);
-    Route::delete('/secuencias/{id}', [PlanificacionController::class, 'destroySecuencia']);
+        // Secuencias
+        Route::post('/temas/{id}/secuencias', [PlanificacionController::class, 'storeSecuencia']);
+        Route::delete('/secuencias/{id}', [PlanificacionController::class, 'destroySecuencia']);
 
-    // Logros
-    Route::post('/temas/{id}/logros', [PlanificacionController::class, 'storeLogro']);
-    Route::delete('/logros/{id}', [PlanificacionController::class, 'destroyLogro']);
+        // Logros
+        Route::post('/temas/{id}/logros', [PlanificacionController::class, 'storeLogro']);
+        Route::delete('/logros/{id}', [PlanificacionController::class, 'destroyLogro']);
 
-    // Indicadores
-    Route::post('/logros/{id}/indicadores', [PlanificacionController::class, 'storeIndicador']);
-    Route::delete('/indicadores/{id}', [PlanificacionController::class, 'destroyIndicador']);
+        // Indicadores
+        Route::post('/logros/{id}/indicadores', [PlanificacionController::class, 'storeIndicador']);
+        Route::delete('/indicadores/{id}', [PlanificacionController::class, 'destroyIndicador']);
+    });
+
+    // Banco de Preguntas
+    Route::prefix('banco-preguntas')->group(function () {
+        Route::get('/', [BancoPreguntaController::class, 'index']); // ?logro_id=X
+        Route::post('/', [BancoPreguntaController::class, 'store']);
+        Route::post('/import', [BancoPreguntaController::class, 'import']);
+        Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
+    });
+
+    // Planificación Semestral (Nuevo Módulo)
+    Route::prefix('planificacion-semestral')->group(function () {
+        // Obtener todo (Config + Horarios + Sesiones)
+        Route::get('/{asignaturaId}', [PlanificacionSemestralController::class, 'index']);
+
+        // Guardar Configuración (Fechas) + Horarios
+        Route::post('/{asignaturaId}/config', [PlanificacionSemestralController::class, 'saveConfig']);
+
+        // Guardar "Grid" de Sesiones (Generado o Editado)
+        Route::post('/{asignaturaId}/sesiones', [PlanificacionSemestralController::class, 'savePlanificacion']);
+
+        // Generar Automáticamente (20 semanas)
+        Route::post('/{asignaturaId}/generar', [PlanificacionSemestralController::class, 'generarPlanificacion']);
+
+        // Copiar de otra asignatura
+        Route::post('/{asignaturaId}/copiar', [PlanificacionSemestralController::class, 'copiarPlanificacion']);
+    });
+
+    // Bibliografía (General)
+    Route::resource('bibliografias', BibliografiaController::class)->except(['create', 'edit', 'show']);
+
+    // Module 7: Evaluaciones
+    Route::prefix('evaluaciones')->group(function () {
+        Route::get('/', [\App\Http\Controllers\EvaluacionController::class, 'index']); // ?asignatura_id=X
+        Route::post('/', [\App\Http\Controllers\EvaluacionController::class, 'store']); // Create & Generate
+    });
+
+    // Roles & Users
+    Route::apiResource('roles', \App\Http\Controllers\RolController::class);
+    Route::apiResource('usuarios', \App\Http\Controllers\UserController::class);
+    Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
+    Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
+
+    // Module 7b: Vista Patrón de Examen
+    Route::get('/examenes-generados/{id}/patron', [\App\Http\Controllers\EvaluacionController::class, 'patron']);
+
+    // Rol de Exámenes (Director de Carrera)
+    Route::prefix('rol-examenes')->group(function () {
+        Route::get('/', [\App\Http\Controllers\RolExamenController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\RolExamenController::class, 'store']);
+        Route::post('/upload', [\App\Http\Controllers\RolExamenController::class, 'upload']);
+        Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
+        Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
+        Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
+        Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
+    });
 });
-
-// Banco de Preguntas
-Route::prefix('banco-preguntas')->group(function () {
-    Route::get('/', [BancoPreguntaController::class, 'index']); // ?logro_id=X
-    Route::post('/', [BancoPreguntaController::class, 'store']);
-    Route::post('/import', [BancoPreguntaController::class, 'import']);
-    Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
-});
-
-// Planificación Semestral (Nuevo Módulo)
-Route::prefix('planificacion-semestral')->group(function () {
-    // Obtener todo (Config + Horarios + Sesiones)
-    Route::get('/{asignaturaId}', [PlanificacionSemestralController::class, 'index']);
-
-    // Guardar Configuración (Fechas) + Horarios
-    Route::post('/{asignaturaId}/config', [PlanificacionSemestralController::class, 'saveConfig']);
-
-    // Guardar "Grid" de Sesiones (Generado o Editado)
-    Route::post('/{asignaturaId}/sesiones', [PlanificacionSemestralController::class, 'savePlanificacion']);
-
-    // Generar Automáticamente (20 semanas)
-    Route::post('/{asignaturaId}/generar', [PlanificacionSemestralController::class, 'generarPlanificacion']);
-
-    // Copiar de otra asignatura
-    Route::post('/{asignaturaId}/copiar', [PlanificacionSemestralController::class, 'copiarPlanificacion']);
-});
-
-// Bibliografía (General)
-Route::resource('bibliografias', BibliografiaController::class)->except(['create', 'edit', 'show']);
-
-// Module 7: Evaluaciones
-Route::prefix('evaluaciones')->group(function () {
-    Route::get('/', [\App\Http\Controllers\EvaluacionController::class, 'index']); // ?asignatura_id=X
-    Route::post('/', [\App\Http\Controllers\EvaluacionController::class, 'store']); // Create & Generate
-});
-
-// Roles & Users
-Route::apiResource('roles', \App\Http\Controllers\RolController::class);
-Route::apiResource('usuarios', \App\Http\Controllers\UserController::class);
-Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
-Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
-
-// Module 7b: Vista Patrón de Examen
-Route::get('/examenes-generados/{id}/patron', [\App\Http\Controllers\EvaluacionController::class, 'patron']);
-
-// Rol de Exámenes (Director de Carrera)
-Route::prefix('rol-examenes')->group(function () {
-    Route::get('/', [\App\Http\Controllers\RolExamenController::class, 'index']);
-    Route::post('/', [\App\Http\Controllers\RolExamenController::class, 'store']);
-    Route::post('/upload', [\App\Http\Controllers\RolExamenController::class, 'upload']);
-    Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
-    Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
-    Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
-    Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
-});
-// });
