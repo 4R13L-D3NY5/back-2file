@@ -12,9 +12,15 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('asignaturas', function (Blueprint $table) {
-            $table->text('competencia_global_especifica')->nullable();
-            $table->text('reglamento_normativa')->nullable();
-            $table->text('organizacion_calendario')->nullable();
+            if (!Schema::hasColumn('asignaturas', 'competencia_global_especifica')) {
+                $table->text('competencia_global_especifica')->nullable();
+            }
+            if (!Schema::hasColumn('asignaturas', 'reglamento_normativa')) {
+                $table->text('reglamento_normativa')->nullable();
+            }
+            if (!Schema::hasColumn('asignaturas', 'organizacion_calendario')) {
+                $table->text('organizacion_calendario')->nullable();
+            }
         });
     }
 
@@ -24,9 +30,15 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('asignaturas', function (Blueprint $table) {
-            $table->dropColumn('competencia_global_especifica');
-            $table->dropColumn('reglamento_normativa');
-            $table->dropColumn('organizacion_calendario');
+            if (Schema::hasColumn('asignaturas', 'competencia_global_especifica')) {
+                $table->dropColumn('competencia_global_especifica');
+            }
+            if (Schema::hasColumn('asignaturas', 'reglamento_normativa')) {
+                $table->dropColumn('reglamento_normativa');
+            }
+            if (Schema::hasColumn('asignaturas', 'organizacion_calendario')) {
+                $table->dropColumn('organizacion_calendario');
+            }
         });
     }
 };

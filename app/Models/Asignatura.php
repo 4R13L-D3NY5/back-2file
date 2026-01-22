@@ -6,13 +6,17 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Asignatura extends Model
 {
+    use SoftDeletes;
+
     protected $fillable = [
         'codigo',
         'nombre',
-        'semestre',
+        // semestre REMOVED - now in asignatura_carrera pivot
+        // carrera_id REMOVED - now many-to-many via asignatura_carrera
         'creditos',
         'area_desempenio',
         'tipo_curso',
@@ -29,25 +33,46 @@ class Asignatura extends Model
         'metodologia_general',
         'sistema_evaluacion',
         'contenido_minimo',
-        'carrera_id',
-        'docente_id',
+        // docente_id REMOVED - Docentes are linked via grupos table
         'elementos_competencia',
         'competencia_asignatura',
-        'competencia_global_especifica', // CGE del Word
-        'reglamento_normativa',          // Reglamento y Normativa
-        'organizacion_calendario'        // Organización y Calendario
+        'competencia_global_especifica',
+        'reglamento_normativa',
+        'organizacion_calendario'
     ];
 
-    public function carrera(): BelongsTo
+    /**
+     * Carreras que ofrecen esta asignatura (Many-to-Many via pivot)
+     * Pivot contains: semestre, sede_id
+     */
+    public function carreras(): BelongsToMany
     {
-        return $this->belongsTo(Carrera::class);
+        return $this->belongsToMany(Carrera::class, 'asignatura_carrera')
+            ->withPivot('semestre', 'sede_id')
+            ->withTimestamps();
     }
 
+    /**
+     * Docentes asignados a esta materia (a través de grupos)
+     */
     public function docentes()
     {
-        return $this->belongsToMany(Docente::class, 'asignatura_docente')
-            ->withPivot(['grupo', 'aula', 'horario', 'cupo', 'estudiantes_inscritos'])
-            ->withTimestamps();
+        return $this->hasManyThrough(
+            Docente::class,
+            Grupo::class,
+            'asignatura_id', // FK en grupos
+            'id',            // FK en docentes
+            'id',            // PK en asignaturas
+            'docente_id'     // Local key en grupos
+        )->distinct();
+    }
+
+    /**
+     * Grupos de esta asignatura (nueva estructura normalizada)
+     */
+    public function grupos(): HasMany
+    {
+        return $this->hasMany(Grupo::class);
     }
 
     // Estructura
@@ -61,10 +86,17 @@ class Asignatura extends Model
         return $this->hasMany(Bibliografia::class);
     }
 
-    // Ejecución
-    public function horarios(): HasMany
+    /**
+     * Horarios (a través de grupos)
+     */
+    public function horarios()
     {
-        return $this->hasMany(Horario::class);
+        return $this->hasManyThrough(
+            Horario::class,
+            Grupo::class,
+            'asignatura_id',
+            'grupo_id'
+        );
     }
 
     public function cronogramas(): HasMany

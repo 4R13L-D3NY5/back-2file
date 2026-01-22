@@ -20,44 +20,32 @@ class AsignaturaController extends Controller
     }
 
     /**
-     * Sincroniza y lista asignaturas.
-     * Este método actúa como la "Fachada": 40% Local, 60% API Externa
+     * Lista asignaturas con filtros cascading.
+     * GET /api/asignaturas?sede_id=1&carrera_id=5&semestre=3
      */
     public function index(Request $request)
     {
-        // 1. Obtener parámetros (Si no se envían, retornamos data local)
-        $branchCode = $request->input('branch_code');
-        $careerCode = $request->input('career_code');
+        $query = Asignatura::with(['grupos.docente']);
 
-        if (isset($localAsignaturas)) {
-            // If we already loaded locals (e.g. no filters), ensure we respect eager loading if requested
-            // Note: $localAsignaturas above might not have loaded them if we stick to lines 32/35.
-            // Let's refactor the initial load or lazily load here if needed.
-            // Or better: Modify the query above.
-        }
-
-        // REFACTORING QUERY LOGIC TO SUPPORT EAGER LOADING
-        $query = Asignatura::with(['carrera.sede', 'docentes']);
-
-        if ($request->has('include_details') && $request->include_details) {
-            $query->with(['unidades.temas', 'bibliografias']);
-        }
-
-        if ($branchCode && !$careerCode) {
-            $query->whereHas('carrera.sede', function ($q) use ($branchCode) {
-                $q->where('codigo', $branchCode);
+        // Filtros (Pivote y Texto)
+        if ($request->filled('sede_id') || $request->filled('carrera_id') || $request->filled('semestre')) {
+            $query->whereHas('carreras', function ($q) use ($request) {
+                if ($request->filled('sede_id')) $q->wherePivot('sede_id', $request->sede_id);
+                if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
+                if ($request->filled('semestre')) $q->wherePivot('semestre', $request->semestre);
             });
+
+            // Cargar contexto específico para mostrar los datos correctos
+            $query->with(['carreras' => function ($q) use ($request) {
+                if ($request->filled('sede_id')) $q->wherePivot('sede_id', $request->sede_id);
+                if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
+                if ($request->filled('semestre')) $q->wherePivot('semestre', $request->semestre);
+            }]);
+        } else {
+            $query->with('carreras');
         }
 
-        // If filtering by career...
-        if ($careerCode) {
-            $query->whereHas('carrera', function ($q) use ($careerCode) {
-                $q->where('codigo', $careerCode);
-            });
-        }
-
-        // Search Filter
-        if ($request->has('search') && $request->search) {
+        if ($request->filled('search')) {
             $term = $request->search;
             $query->where(function ($q) use ($term) {
                 $q->where('nombre', 'like', "%{$term}%")
@@ -65,134 +53,31 @@ class AsignaturaController extends Controller
             });
         }
 
-        // Limit only if not specific (dashboard needs all? or pagination?)
-        // For stats we might need all, but 20k is safe for now.
-        $localAsignaturas = $query->limit(1000)->get();
+        $asignaturas = $query->limit(500)->get();
+        $sedesMap = \App\Models\Sede::pluck('nombre', 'id'); // Cache sedes map
 
-        if (isset($localAsignaturas)) {
-            return response()->json($localAsignaturas->map(function ($a) {
-                $docentesNombres = $a->docentes->map(fn($d) => $d->nombre_completo)->unique()->implode(', ');
+        return response()->json($asignaturas->map(function ($a) use ($sedesMap) {
+            $context = $a->carreras->first(); // Contexto (filtrado o el primero)
 
-                $base = [
-                    'id' => $a->id,
-                    'codigo' => $a->codigo,
-                    'nombre' => $a->nombre,
-                    'creditos' => $a->creditos,
-                    'semestre' => $a->semestre,
-                    'horas_teoricas' => $a->horas_teoricas,
-                    'horas_practicas' => $a->horas_practicas,
-                    'carrera_nombre' => $a->carrera->nombre ?? 'N/A',
-                    'carrera_nombre' => $a->carrera->nombre ?? 'N/A',
-                    'sede_nombre' => $a->carrera->sede->nombre ?? \App\Models\Sede::find($a->carrera->sede_id ?? 0)?->nombre ?? 'N/A',
-                    'docente_nombre' => $docentesNombres ?: 'Sin Docente',
-                    // Data estructurada agrupada por docente
-                    'docentes_data' => $a->docentes->groupBy('id')->map(function ($docenteGroup) {
-                        $docente = $docenteGroup->first();
+            $docentes = $a->grupos->map(fn($g) => $g->docente)->filter()->unique('id');
 
-                        // Clasificar grupos
-                        $grupos = $docenteGroup->pluck('pivot.grupo')->filter();
-                        $teoricos = $grupos->filter(fn($g) => is_numeric($g));
-                        $practicos = $grupos->filter(fn($g) => !is_numeric($g)); // Asumiendo letras
-
-                        $etiquetas = [];
-                        if ($teoricos->isNotEmpty()) $etiquetas[] = 'Grupos Teóricos';
-                        if ($practicos->isNotEmpty()) $etiquetas[] = 'Grupos Prácticos';
-
-                        $descripcion = empty($etiquetas) ? 'Sin asignación' : implode(' y ', $etiquetas);
-
-                        // Si queremos mostrar detalle: "Grupos Teóricos (1, 2)"
-                        // El usuario pidió "juntalo en uno e indicas que es grupos teoricos"
-
-                        return [
-                            'id' => $docente->id,
-                            'nombre' => $docente->nombre_completo,
-                            'descripcion_grupos' => $descripcion,
-                            // 'grupos_detalle' => $grupos->values() // Optional
-                        ];
-                    })->values(),
-                    'origen' => 'LOCAL_' . ($a->carrera->sede->codigo ?? 'UNKNOWN')
-                ];
-
-                if ($a->relationLoaded('unidades')) {
-                    $base['unidades'] = $a->unidades; // Serializes recursively (temas)
-                }
-                // Or just mapped counts if we wanted lightweight, but frontend uses .length on array
-                if ($a->relationLoaded('bibliografias')) {
-                    $base['bibliografias'] = $a->bibliografias;
-                }
-
-                return $base;
-            }));
-        }
-
-        try {
-            // Llamada a University Service
-            $externalCoursesRaw = $this->universityService->getCourses($branchCode, $careerCode);
-            // Deduplicar por código (el API retorna grupos múltiples)
-            $externalCourses = collect($externalCoursesRaw)->unique('courseCode')->values()->all();
-
-            // Buscar nombre de la sede si tenemos el código
-            $sedeNameFilter = 'N/A';
-            if ($branchCode) {
-                $sedeObj = \App\Models\Sede::where('codigo', $branchCode)->first();
-                if ($sedeObj) {
-                    $sedeNameFilter = $sedeObj->nombre;
-                }
-            }
-
-            // Transformar/Fusionar data en memoria o DB local bajo demanda
-            $fusedData = [];
-
-            foreach ($externalCourses as $external) {
-                // Mapeo seguro de llaves (API vs Local)
-                $code = $external['courseCode'] ?? $external['code'] ?? null;
-                $name = $external['courseName'] ?? $external['name'] ?? 'Sin Nombre';
-
-                if (!$code) continue; // Skip bad data
-
-                // Buscamos si ya tenemos una "copia" local extendida
-                $local = Asignatura::where('codigo', $code)->first();
-
-                if (!$local) {
-                    // Si no existe, podemos retornarlo tal cual del API o crearlo al vuelo.
-                    // Para este MVP, retornamos la estructura mixta.
-                    $fusedData[] = [
-                        'id' => null, // No persistido aún
-                        'codigo' => $code,
-                        'nombre' => $name,
-                        'creditos' => $external['credits'] ?? 0,
-                        'semestre' => $external['semester'] ?? 0,
-                        'horas_teoricas' => $external['theoryHours'] ?? 0,
-                        'horas_practicas' => $external['practiceHours'] ?? 0,
-                        'origen' => 'API_ONLY',
-                        'carrera_nombre' => 'API (No guardado)',
-                        'sede_nombre' => $sedeNameFilter != 'N/A' ? $sedeNameFilter : 'API'
-                    ];
-                } else {
-                    $fusedData[] = [
-                        'id' => $local->id,
-                        'codigo' => $local->codigo,
-                        'nombre' => $local->nombre, // O el del API si queremos frescura
-                        'creditos' => $local->creditos,
-                        'semestre' => $local->semestre,
-                        'horas_teoricas' => $local->horas_teoricas,
-                        'horas_practicas' => $local->horas_practicas,
-                        'carrera_nombre' => $local->carrera->nombre ?? 'N/A',
-                        'sede_nombre' => $local->carrera->sede->nombre ?? $sedeNameFilter, // Fallback al filtro
-
-                        // Datos Locales Extendidos
-                        'justificacion' => $local->justificacion ? 'Cargado' : null,
-                        'avance_unidad' => $local->unidades()->count(),
-                        'origen' => 'HYBRID'
-                    ];
-                }
-            }
-
-            return response()->json($fusedData);
-        } catch (\Exception $e) {
-            \Illuminate\Support\Facades\Log::error('Error fetching asignaturas: ' . $e->getMessage());
-            return response()->json(['error' => $e->getMessage()], 503);
-        }
+            return [
+                'id' => $a->id,
+                'codigo' => $a->codigo,
+                'nombre' => $a->nombre,
+                'creditos' => $a->creditos,
+                'semestre' => $context?->pivot?->semestre,
+                'horas_teoricas' => $a->horas_teoricas,
+                'horas_practicas' => $a->horas_practicas,
+                'carrera_id' => $context?->id,
+                'carrera_nombre' => $context?->nombre ?? 'N/A',
+                'sede_id' => $context?->pivot?->sede_id,
+                'sede_nombre' => $sedesMap[$context?->pivot?->sede_id] ?? 'N/A',
+                'activa' => $a->deleted_at === null,
+                'docentes' => $docentes->pluck('nombre_completo')->values(),
+                'grupos_count' => $a->grupos->count(),
+            ];
+        }));
     }
 
     /**
@@ -254,18 +139,25 @@ class AsignaturaController extends Controller
             $response['contenido_minimo'] = $local->contenido_minimo;
             $response['justificacion'] = $local->justificacion;
 
-            // Manualmente inyectar TODOS los horarios (incluyendo múltiples grupos por docente)
-            $response['horarios_data'] = DB::table('asignatura_docente')
-                ->join('docentes', 'asignatura_docente.docente_id', '=', 'docentes.id')
-                ->where('asignatura_docente.asignatura_id', $local->id)
-                ->select(
-                    'asignatura_docente.grupo',
-                    'asignatura_docente.horario',
-                    'asignatura_docente.aula',
-                    'asignatura_docente.cupo',
-                    'docentes.nombre_completo as docente_nombre'
-                )
-                ->get();
+            // Horarios desde la estructura normalizada (grupos + horarios)
+            $response['horarios_data'] = $local->grupos()
+                ->with(['docente:id,nombre_completo', 'horarios.aula:id,nombre'])
+                ->get()
+                ->map(function ($grupo) {
+                    return [
+                        'grupo' => $grupo->nombre,
+                        'tipo' => $grupo->tipo,
+                        'docente_nombre' => $grupo->docente?->nombre_completo,
+                        'horarios' => $grupo->horarios->map(function ($h) {
+                            return [
+                                'dia' => $h->dia,
+                                'hora_inicio' => $h->hora_inicio,
+                                'hora_fin' => $h->hora_fin,
+                                'aula' => $h->aula?->nombre
+                            ];
+                        })
+                    ];
+                });
 
             return response()->json($response);
         }

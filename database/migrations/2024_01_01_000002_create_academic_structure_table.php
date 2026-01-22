@@ -26,30 +26,30 @@ return new class extends Migration
             $table->string('nombre');
             $table->string('semestre')->nullable();
             $table->integer('creditos')->default(0);
-            
+
             // Datos Extendidos (Locales - SIDOPA)
             $table->string('area_desempenio')->nullable();
             $table->string('tipo_curso')->nullable();
             $table->string('modalidad')->nullable();
-            
+
             // Cargas Horarias
             $table->integer('carga_horaria_total')->default(0);
             $table->integer('horas_teoricas')->default(0);
             $table->integer('horas_practicas')->default(0);
             $table->integer('sesiones_semanales_teoricas')->default(0);
             $table->integer('sesiones_semanales_practicas')->default(0);
-            
+
             // Contenido Rico (Documento Base)
             $table->text('requisitos')->nullable();
             $table->text('justificacion')->nullable();
             $table->text('proposito_general')->nullable();
             $table->text('metodologia_general')->nullable();
             $table->text('sistema_evaluacion')->nullable();
-            
+
             // Relaciones
             $table->foreignId('carrera_id')->nullable()->constrained('carreras')->nullOnDelete();
-            $table->foreignId('docente_id')->nullable()->constrained('docentes')->nullOnDelete();
-            
+            // docente_id REMOVED - Docentes are now linked via grupos table
+
             $table->timestamps();
         });
 

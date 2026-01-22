@@ -9,15 +9,15 @@ return new class extends Migration
     public function up(): void
     {
         // HORARIOS
-        Schema::create('horarios', function (Blueprint $table) {
-            $table->id();
-            $table->string('dia'); // Lunes, Martes...
-            $table->time('hora_inicio');
-            $table->time('hora_fin');
-            $table->string('aula')->nullable();
-            $table->foreignId('asignatura_id')->constrained('asignaturas')->cascadeOnDelete();
-            $table->timestamps();
-        });
+        // Schema::create('horarios', function (Blueprint $table) {
+        //     $table->id();
+        //     $table->string('dia'); // Lunes, Martes...
+        //     $table->time('hora_inicio');
+        //     $table->time('hora_fin');
+        //     $table->string('aula')->nullable();
+        //     $table->foreignId('asignatura_id')->constrained('asignaturas')->cascadeOnDelete();
+        //     $table->timestamps();
+        // });
 
         // CRONOGRAMAS (SESIONES / CLASES)
         Schema::create('cronogramas', function (Blueprint $table) {

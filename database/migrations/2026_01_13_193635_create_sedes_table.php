@@ -16,8 +16,8 @@ return new class extends Migration
             $table->string('nombre');
             $table->string('codigo')->unique(); // CBA, LPZ, SCZ, etc.
             $table->string('ciudad')->nullable();
-            $table->string('direccion')->nullable();
-            $table->string('telefono')->nullable();
+            // $table->string('direccion')->nullable();
+            // $table->string('telefono')->nullable();
             $table->boolean('activo')->default(true);
             $table->timestamps();
         });

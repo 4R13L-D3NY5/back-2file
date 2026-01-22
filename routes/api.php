@@ -117,6 +117,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
     Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
 
+    // Cascading Filter Endpoints
+    Route::get('sedes/{id}/carreras', [\App\Http\Controllers\SedeController::class, 'carreras']);
+    Route::get('carreras/{id}/asignaturas', [\App\Http\Controllers\CarreraController::class, 'asignaturas']);
+    Route::get('carreras/{id}/semestres', [\App\Http\Controllers\CarreraController::class, 'semestres']);
+
     // Module 7b: Vista Patrón de Examen
     Route::get('/examenes-generados/{id}/patron', [\App\Http\Controllers\EvaluacionController::class, 'patron']);
 

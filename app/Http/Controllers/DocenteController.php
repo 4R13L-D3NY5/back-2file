@@ -17,6 +17,6 @@ class DocenteController extends Controller
                 ->orWhere('email', 'like', "%{$term}%");
         }
 
-        return response()->json($query->with(['sede', 'asignaturas'])->orderBy('nombre_completo')->get());
+        return response()->json($query->with(['sede', 'grupos.asignatura'])->orderBy('nombre_completo')->get());
     }
 }

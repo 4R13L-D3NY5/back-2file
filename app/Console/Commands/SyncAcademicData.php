@@ -2,67 +2,138 @@
 
 namespace App\Console\Commands;
 
+use App\Services\PlanningSyncService;
+use App\Services\UniversitySyncService;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Http;
 
 class SyncAcademicData extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
-    protected $signature = 'academic:sync {--force : Force full resync}';
+    protected $signature = 'academic:sync {gestion=1-2026} {--carrera=} {--sede=} {--all}';
+    protected $description = 'Synchronize academic data from external API';
 
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
-    protected $description = 'Sincroniza Datos Académicos (Carreras, Asignaturas, Docentes) desde la API Externa hacia la BD Local';
+    private const SEDE_MAP = [
+        1 => ['CARCCP', 'CARCPU', 'CARAYE', 'CARDER', 'CARSON', 'CARSIS', 'CARIBI', 'CARBYF', 'CARNYD', 'CARODO', 'CARFIS', 'CARFON', 'CARPRO', 'CARENL', 'CARMED'],
+        5 => ['CARVET'],
+        6 => ['CARSON', 'CARODO'],
+        8 => ['CARICO', 'CARENL'],
+        9 => ['CARSON', 'CARODO', 'CARENL', 'CARMED'],
+        12 => ['CARMED']
+    ];
 
-    /**
-     * Execute the console command.
-     */
-    public function handle()
+    public function handle(PlanningSyncService $planningService, UniversitySyncService $universityService)
     {
-        $this->info('Iniciando Sincronización con API Académica...');
+        $gestion = $this->argument('gestion');
+        $carreraArg = $this->option('carrera');
+        $sedeArg = $this->option('sede');
 
-        // 1. Simulación de Fetch API (Aquí iría: Http::get('api.unitepc.edu.bo/carreras'))
-        // Para demo, usamos datos que "simulan" venir de afuera
-        $apiCarreras = [
-            ['codigo' => 'SIS', 'nombre' => 'Ingeniería de Sistemas (Actualizado)', 'sede_codigo' => 'CBA'],
-            ['codigo' => 'MED', 'nombre' => 'Medicina Humana', 'sede_codigo' => 'CBA'],
+        $this->info("Starting FULL Academic Sync for Gestion: $gestion...");
+
+        $grandTotalStats = [
+            'sedes' => 0,
+            'bloques' => 0,
+            'aulas' => 0,
+            'carreras' => 0,
+            'asignaturas' => 0,
+            'docentes' => 0,
+            'grupos' => 0,
+            'horarios' => 0,
+            'users_created' => 0,
+            'errors' => 0
         ];
 
-        $this->output->progressStart(count($apiCarreras));
+        // ---------------------------------------------------------
+        // PHASE 1: UNIVERSITY API Sync (Carreras, Asignaturas, Pivot)
+        // ---------------------------------------------------------
+        if (!$carreraArg && !$sedeArg) { // Only run full University sync if not filtering
+            $this->info("\n[PHASE 1] Syncing structure from University API...");
+            try {
+                $uniStats = $universityService->syncAll(function ($msg) {
+                    $this->line("  → $msg");
+                });
 
-        foreach ($apiCarreras as $externalData) {
-            // Lógica "Espejo": Si existe actualiza, si no crea.
-            // Clave única: CODIGO + SEDE
-            $sede = \App\Models\Sede::where('codigo', $externalData['sede_codigo'])->first();
+                $this->info("  ✓ University Sync: {$uniStats['careers_synced']} careers, {$uniStats['courses_synced']} courses enriched.");
 
-            if ($sede) {
-                \App\Models\Carrera::updateOrCreate(
-                    [
-                        'codigo' => $externalData['codigo'],
-                        'sede_id' => $sede->id
-                    ],
-                    [
-                        'nombre' => $externalData['nombre'], // Si en la API cambia el nombre, aquí se actualiza
-                        'activo' => true
-                    ]
-                );
+                if ($uniStats['errors'] > 0) {
+                    $this->warn("  ⚠️ University Sync had {$uniStats['errors']} errors.");
+                }
+            } catch (\Exception $e) {
+                $this->error("  ❌ University Sync Failed: " . $e->getMessage());
             }
-            $this->output->progressAdvance();
+        } else {
+            $this->info("\n[PHASE 1] Skipping University Sync (running in filtered mode).");
         }
 
-        $this->output->progressFinish();
-        $this->info('Carreras Sincronizadas corectamente.');
+        // ---------------------------------------------------------
+        // PHASE 2: PLANNING API Sync (Docentes, Horarios, Grupos)
+        // ---------------------------------------------------------
+        $this->info("\n[PHASE 2] Syncing details from Planning API...");
+        $url = 'http://181.188.185.211:9098/api/Grupos/listar/';
+        $tasks = [];
 
-        // PASO 2: ASIGNATURAS
-        $this->info('Sincronizando Asignaturas...');
-        // Aquí iría la misma lógica para Asignaturas...
+        // Determine what to sync
+        if ($carreraArg && $sedeArg) {
+            $tasks[] = ['sede' => $sedeArg, 'carrera' => $carreraArg];
+        } else {
+            $this->info("Auto-detecting tasks from Known Configuration...");
+            foreach (self::SEDE_MAP as $sedeId => $carreras) {
+                if ($sedeArg && $sedeArg != $sedeId) continue;
+                foreach ($carreras as $sigla) {
+                    if ($carreraArg && $carreraArg != $sigla) continue;
+                    $tasks[] = ['sede' => $sedeId, 'carrera' => $sigla];
+                }
+            }
+        }
 
-        $this->info('¡Sincronización Completa! Los cambios externos ahora están en el sistema local.');
+        $totalTasks = count($tasks);
+        $this->info("Found $totalTasks tasks to process.");
+        $bar = $this->output->createProgressBar($totalTasks);
+
+        foreach ($tasks as $task) {
+            $params = [
+                'gestion' => $gestion,
+                'sede' => $task['sede'],
+                'carrera' => $task['carrera']
+            ];
+
+            try {
+                $response = Http::timeout(60)->get($url, $params);
+                if ($response->successful()) {
+                    $data = $response->json();
+                    if (is_array($data) && count($data) > 0) {
+                        $stats = $planningService->syncBatch($data);
+                        foreach ($stats as $key => $val) {
+                            if (isset($grandTotalStats[$key])) {
+                                $grandTotalStats[$key] += $val;
+                            }
+                        }
+                    }
+                }
+            } catch (\Exception $e) {
+                $this->error("\nError syncing Sede {$task['sede']} Carrera {$task['carrera']}: " . $e->getMessage());
+            }
+            $bar->advance();
+        }
+
+        $bar->finish();
+        $this->newLine(2);
+
+        $this->table(
+            ['Entity', 'Total Synced (Planning API)'],
+            [
+                ['Sedes', $grandTotalStats['sedes']],
+                ['Bloques', $grandTotalStats['bloques']],
+                ['Aulas', $grandTotalStats['aulas']],
+                ['Carreras', $grandTotalStats['carreras']],
+                ['Asignaturas', $grandTotalStats['asignaturas']],
+                ['Docentes', $grandTotalStats['docentes']],
+                ['Users Created', $grandTotalStats['users_created']],
+                ['Grupos', $grandTotalStats['grupos']],
+                ['Horarios', $grandTotalStats['horarios']],
+                ['Errors', $grandTotalStats['errors']],
+            ]
+        );
+
+        $this->info("Full Academic Sync completed.");
     }
 }

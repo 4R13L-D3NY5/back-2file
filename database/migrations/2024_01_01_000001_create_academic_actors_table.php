@@ -23,7 +23,7 @@ return new class extends Migration
             $table->id();
             $table->string('nombre_completo');
             $table->string('celular')->nullable();
-            $table->foreignId('user_id')->unique()->constrained('users')->cascadeOnDelete();
+            $table->foreignId('user_id')->nullable()->unique()->constrained('users')->cascadeOnDelete();
             $table->timestamps();
         });
 
