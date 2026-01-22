@@ -16,7 +16,7 @@ class SedeController extends Controller
             ->get()
             ->map(function ($sede) {
                 // Contar docentes reales a través de grupos
-                $docentesCount = Grupo::whereHas('asignatura.carrera', function ($q) use ($sede) {
+                $docentesCount = Grupo::whereHas('asignatura.carreras', function ($q) use ($sede) {
                     $q->where('sede_id', $sede->id);
                 })->distinct('docente_id')->count('docente_id');
 

@@ -93,26 +93,30 @@ class AsignaturaController extends Controller
         // 2. Buscar primero en base de datos local (por ID o por Código)
         $local = Asignatura::where('id', $codigo)
             ->orWhere('codigo', $codigo)
-            ->with(['unidades.temas', 'bibliografias', 'docentes', 'carrera.sede']) // Eager loading with temas
+            ->with(['unidades.temas', 'bibliografias', 'docentes', 'carreras.sede']) // Fix: carreras.sede
             ->first();
 
         // 3. Si existe localmente, retornamos eso (con alias para el frontend)
         if ($local) {
+            // Contexto principal (usamos la primera carrera encontrada o la que venga en el input)
+            // TODO: Mejorar selección de contexto si viene en el request
+            $mainCarrera = $local->carreras->first();
+
             // AUTO-SYNC: Si la asignatura no tiene unidades...
             if ($local->unidades()->count() === 0) {
                 // ... (código existente de sync service) ...
-                $actualBranchCode = $local->carrera->sede->codigo ?? $branchCode;
-                $actualCareerCode = $local->carrera->codigo ?? $careerCode;
+                $actualBranchCode = $mainCarrera->sede->codigo ?? $branchCode;
+                $actualCareerCode = $mainCarrera->codigo ?? $careerCode;
                 $this->syncService->syncAnalyticalProgram($local, $actualBranchCode, $actualCareerCode);
                 $local->load(['unidades.temas', 'bibliografias', 'docentes']);
             }
 
-            // AUTO-SYNC (CONTENIDO DESCRIPTIVO): Si falta descripción/justificación, intentar copiar de COCHABAMBA (Sede 1)
-            // Solo si esta sede NO es Cochabamba (evitar bucles, aunque la condición de vacío ya protege)
-            $sedeId = $local->carrera->sede_id ?? 0;
+            // AUTO-SYNC (CONTENIDO DESCRIPTIVO)
+            // Usamos el ID de la sede del contexto principal
+            $sedeId = $mainCarrera->sede_id ?? 0;
             if ($sedeId != 1 && (empty($local->descripcion) || empty($local->justificacion))) {
                 $central = Asignatura::where('codigo', $local->codigo)
-                    ->whereHas('carrera', function ($q) {
+                    ->whereHas('carreras', function ($q) { // Fix: carreras
                         $q->where('sede_id', 1);
                     })
                     ->first();
@@ -126,7 +130,7 @@ class AsignaturaController extends Controller
                     $local->sistema_evaluacion = $central->sistema_evaluacion;
                     $local->contenido_minimo = $central->contenido_minimo;
                     $local->requisitos = $central->requisitos;
-                    $local->save(); // Persistir la copia
+                    $local->save();
                 }
             }
 
@@ -258,12 +262,15 @@ class AsignaturaController extends Controller
         $response['justificacion'] = $local->justificacion;
 
         // Necesario reload para relaciones si se ocupara, pero aqui es update simple
+        // Necesario reload para relaciones si se ocupara
         // Si el frontend necesita carrera/sede, habría que cargarlas:
-        $local->load(['carrera.sede']);
-        $response['carrera'] = $local->carrera;
+        // load carreras instead of carrera
+        $local->load(['carreras.sede']);
+        $mainCarrera = $local->carreras->first();
+        $response['carrera'] = $mainCarrera; // Para compatibilidad frontend si usa .carrera
 
         // PROPAGACION DE DATOS: Si es Cochabamba (ID 1), actualizar "espejos" en otras sedes
-        if ($local->carrera && $local->carrera->sede_id == 1) { // 1 = Cochabamba (Central)
+        if ($mainCarrera && $mainCarrera->sede_id == 1) { // 1 = Cochabamba (Central)
             Asignatura::where('codigo', $local->codigo)
                 ->where('id', '!=', $local->id)
                 ->update([
@@ -290,7 +297,16 @@ class AsignaturaController extends Controller
             'semestre' => 'required|integer'
         ]);
 
-        $asignatura = Asignatura::create($request->all());
+        $carrera = Carrera::findOrFail($request->carrera_id);
+
+        $asignatura = Asignatura::create($request->except(['carrera_id', 'semestre', 'sede_id']));
+
+        // Attach to pivot with context
+        $asignatura->carreras()->attach($carrera->id, [
+            'semestre' => $request->semestre,
+            'sede_id' => $carrera->sede_id ?? 1 // Default to 1 if null, or infer
+        ]);
+
         return response()->json($asignatura, 201);
     }
 
