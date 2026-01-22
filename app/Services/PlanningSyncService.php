@@ -139,6 +139,7 @@ class PlanningSyncService
                         ['ci' => $dto->ci],
                         [
                             'nombre_completo' => $dto->docente,
+                            'sede_id' => $sede->id, // Asignación explícita de Sede
                         ]
                     );
                     if ($docente->trashed()) {
