@@ -40,10 +40,16 @@ class DocenteController extends Controller
                 // Try via pivot first (most accurate)
                 $carrera = $firstGrupo->asignatura->carreras->first();
                 if ($carrera) {
-                    // We need Sede name. In controller we eager loaded carreras... but we need Sede model.
-                    // Let's lazy load/fetch Sede if needed or use ID.
-                    // Optimization: Eager load 'grupos.asignatura.carreras.sede' in query above.
-                    $sede = $carrera->sede;
+                    // We need Sede name. Use 'sedes' relationship (Many-to-Many)
+                    // If eager loading was missing, we load it or access key if loaded.
+                    // Accessing ->sedes will lazy load if not eager loaded.
+                    $firstSede = $carrera->sedes->first();
+                    if ($firstSede) {
+                        $sede = $firstSede;
+                    } elseif ($carrera->sede) {
+                        // Fallback to singular if populated
+                        $sede = $carrera->sede;
+                    }
                 }
             }
 
