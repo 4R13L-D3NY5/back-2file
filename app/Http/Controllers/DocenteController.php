@@ -54,7 +54,7 @@ class DocenteController extends Controller
 
             return [
                 'id' => $docente->id,
-                'nombre' => $docente->nombre_completo,
+                'nombre_completo' => $docente->nombre_completo,
                 'email' => $docente->email,
                 'activo' => true, // O check deleted_at
                 'materias_count' => $materiasIds->count(),
