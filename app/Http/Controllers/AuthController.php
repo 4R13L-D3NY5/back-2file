@@ -46,7 +46,7 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Login exitoso',
             'token' => $token,
-            'user' => $user->load(['rol', 'docente.asignaturas']),
+            'user' => $user->load(['rol', 'docente.asignaturas', 'director.sede', 'director.carrera']),
             'password_change_required' => (bool) $user->password_change_required,
         ]);
     }
