@@ -52,17 +52,22 @@ class DocenteController extends Controller
             // User seeder uses 'sede_id' on USER, but Docente is linked to User.
             // Let's stick to inferred from Grupos for "Academic Sede".
 
-            return [
-                'id' => $docente->id,
-                'nombre_completo' => $docente->nombre_completo,
-                'email' => $docente->email,
-                'activo' => true, // O check deleted_at
-                'materias_count' => $materiasIds->count(),
-                'grupos_count' => $grupos->count(),
-                'horas_semanales' => 0, // TODO: Calcular real
-                'sede' => $sede ? ['nombre' => $sede->nombre] : null,
-                // 'materias_asignadas' => ... detail if needed
-            ];
+            // Merge stats into full model array to preserve all fields (estado, celular, etc.)
+            // and relationships (grupos) needed by frontend
+            $data = $docente->toArray();
+
+            // Override or append calculated fields
+            $data['materias_count'] = $materiasIds->count();
+            $data['grupos_count'] = $grupos->count();
+            $data['horas_semanales'] = 0; // TODO: Calcular real
+
+            // Inferred Sede Override (if model Sede is empty/null, use inferred)
+            if (empty($data['sede']) && $sede) {
+                $data['sede'] = ['nombre' => $sede->nombre];
+                $data['sede_id'] = $sede->id; // Ensure foreign key match
+            }
+
+            return $data;
         });
 
         return response()->json($docentes);
