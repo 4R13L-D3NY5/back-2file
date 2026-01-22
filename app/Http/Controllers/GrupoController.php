@@ -9,91 +9,137 @@ use Illuminate\Support\Facades\DB;
 class GrupoController extends Controller
 {
     /**
-     * Display a listing of subjects with their groups.
-     * We return subjects that match the filters, eager loading their 'docentes' pivot which acts as groups.
+     * Display a listing of subjects with their groups (schedules).
+     * Filters by Sede, Carrera, Gestion, Semestre.
      */
     public function index(Request $request)
     {
         $query = Asignatura::query();
+        $sedeId = $request->sede_id ?? $request->sede; // Allow alias
+        $carreraId = $request->carrera_id ?? $request->carrera;
+        $gestion = $request->gestion ?? '1-2026';
+        $semestre = $request->semestre;
 
-        // Apply filters
-        if ($request->has('sede_id') && $request->sede_id) {
-            // Filter by subjects available in this Sede (via Carrera)
-            // Assuming Asignatura -> Carrera -> Sede relation or pivot.
-            // Actually, Carrera has many Asignaturas.
-            // We should filter Asignaturas where their Carrera belongs to the Sede.
-            $query->whereHas('carrera', function ($q) use ($request) {
-                $q->where('sede_id', $request->sede_id);
+        // 1. Filter by Carrera/Sede via pivot
+        if ($carreraId) {
+            $query->whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
+                $q->where('carreras.id', $carreraId);
+                // If sede is provided, ensure the relationship matches that sede too
+                if ($sedeId) {
+                    $q->where('asignatura_carrera.sede_id', $sedeId);
+                }
+            });
+        } elseif ($sedeId) {
+            $query->whereHas('carreras', function ($q) use ($sedeId) {
+                $q->where('asignatura_carrera.sede_id', $sedeId);
             });
         }
 
-        if ($request->has('carrera_id') && $request->carrera_id) {
-            $query->where('carrera_id', $request->carrera_id);
+        // 2. Filter by Semestre (using pivot)
+        if ($semestre && $carreraId) {
+            $query->whereHas('carreras', function ($q) use ($carreraId, $semestre) {
+                $q->where('carreras.id', $carreraId)
+                    ->where('asignatura_carrera.semestre', $semestre);
+            });
         }
 
-        if ($request->has('semestre') && $request->semestre) {
-            $query->where('semestre', $request->semestre);
-        }
-
-        // Eager load Docentes (Groups)
-        // usage: $materia->docentes contains the teacher + pivot(grupo, aula, horario...)
-        $query->with(['docentes' => function ($q) {
-            $q->select('docentes.id', 'docentes.nombre_completo', 'docentes.grado_academico');
-        }, 'carrera']);
+        // 3. Eager Loading
+        // Load relationships needed for transformation
+        $query->with([
+            'carreras' => function ($q) use ($carreraId, $sedeId) {
+                // We need to limit eager load to the relevant career/sede to extract correct 'semestre'
+                if ($carreraId) $q->where('carreras.id', $carreraId);
+                if ($sedeId) $q->where('asignatura_carrera.sede_id', $sedeId);
+            },
+            'grupos' => function ($q) use ($gestion) {
+                $q->where('gestion', $gestion)
+                    ->with(['docente', 'horarios.aula.bloque']);
+            }
+        ]);
 
         // Pagination
         $materias = $query->paginate($request->per_page ?? 20);
 
-        // Transform data to match frontend expectation:
-        // { id, codigo, nombre, grupos: [ {id, numero, aula, horario, docente_nombre...} ] }
-        $transformed = $materias->getCollection()->map(function ($materia) {
+        // Transformation
+        $transformed = $materias->getCollection()->map(function ($materia) use ($request) {
+            // Determine Context (Carrera/Sede/Semestre)
+            // Use the first matched career (since we filtered by it)
+            $pivotContext = $materia->carreras->first();
+
+            $carreraNombre = $pivotContext ? $pivotContext->nombre : 'N/A';
+            $sedeId = $pivotContext ? $pivotContext->pivot->sede_id : null;
+            $semestre = $pivotContext ? $pivotContext->pivot->semestre : null;
+
+            // Resolve Sede Name (Optional optimization: Could eager load Sede in pivot or use a map)
+            // For now, let frontend handle ID->Name or assuming context via filter.
+            // But Page uses "materia.sede_nombre".
+            // Querying Sede name per row is N+1.
+            // Let's assume frontend passes Sede name in filters OR we rely on filtered value.
+            // Better: Load 'sedes' relation on Carrera? No, pivot has ID.
+            // But Asignatura->Carreras (Pivot) -> Sede Relationship?
+            // No easy way to get Sede Name without N+1 or join.
+            // We'll return "Sede ID" and let frontend resolve it (Stores have the list).
+
+            $gruposList = [];
+            foreach ($materia->grupos as $grupo) {
+                foreach ($grupo->horarios as $horario) {
+                    // Flatten: One item per Schedule Session
+                    $gruposList[] = [
+                        'grupo' => $grupo->nombre, // '1' or 'GR-1'
+                        'tipo_clase' => ucwords(strtolower($grupo->tipo ?? 'TEORICO')), // 'Teorico'
+                        'dia' => $horario->dia, // 'LUNES'
+                        'hora_inicio' => substr($horario->hora_inicio, 0, 5), // '07:00'
+                        'hora_fin' => substr($horario->hora_fin, 0, 5),
+                        'docente' => $grupo->docente ? $grupo->docente->nombre_completo : 'Sin Asignar',
+                        'aula' => $horario->aula ? $horario->aula->nombre : 'Sin Aula',
+                        'bloque' => ($horario->aula && $horario->aula->bloque) ? $horario->aula->bloque->nombre : '-',
+                        'capacidad' => $horario->aula ? $horario->aula->capacidad : 0,
+                        'pupitres' => $horario->aula ? $horario->aula->pupitres : 0,
+                    ];
+                }
+                // Handle case of group with NO hours (rare but valid)
+                if ($grupo->horarios->isEmpty()) {
+                    $gruposList[] = [
+                        'grupo' => $grupo->nombre,
+                        'tipo_clase' => ucwords(strtolower($grupo->tipo ?? 'TEORICO')),
+                        'dia' => '-',
+                        'hora_inicio' => '-',
+                        'hora_fin' => '-',
+                        'docente' => $grupo->docente ? $grupo->docente->nombre_completo : 'Sin Asignar',
+                        'aula' => '-',
+                        'bloque' => '-',
+                        'capacidad' => 0,
+                        'pupitres' => 0,
+                    ];
+                }
+            }
+
             return [
                 'id' => $materia->id,
                 'codigo' => $materia->codigo,
                 'nombre' => $materia->nombre,
-                'carrera_nombre' => $materia->carrera->nombre,
-                'carrera_id' => $materia->carrera_id,
-                'semestre' => $materia->semestre,
-                'sede_id' => $materia->carrera->sede_id, // Implicit via Carrera
-                'grupos' => $materia->docentes->map(function ($docente) {
-                    return [
-                        'id' => $docente->pivot->id ?? rand(1000, 9999), // Pivot ID might not be exposed easily in belongsToMany unless withPivot('id') is set.
-                        // Actually, belongsToMany doesn't return pivot ID by default unless requested.
-                        // We will rely on mapped properties for now.
-                        'numero' => $docente->pivot->grupo, // 'GR-1'
-                        'docente_id' => $docente->id,
-                        'docente_nombre' => $docente->grado_academico . ' ' . $docente->nombre_completo,
-                        'aula' => $docente->pivot->aula,
-                        'horario' => $docente->pivot->horario,
-                        'cupo' => $docente->pivot->cupo,
-                        'estudiantes' => $docente->pivot->estudiantes_inscritos,
-                    ];
-                })
+                'carrera' => $carreraNombre,
+                'sede_nombre' => 'Sede ' . $sedeId, // Placeholder
+                'semestre' => $semestre,
+                'gestion' => $request->gestion,
+                'grupos' => $gruposList
             ];
         });
 
-        // Calculate stats on the fly (for the filtered set)
-        // Note: Global stats for cards might need a separate query if we want totals ignoring pagination.
-        // For efficiency, we'll just sum the current page or do a quick aggregate count.
-        // Let's do a quick global aggregate query for the stats cards.
-        $statsQuery = $query->clone();
-
-        // We need total groups (count of rows in pivot for these subjects)
-        // This is expensive to join. Let's approximate or just count subjects.
-        // Or if the user really wants robust stats:
-        // DB::table('asignatura_docente')->whereIn('asignatura_id', $statsQuery->select('id'))->count();
-
-        $totalMaterias = $statsQuery->count();
-        // $totalGrupos = ... let's skip deep aggregation for speed unless requested.
-        // We can just return the data and let frontend sum the page, OR fetch separate stats endpoint.
+        // Add extra meta for counting (approximation for performance)
+        $meta = [
+            'current_page' => $materias->currentPage(),
+            'last_page' => $materias->lastPage(),
+            'total' => $materias->total(),
+            'total_materias' => $materias->total(),
+            // 'total_grupos' => $query->withCount('grupos')->get()->sum('grupos_count'), // Expensive? Maybe.
+            'carrera' => $request->carrera_id ? 'Carrera ID ' . $request->carrera_id : 'Todas',
+            'gestion' => $gestion
+        ];
 
         return response()->json([
             'data' => $transformed,
-            'meta' => [
-                'current_page' => $materias->currentPage(),
-                'last_page' => $materias->lastPage(),
-                'total' => $materias->total(),
-            ]
+            'meta' => $meta
         ]);
     }
 }

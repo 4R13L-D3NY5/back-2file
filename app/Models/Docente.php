@@ -5,11 +5,16 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Docente extends Model
 {
+    use SoftDeletes;
+
     protected $fillable = [
         'nombre_completo',
+        'ci',
+        'celular',
         'celular',
         'user_id',
         'email',
@@ -35,10 +40,26 @@ class Docente extends Model
         return $this->belongsTo(Sede::class);
     }
 
-    public function asignaturas(): BelongsToMany
+    /**
+     * Grupos en los que enseña este docente
+     */
+    public function grupos()
     {
-        return $this->belongsToMany(Asignatura::class, 'asignatura_docente')
-            ->withPivot(['grupo', 'aula', 'horario', 'cupo', 'estudiantes_inscritos'])
-            ->withTimestamps();
+        return $this->hasMany(Grupo::class);
+    }
+
+    /**
+     * Asignaturas que enseña (a través de grupos)
+     */
+    public function asignaturas()
+    {
+        return $this->hasManyThrough(
+            Asignatura::class,
+            Grupo::class,
+            'docente_id',    // FK en grupos
+            'id',            // FK en asignaturas
+            'id',            // PK en docentes
+            'asignatura_id'  // Local key en grupos
+        )->distinct();
     }
 }

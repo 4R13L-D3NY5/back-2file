@@ -138,6 +138,21 @@ class UserSeeder extends Seeder
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
+            [
+                'id' => 9,
+                'username' => '67760520',
+                'email' => '67760520@unitepc.edu.bo',
+                'password' => Hash::make('67760520'),
+                'nombre' => 'Super',
+                'apellido' => 'Admin',
+                'ci' => '67760520',
+                'telefono' => null,
+                'carrera' => null,
+                'rol_id' => 1, // SUPER ADMIN
+                'estado' => true,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
         ];
 
         DB::table('users')->insert($users);

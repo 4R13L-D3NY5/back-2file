@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Sede;
+use App\Models\Grupo;
 use Illuminate\Http\Request;
 
 class SedeController extends Controller
@@ -10,27 +11,42 @@ class SedeController extends Controller
     public function index()
     {
         $sedes = Sede::query()
-            ->withCount(['carreras']) // Relación definida en Sede model
+            ->withCount(['carreras'])
             ->orderBy('id')
             ->get()
             ->map(function ($sede) {
+                // Contar docentes reales a través de grupos usando la relación Many-to-Many
+                // Docente -> Grupos -> Asignatura -> Carreras -> Sedes
+                $docentesCount = \App\Models\Docente::whereHas('grupos.asignatura.carreras.sedes', function ($q) use ($sede) {
+                    $q->where('sedes.id', $sede->id);
+                })->count();
+
                 return [
                     'id' => $sede->id,
-                    'id_api' => $sede->id_api, // ID para API externa
                     'nombre' => $sede->nombre,
                     'codigo' => $sede->codigo,
                     'ciudad' => $sede->ciudad,
-                    'direccion' => $sede->direccion,
-                    'telefono' => $sede->telefono,
                     'activo' => $sede->activo,
-                    // Stats calculadas o simuladas por ahora
                     'carreras_count' => $sede->carreras_count,
-                    'docentes_count' => $this->calculateDocentes($sede->id), // Simulamos métrica compleja
-                    'progreso' => rand(50, 95) // Simulamos progreso
+                    'docentes_count' => $docentesCount,
                 ];
             });
 
-        return response()->json($sedes);
+        // Global Stats
+        $globalStats = [
+            'total_sedes' => $sedes->count(),
+            'sedes_activas' => $sedes->where('activo', true)->count(),
+            // Distinct carreras across all sedes (approximated by sum if uniqueness is per-sede, or DB query for true distinct)
+            // 'total_carreras' => \App\Models\Carrera::count(), // Total carreras in system
+            // 'total_carreras' => $sedes->sum('carreras_count'), // Total assignments (one carrera can be in multiple sedes)
+            'total_carreras' => \App\Models\Carrera::count(),
+            'total_docentes' => \App\Models\Docente::count()
+        ];
+
+        return response()->json([
+            'data' => $sedes,
+            'stats' => $globalStats
+        ]);
     }
 
     public function show($id)
@@ -38,20 +54,18 @@ class SedeController extends Controller
         return Sede::with('carreras')->findOrFail($id);
     }
 
-    private function calculateDocentes($sedeId)
+    /**
+     * Obtener carreras de una sede específica (para cascading filters)
+     */
+    public function carreras($id)
     {
-        // En un futuro esto sumará los docentes de las carreras asignadas
-        $base = [
-            1 => 180,
-            2 => 150,
-            3 => 165,
-            4 => 95,
-            5 => 110,
-            6 => 70,
-            7 => 80,
-            8 => 55,
-            9 => 45
-        ];
-        return $base[$sedeId] ?? 0;
+        $sede = Sede::findOrFail($id);
+
+        // Carreras por relación directa o por pivot
+        $carreras = \App\Models\Carrera::where('sede_id', $id)
+            ->orWhereHas('sedes', fn($q) => $q->where('sede_id', $id))
+            ->get(['id', 'nombre', 'sigla', 'codigo']);
+
+        return response()->json($carreras);
     }
 }
