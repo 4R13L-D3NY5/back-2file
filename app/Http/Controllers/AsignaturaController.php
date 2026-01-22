@@ -142,6 +142,8 @@ class AsignaturaController extends Controller
             $response['criterios_evaluacion'] = $local->sistema_evaluacion;
             $response['contenido_minimo'] = $local->contenido_minimo;
             $response['justificacion'] = $local->justificacion;
+            // Fix: Include semestre from pivot
+            $response['semestre'] = $mainCarrera?->pivot?->semestre;
 
             // Horarios desde la estructura normalizada (grupos + horarios)
             $response['horarios_data'] = $local->grupos()
@@ -268,6 +270,7 @@ class AsignaturaController extends Controller
         $local->load(['carreras.sede']);
         $mainCarrera = $local->carreras->first();
         $response['carrera'] = $mainCarrera; // Para compatibilidad frontend si usa .carrera
+        $response['semestre'] = $mainCarrera?->pivot?->semestre; // Fix: Include semestre
 
         // PROPAGACION DE DATOS: Si es Cochabamba (ID 1), actualizar "espejos" en otras sedes
         if ($mainCarrera && $mainCarrera->sede_id == 1) { // 1 = Cochabamba (Central)
