@@ -16,9 +16,14 @@ class SedeController extends Controller
             ->get()
             ->map(function ($sede) {
                 // Contar docentes reales a través de grupos
-                $docentesCount = Grupo::whereHas('asignatura.carreras', function ($q) use ($sede) {
-                    $q->where('sede_id', $sede->id);
-                })->distinct('docente_id')->count('docente_id');
+                // Optimizacion: Usar Join directo para evitar problemas con whereHas anidado en SoftDeletes/Nulls
+                $docentesCount = Grupo::join('asignaturas', 'grupos.asignatura_id', '=', 'asignaturas.id')
+                    ->join('asignatura_carrera', 'asignaturas.id', '=', 'asignatura_carrera.asignatura_id') // Correct join sequence
+                    ->where('asignatura_carrera.sede_id', $sede->id)
+                    ->whereNull('grupos.deleted_at')
+                    ->whereNull('asignaturas.deleted_at')
+                    ->distinct('grupos.docente_id')
+                    ->count('grupos.docente_id');
 
                 return [
                     'id' => $sede->id,

@@ -105,8 +105,8 @@ class AsignaturaController extends Controller
             // AUTO-SYNC: Si la asignatura no tiene unidades...
             if ($local->unidades()->count() === 0) {
                 // ... (código existente de sync service) ...
-                $actualBranchCode = $mainCarrera->sede->codigo ?? $branchCode;
-                $actualCareerCode = $mainCarrera->codigo ?? $careerCode;
+                $actualBranchCode = $mainCarrera?->sede?->codigo ?? $branchCode;
+                $actualCareerCode = $mainCarrera?->codigo ?? $careerCode;
                 $this->syncService->syncAnalyticalProgram($local, $actualBranchCode, $actualCareerCode);
                 $local->load(['unidades.temas', 'bibliografias', 'docentes']);
             }
