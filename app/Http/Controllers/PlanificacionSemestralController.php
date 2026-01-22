@@ -14,10 +14,15 @@ class PlanificacionSemestralController extends Controller
      * Obtiene todo el estado de la planificación semestral
      * (Configuración, Horarios, Sessions de Cronograma)
      */
-    public function index($asignaturaId)
+    public function index($asignaturaId, Request $request)
     {
-        $asignatura = Asignatura::with(['horarios', 'cronogramas' => function($q) {
+        $grupoId = $request->input('grupo_id');
+
+        $asignatura = Asignatura::with(['horarios', 'cronogramas' => function ($q) use ($grupoId) {
             $q->orderBy('numero_sesion');
+            if ($grupoId) {
+                $q->where('grupo_id', $grupoId);
+            }
         }])->findOrFail($asignaturaId);
 
         return response()->json([
@@ -37,12 +42,12 @@ class PlanificacionSemestralController extends Controller
     public function saveConfig(Request $request, $asignaturaId)
     {
         $asignatura = Asignatura::findOrFail($asignaturaId);
-        
+
         DB::transaction(function () use ($asignatura, $request) {
             // 1. Update Asignatura Dates
             $asignatura->update($request->only([
-                'fecha_inicio_clases', 
-                'fecha_fin_clases', 
+                'fecha_inicio_clases',
+                'fecha_fin_clases',
                 'gestion_academica'
             ]));
 
@@ -63,32 +68,34 @@ class PlanificacionSemestralController extends Controller
     {
         $asignatura = Asignatura::findOrFail($asignaturaId);
         $sesiones = $request->input('sesiones', []);
+        $grupoId = $request->input('grupo_id');
 
-        DB::transaction(function () use ($asignatura, $sesiones) {
-            // Option A: Delete all and re-insert (Cleanest for full re-generation)
-            // Option B: Upsert (Better if we want to preserve IDs).
-            // Given the UI allows "Regenerate", IDs in frontend are likely virtual (1, 2, 3...) until saved.
-            // Let's use Delete-Insert for simplicity and robustness against order changes.
-            
-            $asignatura->cronogramas()->delete();
+        DB::transaction(function () use ($asignatura, $sesiones, $grupoId) {
 
-            $dataToInsert = array_map(function ($sesion) {
+            if ($grupoId) {
+                $asignatura->cronogramas()->where('grupo_id', $grupoId)->delete();
+            } else {
+                $asignatura->cronogramas()->whereNull('grupo_id')->delete();
+            }
+
+            $dataToInsert = array_map(function ($sesion) use ($grupoId) {
                 return [
                     'numero_sesion' => $sesion['numeroGlobal'] ?? $sesion['numero_sesion'],
                     'fecha' => $this->parseDate($sesion['fecha']), // Ensure YYYY-MM-DD
                     'semana_academica' => $sesion['semana'],
                     'periodo_examen' => $sesion['periodoExamen'] ?? null,
-                    'tema_id' => null, // TODO: Link to real Tema ID if provided? UI sends 'tema' string usually.
-                    
+                    'tema_id' => null,
+                    'grupo_id' => $grupoId,
+
                     // Strings
                     'contenido_conceptual' => $sesion['conceptual'] ?? null,
                     'contenido_procedimental' => $sesion['procedimental'] ?? null,
                     'contenido_actitudinal' => $sesion['actitudinal'] ?? null,
                     'criterios_desempeno' => $sesion['criteriosDesempeno'] ?? null,
                     'instrumentos_evaluacion' => $sesion['instrumentosEvaluacion'] ?? null,
-                    
+
                     // Flags
-                    'observaciones' => null // Optional extra field
+                    'observaciones' => null
                 ];
             }, $sesiones);
 
@@ -102,16 +109,16 @@ class PlanificacionSemestralController extends Controller
             'count' => count($sesiones)
         ]);
     }
-    
+
     /**
      * Genera automáticamente las sesiones basado en Horarios y Fechas
      */
     public function generarPlanificacion(Request $request, $asignaturaId)
     {
         $asignatura = Asignatura::with('horarios')->findOrFail($asignaturaId);
-        
+
         if (!$asignatura->fecha_inicio_clases || !$asignatura->horarios->count()) {
-            return response()->json(['error' => 'Configure fechas y horario primero'], 400); 
+            return response()->json(['error' => 'Configure fechas y horario primero'], 400);
         }
 
         $startDate = \Carbon\Carbon::parse($asignatura->fecha_inicio_clases);
@@ -122,7 +129,7 @@ class PlanificacionSemestralController extends Controller
 
         // Semanas Académicas (1 a 20)
         for ($semana = 1; $semana <= 20; $semana++) {
-            
+
             // Determinar si es semana de examen (Lógica fija solicitada)
             $periodoExamen = null;
             if ($semana >= 7 && $semana <= 8) $periodoExamen = '1er Parcial';
@@ -133,26 +140,23 @@ class PlanificacionSemestralController extends Controller
             // Iterar horarios para esta semana
             foreach ($horarios as $horario) {
                 // Calcular fecha exacta
-                // $startDate es el inicio del semestre (Lunes o dia X).
-                // Asumiremos que start date es el Inicio Semestral.
-                // Necesitamos encontrar el primer "Lunes/Martes" a partir de startDate
-                // O simplificar: startDate + (semana-1)*7 + offsetDia ?
-                
-                // Estrategia: "Next Day of Week" a partir del inicio de la semana
                 $dayMap = [
-                    'Lunes' => 1, 'Martes' => 2, 'Miercoles' => 3, 'Miércoles' => 3, 
-                    'Jueves' => 4, 'Viernes' => 5, 'Sabado' => 6, 'Sábado' => 6
+                    'Lunes' => 1,
+                    'Martes' => 2,
+                    'Miercoles' => 3,
+                    'Miércoles' => 3,
+                    'Jueves' => 4,
+                    'Viernes' => 5,
+                    'Sabado' => 6,
+                    'Sábado' => 6
                 ];
-                
+
                 $targetDia = $dayMap[ucfirst($horario->dia)] ?? 1;
-                
+
                 // Fecha base de la semana actual
-                $weekStart = $startDate->copy()->addWeeks($semana - 1)->startOfWeek(); 
+                $weekStart = $startDate->copy()->addWeeks($semana - 1)->startOfWeek();
                 // Ajustar al día específico
                 $sessionDate = $weekStart->copy()->addDays($targetDia - 1);
-
-                // Si la fecha calculada supera el fin de clases, break? (Opcional)
-                // if ($sessionDate->gt($endDate)) continue; 
 
                 $sesiones[] = [
                     'asignatura_id' => $asignatura->id,
@@ -160,8 +164,9 @@ class PlanificacionSemestralController extends Controller
                     'fecha' => $sessionDate->format('Y-m-d'),
                     'semana_academica' => $semana,
                     'periodo_examen' => $periodoExamen,
+                    'grupo_id' => $request->input('grupo_id'), // Link to Group
                     // Si es examen, no lleva contenido (user request)
-                    'contenido_conceptual' => $periodoExamen ? null : '', 
+                    'contenido_conceptual' => $periodoExamen ? null : '',
                     'created_at' => now(),
                     'updated_at' => now()
                 ];
@@ -169,8 +174,13 @@ class PlanificacionSemestralController extends Controller
         }
 
         // Reemplazar existente
-        DB::transaction(function () use ($asignatura, $sesiones) {
-            $asignatura->cronogramas()->delete();
+        DB::transaction(function () use ($asignatura, $sesiones, $request) {
+            $grupoId = $request->input('grupo_id');
+            if ($grupoId) {
+                $asignatura->cronogramas()->where('grupo_id', $grupoId)->delete();
+            } else {
+                $asignatura->cronogramas()->whereNull('grupo_id')->delete();
+            }
             Cronograma::insert($sesiones);
         });
 
@@ -183,7 +193,7 @@ class PlanificacionSemestralController extends Controller
     public function copiarPlanificacion(Request $request, $asignaturaId)
     {
         $request->validate(['source_asignatura_id' => 'required|exists:asignaturas,id']);
-        
+
         $target = Asignatura::findOrFail($asignaturaId);
         $source = Asignatura::with('cronogramas')->findOrFail($request->source_asignatura_id);
 
@@ -194,15 +204,7 @@ class PlanificacionSemestralController extends Controller
             // Copiar
             $newCronogramas = [];
             foreach ($source->cronogramas as $c) {
-                // Solo copiamos CONTENIDO, mantenemos fechas? 
-                // El usuario pide "Unificar planificacion... variarian solo las fechas".
-                // Esto es complejo si los horarios son distintos (Lunes/Miercoles vs Martes/Jueves).
-                // Estrategia: Copiar contenido por "Número de Sesión".
-                // Asumimos que target YA TIENE sesiones generadas (fechas correctas).
-                // Actualizamos el contenido macheando numero_sesion.
-                
-                // Sin embargo, si target está vacío, no podemos machear.
-                // Asumiremos: El usuario primero GENERA las fechas (Paso 1), luego IMPORTA contenido (Paso 2).
+                // Implementation pending based on user requirements for copying
             }
 
             // Implementación "Update Content by Session Number"
@@ -222,3 +224,9 @@ class PlanificacionSemestralController extends Controller
 
         return response()->json(['message' => 'Contenidos importados correctamente']);
     }
+
+    private function parseDate($dateString)
+    {
+        return \Carbon\Carbon::parse($dateString)->format('Y-m-d');
+    }
+}

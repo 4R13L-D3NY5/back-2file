@@ -14,6 +14,7 @@ class Tema extends Model
         'horas_practicas',
         'horas_teoricas',
         'unidad_id',
+        'tipo', // 'TEORIA', 'PRACTICA' or null
         // Textos ricos y JSONs
         'contenido_conceptual',
         'contenido_procedimental',
@@ -53,7 +54,16 @@ class Tema extends Model
     public function bibliografias()
     {
         return $this->belongsToMany(Bibliografia::class, 'tema_bibliografia')
-                    ->withPivot(['pagina_desde', 'pagina_hasta'])
-                    ->withTimestamps();
+            ->withPivot(['pagina_desde', 'pagina_hasta'])
+            ->withTimestamps();
+    }
+
+    public function scopeForGroup($query, $grupo)
+    {
+        if (!$grupo) return $query;
+        return $query->where(function ($q) use ($grupo) {
+            $q->where('tipo', $grupo->tipo)
+                ->orWhereNull('tipo');
+        });
     }
 }

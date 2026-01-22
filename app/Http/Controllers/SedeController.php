@@ -15,15 +15,11 @@ class SedeController extends Controller
             ->orderBy('id')
             ->get()
             ->map(function ($sede) {
-                // Contar docentes reales a través de grupos
-                // Optimizacion: Usar Join directo para evitar problemas con whereHas anidado en SoftDeletes/Nulls
-                $docentesCount = Grupo::join('asignaturas', 'grupos.asignatura_id', '=', 'asignaturas.id')
-                    ->join('asignatura_carrera', 'asignaturas.id', '=', 'asignatura_carrera.asignatura_id') // Correct join sequence
-                    ->where('asignatura_carrera.sede_id', $sede->id)
-                    ->whereNull('grupos.deleted_at')
-                    ->whereNull('asignaturas.deleted_at')
-                    ->distinct('grupos.docente_id')
-                    ->count('grupos.docente_id');
+                // Contar docentes reales a través de grupos usando la relación Many-to-Many
+                // Docente -> Grupos -> Asignatura -> Carreras -> Sedes
+                $docentesCount = \App\Models\Docente::whereHas('grupos.asignatura.carreras.sedes', function ($q) use ($sede) {
+                    $q->where('sedes.id', $sede->id);
+                })->count();
 
                 return [
                     'id' => $sede->id,
@@ -36,7 +32,21 @@ class SedeController extends Controller
                 ];
             });
 
-        return response()->json($sedes);
+        // Global Stats
+        $globalStats = [
+            'total_sedes' => $sedes->count(),
+            'sedes_activas' => $sedes->where('activo', true)->count(),
+            // Distinct carreras across all sedes (approximated by sum if uniqueness is per-sede, or DB query for true distinct)
+            // 'total_carreras' => \App\Models\Carrera::count(), // Total carreras in system
+            // 'total_carreras' => $sedes->sum('carreras_count'), // Total assignments (one carrera can be in multiple sedes)
+            'total_carreras' => \App\Models\Carrera::count(),
+            'total_docentes' => \App\Models\Docente::count()
+        ];
+
+        return response()->json([
+            'data' => $sedes,
+            'stats' => $globalStats
+        ]);
     }
 
     public function show($id)

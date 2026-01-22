@@ -30,16 +30,16 @@ class AsignaturaController extends Controller
         // Filtros (Pivote y Texto)
         if ($request->filled('sede_id') || $request->filled('carrera_id') || $request->filled('semestre')) {
             $query->whereHas('carreras', function ($q) use ($request) {
-                if ($request->filled('sede_id')) $q->wherePivot('sede_id', $request->sede_id);
+                if ($request->filled('sede_id')) $q->where('asignatura_carrera.sede_id', $request->sede_id);
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
-                if ($request->filled('semestre')) $q->wherePivot('semestre', $request->semestre);
+                if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
             });
 
             // Cargar contexto específico para mostrar los datos correctos
             $query->with(['carreras' => function ($q) use ($request) {
-                if ($request->filled('sede_id')) $q->wherePivot('sede_id', $request->sede_id);
+                if ($request->filled('sede_id')) $q->where('asignatura_carrera.sede_id', $request->sede_id);
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
-                if ($request->filled('semestre')) $q->wherePivot('semestre', $request->semestre);
+                if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
             }]);
         } else {
             $query->with('carreras');
@@ -102,10 +102,25 @@ class AsignaturaController extends Controller
         $careerCode = $request->input('career_code', 'CARELE');
 
         // 2. Buscar primero en base de datos local (por ID o por Código)
-        $local = Asignatura::where('id', $codigo)
-            ->orWhere('codigo', $codigo)
-            ->with(['unidades.temas', 'bibliografias', 'docentes', 'carreras.sede']) // Fix: carreras.sede
-            ->first();
+        $query = Asignatura::where('id', $codigo)->orWhere('codigo', $codigo);
+
+        // Filter Content by Group Type
+        if ($request->filled('grupo_id')) {
+            $grupo = \App\Models\Grupo::find($request->grupo_id);
+            if ($grupo) {
+                $query->with(['unidades' => function ($q) use ($grupo) {
+                    $q->forGroup($grupo)->with(['temas' => function ($t) use ($grupo) {
+                        $t->forGroup($grupo);
+                    }]);
+                }]);
+            } else {
+                $query->with(['unidades.temas']);
+            }
+        } else {
+            $query->with(['unidades.temas']);
+        }
+
+        $local = $query->with(['bibliografias', 'docentes', 'carreras.sede'])->first();
 
         // 3. Si existe localmente, retornamos eso (con alias para el frontend)
         if ($local) {
@@ -162,6 +177,7 @@ class AsignaturaController extends Controller
                 ->get()
                 ->map(function ($grupo) {
                     return [
+                        'id' => $grupo->id,
                         'grupo' => $grupo->nombre,
                         'tipo' => $grupo->tipo,
                         'docente_nombre' => $grupo->docente?->nombre_completo,

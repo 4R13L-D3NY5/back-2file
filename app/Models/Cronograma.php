@@ -9,13 +9,14 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Cronograma extends Model
 {
     protected $fillable = [
-        'fecha', 
-        'numero_sesion', 
-        'observaciones', 
-        'asignatura_id', 
+        'fecha',
+        'numero_sesion',
+        'observaciones',
+        'asignatura_id',
+        'grupo_id',
         'tema_id',
         // New fields for Planning Semestral
-        'periodo_examen', 
+        'periodo_examen',
         'semana_academica',
         'contenido_conceptual',
         'contenido_procedimental',
@@ -27,6 +28,16 @@ class Cronograma extends Model
     public function asignatura(): BelongsTo
     {
         return $this->belongsTo(Asignatura::class);
+    }
+
+    public function grupo(): BelongsTo
+    {
+        return $this->belongsTo(Grupo::class);
+    }
+
+    public function scopeForGroup($query, $grupoId)
+    {
+        return $query->where('grupo_id', $grupoId);
     }
 
     public function tema(): BelongsTo

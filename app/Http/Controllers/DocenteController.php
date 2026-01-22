@@ -37,6 +37,14 @@ class DocenteController extends Controller
             });
         }
 
+        // Filter: Carrera
+        if ($request->has('carrera_id') && $request->carrera_id) {
+            $carreraId = $request->carrera_id;
+            $query->whereHas('grupos.asignatura.carreras', function ($q) use ($carreraId) {
+                $q->where('carreras.id', $carreraId);
+            });
+        }
+
         // Filter: Estado
         if ($request->has('estado') && $request->estado !== null && $request->estado !== 'null') {
             $isActive = filter_var($request->estado, FILTER_VALIDATE_BOOLEAN);

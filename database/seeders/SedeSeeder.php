@@ -13,13 +13,14 @@ class SedeSeeder extends Seeder
     public function run(): void
     {
         $sedes = [
-            // Verified IDs from Analysis
+            // Verified IDs from Planning API
             ['id' => 1,  'codigo' => 'CBA', 'nombre' => 'Cochabamba', 'ciudad' => 'Cochabamba'],
             ['id' => 6,  'codigo' => 'LPZ', 'nombre' => 'La Paz', 'ciudad' => 'La Paz'],
             ['id' => 9,  'codigo' => 'STC', 'nombre' => 'Santa Cruz', 'ciudad' => 'Santa Cruz'],
             ['id' => 12, 'codigo' => 'GUA', 'nombre' => 'Guayaramerin', 'ciudad' => 'Guayaramerin'],
             ['id' => 8,  'codigo' => 'PTO', 'nombre' => 'Puerto Quijarro', 'ciudad' => 'Puerto Quijarro'],
             ['id' => 5,  'codigo' => 'IVI', 'nombre' => 'Ivirgarzama', 'ciudad' => 'Ivirgarzama'],
+            // TODO: Cobija y El Alto - IDs pendientes de confirmar desde Planning API
         ];
 
         foreach ($sedes as $sede) {

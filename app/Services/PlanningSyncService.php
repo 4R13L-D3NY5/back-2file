@@ -110,6 +110,28 @@ class PlanningSyncService
                     );
                     $stats['asignaturas']++;
 
+                    // SYNC PIVOT ASIGNATURA-CARRERA (Crucial for filters)
+                    // Check if already attached in this specific Sede
+                    $pivotExists = DB::table('asignatura_carrera')
+                        ->where('asignatura_id', $asignatura->id)
+                        ->where('carrera_id', $carrera->id)
+                        ->where('sede_id', $sede->id)
+                        ->exists();
+
+                    if (!$pivotExists) {
+                        $asignatura->carreras()->attach($carrera->id, [
+                            'sede_id' => $sede->id,
+                            'semestre' => $dto->semestre
+                        ]);
+                    } else {
+                        // Update semestre if changed (optional but good for consistency)
+                        DB::table('asignatura_carrera')
+                            ->where('asignatura_id', $asignatura->id)
+                            ->where('carrera_id', $carrera->id)
+                            ->where('sede_id', $sede->id)
+                            ->update(['semestre' => $dto->semestre, 'updated_at' => now()]);
+                    }
+
                     // 6. Docente & User
                     // Matches DTO: ci (ID), docente (Name)
                     // We don't have codDocente in DTO, using CI as unique identifier
