@@ -9,29 +9,46 @@ class DocenteController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Docente::query()->with(['grupos.asignatura.carreras', 'grupos.horarios']); // Eager load deep relationships
+        $query = Docente::query()->with(['grupos.asignatura.carreras.sedes', 'grupos.horarios']);
 
-        if ($request->has('search')) {
+        // Search
+        if ($request->has('q') && $request->q) {
+            $term = $request->q;
+            $query->where(function ($q) use ($term) {
+                $q->where('nombre_completo', 'like', "%{$term}%")
+                    ->orWhere('email', 'like', "%{$term}%")
+                    ->orWhere('ci', 'like', "%{$term}%");
+            });
+        } elseif ($request->has('search') && $request->search) {
+            // Fallback for legacy calls
             $term = $request->search;
-            $query->where('nombre_completo', 'like', "%{$term}%")
-                ->orWhere('email', 'like', "%{$term}%");
+            $query->where(function ($q) use ($term) {
+                $q->where('nombre_completo', 'like', "%{$term}%")
+                    ->orWhere('email', 'like', "%{$term}%");
+            });
         }
 
-        $docentes = $query->orderBy('nombre_completo')->get()->map(function ($docente) {
+        // Filter: Sede
+        if ($request->has('sede_id') && $request->sede_id) {
+            $sedeId = $request->sede_id;
+            // Filter docentes who have groups in asignaturas belonging to carreras in the selected sede
+            $query->whereHas('grupos.asignatura.carreras.sedes', function ($q) use ($sedeId) {
+                $q->where('sedes.id', $sedeId);
+            });
+        }
+
+        // Filter: Estado
+        if ($request->has('estado') && $request->estado !== null && $request->estado !== 'null') {
+            $isActive = filter_var($request->estado, FILTER_VALIDATE_BOOLEAN);
+            $query->where('estado', $isActive);
+        }
+
+        $docentes = $query->orderBy('nombre_completo')->get();
+
+        $data = $docentes->map(function ($docente) {
             // Calcular estadísticas basades en Grupos
             $grupos = $docente->grupos;
             $materiasIds = $grupos->pluck('asignatura_id')->unique();
-
-            // Calcular horas (ej: suma de minutos de horarios / 60)
-            // Ojo: Esto es aproximado si no tenemos duración exacta por hora academica
-            // Asumiremos que 'horarios' tiene start/end
-            // Por simplicidad para el dashboard: Count de grupos * carga horaria asignatura?
-            // O mejor: suma de horas de los horarios asignados.
-            // Si no hay horarios cargados, usar default o 0.
-
-            // Simplificación: Horas/Sem = Suma de horas de las asignaturas via grupos?
-            // O count de grupos.
-            // El usuario ve "40 Hrs/Sem".
 
             // Inferencia de Sede (Tomar del primer grupo)
             $sede = null;
@@ -41,41 +58,44 @@ class DocenteController extends Controller
                 $carrera = $firstGrupo->asignatura->carreras->first();
                 if ($carrera) {
                     // We need Sede name. Use 'sedes' relationship (Many-to-Many)
-                    // If eager loading was missing, we load it or access key if loaded.
-                    // Accessing ->sedes will lazy load if not eager loaded.
                     $firstSede = $carrera->sedes->first();
                     if ($firstSede) {
                         $sede = $firstSede;
                     } elseif ($carrera->sede) {
-                        // Fallback to singular if populated
                         $sede = $carrera->sede;
                     }
                 }
             }
 
-            // Si tiene asignada un sede directa en tabla docentes (legacy?), usar esa.
-            // Pero el modelo Docente no tiene sede_id segun schema nuevo?
-            // User seeder uses 'sede_id' on USER, but Docente is linked to User.
-            // Let's stick to inferred from Grupos for "Academic Sede".
-
-            // Merge stats into full model array to preserve all fields (estado, celular, etc.)
-            // and relationships (grupos) needed by frontend
-            $data = $docente->toArray();
+            // Merge stats into full model array
+            $mapped = $docente->toArray();
 
             // Override or append calculated fields
-            $data['materias_count'] = $materiasIds->count();
-            $data['grupos_count'] = $grupos->count();
-            $data['horas_semanales'] = 0; // TODO: Calcular real
+            $mapped['materias_count'] = $materiasIds->count();
+            $mapped['grupos_count'] = $grupos->count();
+            $mapped['horas_semanales'] = 0; // TODO: Calcular real
 
-            // Inferred Sede Override (if model Sede is empty/null, use inferred)
-            if (empty($data['sede']) && $sede) {
-                $data['sede'] = ['nombre' => $sede->nombre];
-                $data['sede_id'] = $sede->id; // Ensure foreign key match
+            // Inferred Sede Override
+            if (empty($mapped['sede']) && $sede) {
+                $mapped['sede'] = ['nombre' => $sede->nombre];
+                $mapped['sede_id'] = $sede->id;
+                $mapped['sede_nombre'] = $sede->nombre; // Helper
             }
 
-            return $data;
+            return $mapped;
         });
 
-        return response()->json($docentes);
+        // Calculate Stats based on the filtered result
+        $stats = [
+            'total_docentes' => $data->count(),
+            'activos' => $data->where('estado', true)->count(),
+            'total_materias' => $data->sum('materias_count'),
+            'total_grupos' => $data->sum('grupos_count')
+        ];
+
+        return response()->json([
+            'data' => $data,
+            'stats' => $stats
+        ]);
     }
 }
