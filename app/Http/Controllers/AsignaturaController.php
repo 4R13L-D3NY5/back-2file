@@ -75,7 +75,18 @@ class AsignaturaController extends Controller
                 'sede_nombre' => $sedesMap[$context?->pivot?->sede_id] ?? 'N/A',
                 'activa' => $a->deleted_at === null,
                 'docentes' => $docentes->pluck('nombre_completo')->values(),
+                'docente_nombre' => $docentes->isEmpty() ? null : $docentes->pluck('nombre_completo')->implode(', '), // Fix for card display
                 'grupos_count' => $a->grupos->count(),
+                'docentes_data' => $docentes->map(function ($d) use ($a) { // Para el diálogo de selección
+                    // Calcular descripción de grupos para este docente
+                    $gruposDocente = $a->grupos->where('docente_id', $d->id);
+                    $desc = $gruposDocente->map(fn($g) => $g->nombre . ' (' . $g->tipo . ')')->implode(', ');
+                    return [
+                        'id' => $d->id,
+                        'nombre' => $d->nombre_completo,
+                        'descripcion_grupos' => $desc
+                    ];
+                })->values()
             ];
         }));
     }
