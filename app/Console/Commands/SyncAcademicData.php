@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Http;
 
 class SyncAcademicData extends Command
 {
-    protected $signature = 'academic:sync {gestion=1-2026} {--carrera=} {--sede=} {--all}';
+    protected $signature = 'academic:sync {gestion=1-2026} {--carrera=} {--sede=} {--all} {--queue : Run in background queue}';
     protected $description = 'Synchronize academic data from external API';
 
     private const SEDE_MAP = [
@@ -27,7 +27,15 @@ class SyncAcademicData extends Command
         $carreraArg = $this->option('carrera');
         $sedeArg = $this->option('sede');
 
-        $this->info("Starting FULL Academic Sync for Gestion: $gestion...");
+        $this->info("Starting Academic Sync for Gestion: $gestion...");
+
+        // OPTIMIZATION: Queue Mode
+        if ($this->option('queue')) {
+            \App\Jobs\ProcessAcademicSync::dispatch($gestion, $carreraArg, $sedeArg);
+            $this->info("✓ Sync Job dispatched to background queue.");
+            $this->info("  Check logs for progress or run 'php artisan queue:work'.");
+            return;
+        }
 
         $grandTotalStats = [
             'sedes' => 0,
@@ -97,7 +105,7 @@ class SyncAcademicData extends Command
             ];
 
             try {
-                $response = Http::timeout(60)->get($url, $params);
+                $response = Http::timeout(120)->retry(3, 2000)->get($url, $params);
                 if ($response->successful()) {
                     $data = $response->json();
                     if (is_array($data) && count($data) > 0) {

@@ -349,14 +349,11 @@ class AsignaturaController extends Controller
 
     public function assignDocentes(Request $request, $id)
     {
-        $asignatura = Asignatura::findOrFail($id);
-        $docentes = $request->input('docentes', []); // Array of IDs
-
-        // Sync without detaching existing ones? Or replace all?
-        // Usually, the UI sends the full list of desired docentes, so sync is appropriate.
-        $asignatura->docentes()->sync($docentes);
-
-        return response()->json(['message' => 'Docentes asignados correctamente', 'docentes' => $asignatura->docentes]);
+        // DEPRECATED: Docentes are now assigned via Grupos using 'hasManyThrough'
+        return response()->json([
+            'error' => 'La asignación directa de docentes ha sido deprecada. Por favor, asigne el docente a un Grupo específico.',
+            'action_required' => 'Use el endpoint de creación/edición de Grupos.'
+        ], 400);
     }
 
     /**

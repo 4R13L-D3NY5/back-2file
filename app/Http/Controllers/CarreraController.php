@@ -25,13 +25,14 @@ class CarreraController extends Controller
             });
         }
 
-        $carreras = $query->get()->map(function ($carrera) {
+        $carreras = $query->with('sedes:id')->get()->map(function ($carrera) {
             return [
                 'id' => $carrera->id,
                 'nombre' => $carrera->nombre,
                 'codigo' => $carrera->codigo ?: $carrera->sigla, // Fallback to sigla
                 'sigla' => $carrera->sigla,
                 'sede_id' => $carrera->sede_id,
+                'sedes_ids' => $carrera->sedes->pluck('id')->toArray(), // Multi-sede support
                 'activo' => $carrera->activo ?? true,
                 'area' => $carrera->area,
                 // Stats
