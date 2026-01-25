@@ -49,7 +49,14 @@ Route::middleware('auth:sanctum')->group(function () {
     // Planificación (Temas y Subniveles)
     Route::prefix('planificacion')->group(function () {
         // Unidades
+        Route::post('/asignaturas/{id}/unidades', [PlanificacionController::class, 'storeUnidad']);
         Route::put('/unidades/{id}', [PlanificacionController::class, 'updateUnidad']);
+        Route::delete('/unidades/{id}', [PlanificacionController::class, 'destroyUnidad']);
+
+        // Temas
+        Route::post('/unidades/{id}/temas', [PlanificacionController::class, 'storeTema']);
+        Route::post('/temas/{id}/move', [PlanificacionController::class, 'moveTema']);
+        Route::delete('/temas/{id}', [PlanificacionController::class, 'destroyTema']);
 
         // Contenidos (Saberes) - Corregido updateContenido -> updateTema
         Route::put('/temas/{id}/contenido', [PlanificacionController::class, 'updateTema']);

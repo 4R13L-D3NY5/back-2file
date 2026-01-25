@@ -19,8 +19,95 @@ class PlanificacionController extends Controller
     public function updateUnidad(Request $request, $id)
     {
         $unidad = Unidad::findOrFail($id);
-        $unidad->update($request->only('objetivo', 'contenido_minimo')); // 'objetivo' usually maps to 'Elemento de Competencia'
+        $unidad->update($request->only('objetivo', 'contenido_minimo', 'titulo', 'elemento_competencia'));
         return response()->json($unidad);
+    }
+
+    public function storeUnidad(Request $request)
+    {
+        // Validar asignatura_id
+        $request->validate([
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'titulo' => 'required|string',
+            'numero' => 'required|integer'
+        ]);
+
+        $unidad = Unidad::create($request->all());
+        return response()->json($unidad, 201);
+    }
+
+    public function destroyUnidad($id)
+    {
+        $unidad = Unidad::findOrFail($id);
+        $unidad->temas()->delete(); // Cascada manual si no está en DB
+        $unidad->delete();
+        return response()->json(null, 204);
+    }
+
+    // --- TEMAS ---
+
+    public function storeTema(Request $request, $unidadId)
+    {
+        $unidad = Unidad::findOrFail($unidadId);
+
+        $lastOrder = $unidad->temas()->max('orden') ?? 0;
+
+        $tema = $unidad->temas()->create([
+            'titulo' => $request->input('titulo', 'Nuevo Tema'),
+            'orden' => $lastOrder + 1,
+            'horas_teoricas' => $request->input('horas_teoricas', 0),
+            'horas_practicas' => $request->input('horas_practicas', 0),
+        ]);
+
+        return response()->json($tema, 201);
+    }
+
+    public function moveTema(Request $request, $id)
+    {
+        $request->validate([
+            'direction' => 'required|in:up,down'
+        ]);
+
+        $tema = Tema::findOrFail($id);
+        $direction = $request->input('direction');
+
+        if ($direction === 'up') {
+            $neighbor = Tema::where('unidad_id', $tema->unidad_id)
+                ->where('orden', '<', $tema->orden)
+                ->orderBy('orden', 'desc')
+                ->first();
+        } else {
+            $neighbor = Tema::where('unidad_id', $tema->unidad_id)
+                ->where('orden', '>', $tema->orden)
+                ->orderBy('orden', 'asc')
+                ->first();
+        }
+
+        if ($neighbor) {
+            $currentOrder = $tema->orden;
+            $neighborOrder = $neighbor->orden;
+
+            $tema->update(['orden' => $neighborOrder]);
+            $neighbor->update(['orden' => $currentOrder]);
+        }
+
+        return response()->json(['message' => 'Orden actualizado']);
+    }
+
+    public function destroyTema($id)
+    {
+        $tema = Tema::findOrFail($id);
+        $unidadId = $tema->unidad_id;
+
+        $tema->delete();
+
+        // Re-enumerar
+        $temas = Tema::where('unidad_id', $unidadId)->orderBy('orden')->get();
+        foreach ($temas as $index => $t) {
+            $t->update(['orden' => $index + 1]);
+        }
+
+        return response()->json(null, 204);
     }
     /**
      * Actualiza los contenidos (saberes) de un tema.
@@ -36,7 +123,7 @@ class PlanificacionController extends Controller
         // Mapeo de lo que envía el frontend vs base de datos
         // Frontend: formTema.contenidos -> { conceptual: [], ... }
         // DB: contenido_conceptual (json), ...
-        
+
         $data = $request->all();
         $updateData = [];
 
@@ -101,7 +188,7 @@ class PlanificacionController extends Controller
         $logro = $tema->logreseEperados()->create($request->all());
         return response()->json($logro, 201);
     }
-    
+
     public function destroyLogro($id)
     {
         LogroEsperado::findOrFail($id)->delete();
@@ -121,14 +208,14 @@ class PlanificacionController extends Controller
         Indicador::findOrFail($id)->delete();
         return response()->json(null, 204);
     }
-    
+
     /**
      * Devuelve TODA la data rica de un tema formateada para el Frontend
      */
     public function getFullTema($temaId)
     {
         $tema = Tema::with([
-            'secuencias', 
+            'secuencias',
             'logreseEperados.indicadores',
             'bibliografias'
         ])->findOrFail($temaId);
@@ -151,12 +238,12 @@ class PlanificacionController extends Controller
                 'recursos' => $tema->estrategias_recursos ?? []
             ],
             'evaluacion' => [
-                'formativa' => $tema->evaluacion_formativa ?? ['actividades'=>[], 'instrumentos'=>[], 'evidencias'=>[]],
-                'sumativa' => $tema->evaluacion_sumativa ?? ['actividades'=>[], 'instrumentos'=>[], 'evidencias'=>[]]
+                'formativa' => $tema->evaluacion_formativa ?? ['actividades' => [], 'instrumentos' => [], 'evidencias' => []],
+                'sumativa' => $tema->evaluacion_sumativa ?? ['actividades' => [], 'instrumentos' => [], 'evidencias' => []]
             ],
             'secuencia_didactica' => $tema->secuencias,
             'logros_esperados' => $tema->logreseEperados,
-            'referencias_bibliograficas' => $tema->bibliografias->map(function($b) {
+            'referencias_bibliograficas' => $tema->bibliografias->map(function ($b) {
                 return [
                     'bibliografia_id' => $b->id,
                     'titulo' => $b->titulo, // Extra info for UI

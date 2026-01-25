@@ -108,4 +108,39 @@ class Asignatura extends Model
     {
         return $this->hasMany(Matricula::class);
     }
+
+    /**
+     * ACCESSORS
+     */
+    public function getEstadisticasProgresoAttribute()
+    {
+        $total = 0;
+        $completados = 0;
+
+        // Relies on eager loading to avoid N+1
+        foreach ($this->unidades as $unidad) {
+            foreach ($unidad->temas as $tema) {
+                $total++;
+                // Criteria for completion: content is not empty
+                if (
+                    !empty($tema->contenido_conceptual) ||
+                    !empty($tema->contenido_procedimental)
+                ) {
+                    $completados++;
+                }
+            }
+        }
+
+        return [
+            'total' => $total,
+            'completados' => $completados,
+            'pendientes' => $total - $completados,
+            'porcentaje' => $total > 0 ? round(($completados / $total) * 100) : 0
+        ];
+    }
+
+    public function getProgresoAttribute()
+    {
+        return $this->estadisticas_progreso['porcentaje'];
+    }
 }

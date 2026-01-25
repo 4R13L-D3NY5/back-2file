@@ -43,10 +43,27 @@ class AuthController extends Controller
         // Crear Token
         $token = $user->createToken('auth-token')->plainTextToken;
 
+        // Cargar relaciones profundas para cálculo de progreso
+        $user->load([
+            'rol',
+            'docente.asignaturas.unidades.temas',
+            'docente.sede',
+            'docente.grupos',
+            'director.sede',
+            'director.carrera'
+        ]);
+
+        // Append progress
+        if ($user->docente) {
+            $user->docente->asignaturas->each(function ($asignatura) {
+                $asignatura->append(['progreso', 'estadisticas_progreso']);
+            });
+        }
+
         return response()->json([
             'message' => 'Login exitoso',
             'token' => $token,
-            'user' => $user->load(['rol', 'docente.asignaturas', 'director.sede', 'director.carrera']),
+            'user' => $user,
             'password_change_required' => (bool) $user->password_change_required,
         ]);
     }
@@ -124,7 +141,21 @@ class AuthController extends Controller
      */
     public function me(Request $request)
     {
-        $user = $request->user()->load(['rol', 'docente.asignaturas', 'director']);
+        $user = $request->user()->load([
+            'rol',
+            'docente.asignaturas.unidades.temas', // Load deep relations for progress calc
+            'docente.sede',
+            'docente.grupos',
+            'director'
+        ]);
+
+        // Append progress attribute to each asignatura
+        if ($user->docente) {
+            $user->docente->asignaturas->each(function ($asignatura) {
+                $asignatura->append(['progreso', 'estadisticas_progreso']);
+            });
+        }
+
         $user->password_change_required = (bool) $user->password_change_required;
         return $user;
     }
