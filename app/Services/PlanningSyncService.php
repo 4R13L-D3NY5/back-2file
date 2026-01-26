@@ -19,33 +19,6 @@ use Illuminate\Support\Facades\Log;
 
 class PlanningSyncService
 {
-    private const CAREER_NAMES = [
-        "CARCCP" => "COMPLEMENTARIA CONTADURÍA PÚBLICA",
-        "CARCAD" => "COMPLEMENTARIA EN ADMINISTRACIÓN DE EMPRESAS",
-        "CARCPU" => "LICENCIATURA EN CONTADURIA PUBLICA",
-        "CARECO" => "LICENCIATURA EN ECONOMÍA",
-        "CARICO" => "LICENCIATURA EN INGENIERIA COMERCIAL",
-        "CARCIC" => "COMPLEMENTARIA INGENIERÍA COMERCIAL",
-        "CARADM" => "LICENCIATURA EN ADMINISTRACIÓN DE EMPRESAS",
-        "CARCSO" => "LICENCIATURA EN COMUNICACIÓN SOCIAL",
-        "CARAYE" => "LICENCIATURA EN ARTE Y ESCULTURA",
-        "CARCNE" => "LICENCIATURA EN CINEMATOGRAFÍA",
-        "CARDER" => "LICENCIATURA EN DERECHO",
-        "CARELE" => "LICENCIATURA EN INGENIERÍA ELECTRÓNICA",
-        "CARSON" => "LICENCIATURA EN INGENIERÍA DE SONIDO",
-        "CARSIS" => "LICENCIATURA EN INGENIERÍA DE SISTEMAS",
-        "CARIBI" => "LICENCIATURA EN INGENIERÍA BIOMÉDICA",
-        "CARVET" => "LICENCIATURA EN MEDICINA VETERINARIA Y ZOOTECNIA",
-        "CARBYF" => "LICENCIATURA EN BIOQUIMICA Y FARMACIA",
-        "CARNYD" => "LICENCIATURA EN NUTRICION Y DIETETICA",
-        "CARODO" => "LICENCIATURA EN ODONTOLOGIA",
-        "CARFIS" => "LICENCIATURA EN FISIOTERAPIA Y KINESIOLOGIA",
-        "CARFON" => "LICENCIATURA EN FONOAUDIOLOGIA",
-        "CARPRO" => "PROTESIS DENTAL",
-        "CARENL" => "LICENCIATURA EN ENFERMERIA",
-        "CARMED" => "LICENCIATURA EN MEDICINA"
-    ];
-
     public function syncBatch(array $items): array
     {
         $stats = [
@@ -89,12 +62,18 @@ class PlanningSyncService
                     );
                     $stats['aulas']++;
 
-                    // 4. Carrera (Use Name Map)
-                    $carreraNombre = self::CAREER_NAMES[$dto->carrera] ?? $dto->carrera;
-                    $carrera = Carrera::firstOrCreate(
-                        ['sigla' => $dto->carrera],
-                        ['nombre' => $carreraNombre, 'sede_id' => $sede->id]
-                    );
+                    // 4. Carrera (Dynamic Lookup)
+                    // First try to find existing career (synced from University API)
+                    $carrera = Carrera::where('sigla', $dto->carrera)->first();
+
+                    if (!$carrera) {
+                        // Fallback: Create dynamic career using code if not found
+                        $carrera = Carrera::create([
+                            'sigla' => $dto->carrera,
+                            'nombre' => $dto->carrera, // Temporary name until full sync
+                            'sede_id' => $sede->id
+                        ]);
+                    }
 
                     // Sync Pivot: Attach Sede if not attached
                     if (!$carrera->sedes()->where('sede_id', $sede->id)->exists()) {
@@ -134,33 +113,74 @@ class PlanningSyncService
 
                     // 6. Docente & User
                     // Matches DTO: ci (ID), docente (Name)
-                    // We don't have codDocente in DTO, using CI as unique identifier
+
+                    // BLACKLIST: Skip specifically requested careers (e.g. Psychology)
+                    $blockedCareers = ['CARPSI', 'CARPSI-SEM'];
+                    if (in_array($dto->carrera, $blockedCareers)) {
+                        // Log::info("Skipping blocked career: {$dto->carrera}");
+                        continue;
+                    }
+
+                    // DATA QUALITY FILTER: Skip if docente name is invalid
+                    if (empty($dto->docente) || trim($dto->docente) === '' || stripos($dto->docente, 'Sin Asignar') !== false) {
+                        $stats['errors']++; // Track skipped items
+                        Log::warning("Skipping Group Sync: Invalid Docente Name '{$dto->docente}' for CI {$dto->ci}");
+                        continue; // Skip this item entirely (don't create group either)
+                    }
+
+                    $docenteNombre = $dto->docente ?: 'Docente ' . $dto->ci;
+
                     $docente = Docente::withTrashed()->updateOrCreate(
                         ['ci' => $dto->ci],
                         [
-                            'nombre_completo' => $dto->docente,
+                            'nombre_completo' => $docenteNombre,
+                            'sede_id' => $sede->id, // Asignación explícita de Sede
                         ]
                     );
+
                     if ($docente->trashed()) {
                         $docente->restore();
                     }
                     $stats['docentes']++;
 
-                    // Create User for Docente if not exists
-                    if (!$docente->user_id && $dto->ci) {
-                        $email = strtolower($dto->ci) . '@unitepc.edu.bo';
-                        $user = User::firstOrCreate(
-                            ['email' => $email],
-                            [
-                                'name' => $dto->docente,
-                                'password' => Hash::make($dto->ci),
-                                'username' => $dto->ci,
-                                'rol_id' => $docenteRoleId
-                            ]
-                        );
-                        $docente->user_id = $user->id;
-                        $docente->save();
-                        $stats['users_created']++;
+                    // Create User for Docente if not exists or if checking users
+                    if ($dto->ci && !$docente->user_id) {
+                        try {
+                            // Ensure Unique Username (CI)
+                            $user = User::where('username', $dto->ci)->first();
+
+                            if (!$user) {
+                                // Split Name into Nombre/Apellido
+                                $parts = explode(' ', $docenteNombre, 2);
+                                $nombre = $parts[0] ?? $docenteNombre;
+                                $apellido = $parts[1] ?? 'Doe';
+
+                                // Create new User with EXTENDED fields
+                                $user = User::create([
+                                    // 'name' column does not exist in DB, using nombre/apellido below
+                                    'email' => strtolower($dto->ci) . '@unitepc.edu.bo', // Dummy email based on CI
+                                    'username' => $dto->ci,
+                                    'password' => Hash::make($dto->ci), // Def pw: CI
+                                    'rol_id' => $docenteRoleId,
+                                    'estado' => 1, // 1 = ACTIVO
+                                    'password_change_required' => false,
+                                    // Required Extra Fields
+                                    'nombre' => $nombre,
+                                    'apellido' => $apellido,
+                                    'ci' => $dto->ci,
+                                    'carrera' => $dto->carrera,
+                                    'telefono' => $dto->celular ?? ''
+                                ]);
+                                $stats['users_created']++;
+                            }
+
+                            // Link Docente -> User
+                            $docente->user_id = $user->id;
+                            $docente->save();
+                        } catch (\Exception $e) {
+                            Log::error("Failed to create/link user for Docente CI {$dto->ci}: " . $e->getMessage());
+                            $stats['last_error'] = $e->getMessage();
+                        }
                     }
 
                     // 7. Grupo

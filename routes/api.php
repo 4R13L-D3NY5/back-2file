@@ -29,7 +29,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('carreras', CarreraController::class)->only(['index', 'update']);
 
     // Asignaturas
-    Route::apiResource('asignaturas', AsignaturaController::class);
+    Route::post('/asignaturas', [AsignaturaController::class, 'store']);
+    Route::get('/asignaturas/{id}', [AsignaturaController::class, 'show']);
+    Route::put('/asignaturas/{id}', [AsignaturaController::class, 'update']);
+    Route::put('/asignaturas/{id}/estado', [AsignaturaController::class, 'cambiarEstado']);
+    Route::delete('/asignaturas/{id}', [AsignaturaController::class, 'destroy']);
     Route::post('/asignaturas/{id}/docentes', [AsignaturaController::class, 'assignDocentes']);
     Route::post('/asignaturas/{id}/import-word', [AsignaturaController::class, 'importWord']);
 
@@ -49,7 +53,24 @@ Route::middleware('auth:sanctum')->group(function () {
     // Planificación (Temas y Subniveles)
     Route::prefix('planificacion')->group(function () {
         // Unidades
+        Route::post('/asignaturas/{id}/unidades', [PlanificacionController::class, 'storeUnidad']);
         Route::put('/unidades/{id}', [PlanificacionController::class, 'updateUnidad']);
+        Route::delete('/unidades/{id}', [PlanificacionController::class, 'destroyUnidad']);
+
+        // Temas
+        Route::post('/unidades/{id}/temas', [PlanificacionController::class, 'storeTema']);
+        Route::post('/temas/{id}/move', [PlanificacionController::class, 'moveTema']);
+        Route::delete('/temas/{id}', [PlanificacionController::class, 'destroyTema']);
+
+        // Logros Esperados
+        Route::post('/temas/{id}/logros', [PlanificacionController::class, 'storeLogro']);
+        Route::put('/logros/{id}', [PlanificacionController::class, 'updateLogro']);
+        Route::delete('/logros/{id}', [PlanificacionController::class, 'destroyLogro']);
+
+        // Indicadores
+        Route::post('/logros/{id}/indicadores', [PlanificacionController::class, 'storeIndicador']);
+        Route::put('/indicadores/{id}', [PlanificacionController::class, 'updateIndicador']);
+        Route::delete('/indicadores/{id}', [PlanificacionController::class, 'destroyIndicador']);
 
         // Contenidos (Saberes) - Corregido updateContenido -> updateTema
         Route::put('/temas/{id}/contenido', [PlanificacionController::class, 'updateTema']);

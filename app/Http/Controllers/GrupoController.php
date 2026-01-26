@@ -20,6 +20,15 @@ class GrupoController extends Controller
         $gestion = $request->gestion ?? '1-2026';
         $semestre = $request->semestre;
 
+        // SECURITY: If user is Docente, force filter by their ID
+        $user = $request->user();
+        // Check role via relationship (lazy load if needed)
+        if ($user && $user->rol && $user->rol->codigo === 'DOCENTE' && $user->docente) {
+            $query->whereHas('grupos', function ($q) use ($user) {
+                $q->where('docente_id', $user->docente->id);
+            });
+        }
+
         // 1. Filter by Carrera/Sede via pivot
         if ($carreraId) {
             $query->whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
