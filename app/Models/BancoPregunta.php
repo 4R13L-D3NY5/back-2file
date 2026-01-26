@@ -29,6 +29,11 @@ class BancoPregunta extends Model
 
     public function logro()
     {
-        return $this->belongsTo(LogroEsperado::class, 'logro_esperado_id');
+        return $this->belongsTo(LogroEsperado::class);
+    }
+
+    public function creator()
+    {
+        return $this->belongsTo(User::class, 'created_by');
     }
 }

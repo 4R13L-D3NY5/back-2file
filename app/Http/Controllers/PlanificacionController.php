@@ -9,6 +9,7 @@ use App\Models\EvaluacionTema;
 use App\Models\SecuenciaTema;
 use App\Models\LogroEsperado;
 use App\Models\Indicador;
+use App\Models\PlanificacionPersonal;
 use Illuminate\Http\Request;
 
 class PlanificacionController extends Controller
@@ -134,22 +135,57 @@ class PlanificacionController extends Controller
             $updateData['contenido_actitudinal'] = $data['contenidos']['actitudinal'] ?? null;
         }
 
-        // 2. Estrategias
+        // 1.5 Resultado de Aprendizaje
+        if (isset($data['resultado_aprendizaje'])) {
+            $updateData['resultado_aprendizaje'] = $data['resultado_aprendizaje'];
+        }
+
+        // 1.5 Map Contenidos (Nested -> Flat)
+        if (isset($data['contenidos'])) {
+            $updateData['contenido_conceptual'] = $data['contenidos']['conceptual'] ?? [];
+            $updateData['contenido_procedimental'] = $data['contenidos']['procedimental'] ?? [];
+            $updateData['contenido_actitudinal'] = $data['contenidos']['actitudinal'] ?? [];
+        }
+
+        // --- PERSONAL DATA INTERCEPTION ---
+        // Fields: estrategias_*, evaluacion_*, secuencia_didactica
+        $personalData = [];
+        $hasPersonalData = false;
+
+        // 2. Estrategias (PERSONAL)
         if (isset($data['estrategias'])) {
-            $updateData['estrategias_metodologicas'] = $data['estrategias']['metodologicas'] ?? '';
-            $updateData['estrategias_aprendizaje'] = $data['estrategias']['aprendizaje'] ?? '';
-            $updateData['estrategias_recursos'] = $data['estrategias']['recursos'] ?? [];
+            $personalData['estrategias_metodologicas'] = $data['estrategias']['metodologicas'] ?? '';
+            $personalData['estrategias_aprendizaje'] = $data['estrategias']['aprendizaje'] ?? '';
+            $personalData['estrategias_recursos'] = $data['estrategias']['recursos'] ?? [];
+            $hasPersonalData = true;
         }
 
-        // 3. Evaluaciones
+        // 3. Evaluaciones (PERSONAL)
         if (isset($data['evaluacion'])) {
-            $updateData['evaluacion_formativa'] = $data['evaluacion']['formativa'] ?? null;
-            $updateData['evaluacion_sumativa'] = $data['evaluacion']['sumativa'] ?? null;
+            $personalData['evaluacion_formativa'] = $data['evaluacion']['formativa'] ?? null;
+            $personalData['evaluacion_sumativa'] = $data['evaluacion']['sumativa'] ?? null;
+            $hasPersonalData = true;
         }
 
+        // 4. Secuencia (PERSONAL)
+        if (isset($data['secuencia_didactica'])) {
+            $personalData['secuencia_didactica'] = $data['secuencia_didactica'];
+            $hasPersonalData = true;
+        }
+
+        // Save Personal Data
+        if ($hasPersonalData) {
+            $userId = auth()->id() ?? 1; // Default fallback if no auth
+            PlanificacionPersonal::updateOrCreate(
+                ['tema_id' => $tema->id, 'user_id' => $userId],
+                $personalData
+            );
+        }
+
+        // Only update shared fields on Tema
         $tema->update($updateData);
 
-        // 4. Referencias Bibliograficas (Sync)
+        // 4. Referencias Bibliograficas (Sync - SHARED)
         if (isset($data['referencias_bibliograficas'])) {
             // Espera: [{ bibliografia_id: 1, pagina_desde: 10, pagina_hasta: 20 }, ...]
             $syncData = [];
@@ -164,7 +200,77 @@ class PlanificacionController extends Controller
             $tema->bibliografias()->sync($syncData);
         }
 
-        return response()->json($tema);
+        // 5. Resultado de Aprendizaje
+        if (isset($data['resultado_aprendizaje'])) {
+            $tema->update(['resultado_aprendizaje' => $data['resultado_aprendizaje']]);
+        }
+
+        // 6. Logros Esperados y Indicadores (Deep Sync)
+        if (isset($data['logros_esperados'])) {
+            $incomingLogrosIds = [];
+            \Illuminate\Support\Facades\Log::info('Procesando Logros:', ['count' => count($data['logros_esperados'])]);
+
+            foreach ($data['logros_esperados'] as $logroData) {
+                // Map 'parcial' from Frontend to 'periodo' in DB
+                $periodo = $logroData['parcial'] ?? '1er Parcial'; // Force String default
+
+                if (isset($logroData['id']) && is_numeric($logroData['id']) && $logroData['id'] < 1000000000000) {
+                    // Update existing
+                    $logro = LogroEsperado::find($logroData['id']);
+                    if ($logro && $logro->tema_id == $tema->id) {
+                        $logro->update([
+                            'descripcion' => $logroData['descripcion'],
+                            'tipo_logro' => $logroData['tipo_logro'] ?? null,
+                            'periodo' => (string)$periodo
+                        ]);
+                        $incomingLogrosIds[] = $logro->id;
+                        $this->syncIndicadores($logro, $logroData['indicadores'] ?? []);
+                    }
+                } else {
+                    // Create new
+                    $newLogro = $tema->logros()->create([
+                        'descripcion' => $logroData['descripcion'],
+                        'tipo_logro' => $logroData['tipo_logro'] ?? null,
+                        'periodo' => (string)$periodo
+                    ]);
+                    $incomingLogrosIds[] = $newLogro->id;
+                    $this->syncIndicadores($newLogro, $logroData['indicadores'] ?? []);
+                }
+            }
+
+            // Delete removed
+            $tema->logros()->whereNotIn('id', $incomingLogrosIds)->delete();
+        }
+
+        // RELOAD Logros for response
+        $tema->load('logros.indicadores');
+
+        // Prepare response matching Frontend expectations
+        $response = $tema->toArray();
+        $response['logros_esperados'] = $response['logros'];
+
+        return response()->json($response);
+    }
+
+    private function syncIndicadores($logro, $indicadoresData)
+    {
+        \Illuminate\Support\Facades\Log::info('Sync Indicadores for Logro ' . $logro->id, ['count' => count($indicadoresData)]);
+        $incomingIds = [];
+        foreach ($indicadoresData as $indData) {
+            if (isset($indData['id']) && is_numeric($indData['id']) && $indData['id'] < 1000000000000) {
+                $ind = Indicador::find($indData['id']);
+                if ($ind && $ind->logro_esperado_id == $logro->id) {
+                    $ind->update(['descripcion' => $indData['descripcion']]);
+                    $incomingIds[] = $ind->id;
+                }
+            } else {
+                $newInd = $logro->indicadores()->create(['descripcion' => $indData['descripcion']]);
+                $incomingIds[] = $newInd->id;
+            }
+        }
+
+        // Delete removed indicators (was missing!)
+        $logro->indicadores()->whereNotIn('id', $incomingIds)->delete();
     }
 
     // --- SECUENCIAS (Siguen siendo tabla aparte) ---
@@ -185,7 +291,7 @@ class PlanificacionController extends Controller
     public function storeLogro(Request $request, $temaId)
     {
         $tema = Tema::findOrFail($temaId);
-        $logro = $tema->logreseEperados()->create($request->all());
+        $logro = $tema->logros()->create($request->all());
         return response()->json($logro, 201);
     }
 
@@ -216,9 +322,30 @@ class PlanificacionController extends Controller
     {
         $tema = Tema::with([
             'secuencias',
-            'logreseEperados.indicadores',
+            'logros.indicadores', // Changed from logreseEperados to logros
             'bibliografias'
         ])->findOrFail($temaId);
+
+        // --- MERGE PERSONAL DATA ---
+        $userId = auth()->id();
+        if ($userId) {
+            $personal = PlanificacionPersonal::where('tema_id', $temaId) // Use $temaId here
+                ->where('user_id', $userId)
+                ->first();
+
+            if ($personal) {
+                // Override shared fields with personal data for the response
+                $tema->estrategias_metodologicas = $personal->estrategias_metodologicas;
+                $tema->estrategias_aprendizaje = $personal->estrategias_aprendizaje;
+                $tema->estrategias_recursos = $personal->estrategias_recursos;
+                $tema->evaluacion_formativa = $personal->evaluacion_formativa;
+                $tema->evaluacion_sumativa = $personal->evaluacion_sumativa;
+                $tema->secuencia_didactica = $personal->secuencia_didactica;
+
+                // Add flag to frontend knows it is personal (optional)
+                $tema->es_personalizado = true;
+            }
+        }
 
         // Transformar al formato que espera el Frontend
         $formatted = [
@@ -241,8 +368,8 @@ class PlanificacionController extends Controller
                 'formativa' => $tema->evaluacion_formativa ?? ['actividades' => [], 'instrumentos' => [], 'evidencias' => []],
                 'sumativa' => $tema->evaluacion_sumativa ?? ['actividades' => [], 'instrumentos' => [], 'evidencias' => []]
             ],
-            'secuencia_didactica' => $tema->secuencias,
-            'logros_esperados' => $tema->logreseEperados,
+            'secuencia_didactica' => $tema->secuencia_didactica ?? [], // Use the potentially overridden sequence_didactica
+            'logros_esperados' => $tema->logros, // Changed from logreseEperados to logros
             'referencias_bibliograficas' => $tema->bibliografias->map(function ($b) {
                 return [
                     'bibliografia_id' => $b->id,
@@ -254,6 +381,11 @@ class PlanificacionController extends Controller
                 ];
             })
         ];
+
+        // Add the 'es_personalizado' flag if it was set
+        if (isset($tema->es_personalizado)) {
+            $formatted['es_personalizado'] = $tema->es_personalizado;
+        }
 
         return response()->json($formatted);
     }

@@ -111,14 +111,26 @@ class AsignaturaController extends Controller
             if ($grupo) {
                 $query->with(['unidades' => function ($q) use ($grupo) {
                     $q->forGroup($grupo)->with(['temas' => function ($t) use ($grupo) {
-                        $t->forGroup($grupo);
+                        $t->forGroup($grupo)->with([
+                            'logros.indicadores',
+                            'bibliografias',
+                            'planificacionPersonal' => fn($q) => $q->where('user_id', auth()->id())
+                        ]);
                     }]);
                 }]);
             } else {
-                $query->with(['unidades.temas']);
+                $query->with([
+                    'unidades.temas.logros.indicadores',
+                    'unidades.temas.bibliografias',
+                    'unidades.temas.planificacionPersonal' => fn($q) => $q->where('user_id', auth()->id())
+                ]);
             }
         } else {
-            $query->with(['unidades.temas']);
+            $query->with([
+                'unidades.temas.logros.indicadores',
+                'unidades.temas.bibliografias',
+                'unidades.temas.planificacionPersonal' => fn($q) => $q->where('user_id', auth()->id())
+            ]);
         }
 
         $local = $query->with(['bibliografias', 'docentes', 'carreras.sede'])->first();
@@ -345,6 +357,18 @@ class AsignaturaController extends Controller
         }
 
         return response()->json($response);
+    }
+
+    public function cambiarEstado(Request $request, $id)
+    {
+        $request->validate([
+            'estado' => 'required|in:EN_PROCESO,APROBADO'
+        ]);
+
+        $asignatura = Asignatura::findOrFail($id);
+        $asignatura->update(['estado' => $request->estado]);
+
+        return response()->json($asignatura);
     }
 
     public function store(Request $request)

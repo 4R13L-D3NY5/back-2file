@@ -11,6 +11,8 @@ class Tema extends Model
 
     protected $fillable = [
         'titulo',
+        'orden',
+        'resultado_aprendizaje',
         'horas_practicas',
         'horas_teoricas',
         'unidad_id',
@@ -41,11 +43,12 @@ class Tema extends Model
         return $this->belongsTo(Unidad::class);
     }
 
-    // New Relationships (Rich Content)
-    public function logreseEperados()
+    public function logros()
     {
         return $this->hasMany(LogroEsperado::class);
     }
+
+
 
     public function secuencias()
     {
@@ -57,6 +60,11 @@ class Tema extends Model
         return $this->belongsToMany(Bibliografia::class, 'tema_bibliografia')
             ->withPivot(['pagina_desde', 'pagina_hasta'])
             ->withTimestamps();
+    }
+
+    public function planificacionPersonal()
+    {
+        return $this->hasOne(PlanificacionPersonal::class);
     }
 
     public function scopeForGroup($query, $grupo)

@@ -15,6 +15,7 @@ class Asignatura extends Model
     protected $fillable = [
         'codigo',
         'nombre',
+        'estado',
         // semestre REMOVED - now in asignatura_carrera pivot
         // carrera_id REMOVED - now many-to-many via asignatura_carrera
         'creditos',
