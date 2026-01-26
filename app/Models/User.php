@@ -32,6 +32,7 @@ class User extends Authenticatable
         'ci',
         'telefono',
         'carrera',
+        'sede_id',
     ];
 
     /**
@@ -62,6 +63,11 @@ class User extends Authenticatable
     public function rol()
     {
         return $this->belongsTo(Rol::class);
+    }
+
+    public function sede()
+    {
+        return $this->belongsTo(Sede::class);
     }
 
     public function director()

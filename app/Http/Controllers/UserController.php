@@ -11,7 +11,7 @@ class UserController extends Controller
 {
     public function index(Request $request)
     {
-        $query = User::with('rol')
+        $query = User::with(['rol', 'director.carrera', 'docente.sede', 'sede'])
             ->orderBy('id', 'desc');
 
         if ($request->has('search')) {
@@ -26,6 +26,57 @@ class UserController extends Controller
         }
 
         $users = $query->get();
+
+        // Transformar datos para frontend
+        $users->transform(function ($user) {
+            // Resolver Sede
+            $sedeNombre = null;
+            if ($user->sede) {
+                $sedeNombre = $user->sede->nombre;
+            } elseif ($user->director) {
+                $sede = \App\Models\Sede::find($user->director->sede_id);
+                if ($sede) $sedeNombre = $sede->nombre;
+            } elseif ($user->docente && $user->docente->sede) {
+                $sedeNombre = $user->docente->sede->nombre;
+            }
+
+            // Resolver Carrera
+            $carreraNombre = null;
+
+            // 1. Si es Director, ver perfil
+            if ($user->director) {
+                if ($user->director->carrera) {
+                    $carreraNombre = $user->director->carrera->nombre;
+                } else {
+                    // Si tiene multiples carreras o estan solo en la tabla carrera(director_id)
+                    $carreras = \App\Models\Carrera::where('director_id', $user->director->id)->pluck('nombre')->toArray();
+                    if (!empty($carreras)) {
+                        $carreraNombre = implode(', ', $carreras);
+                    }
+                }
+            }
+
+            // 2. Si falló o no es director, intentar parsear la columna 'carrera' (legacy/string ids)
+            if (!$carreraNombre && $user->carrera) {
+                // Si parece ser una lista de IDs (ej: "14, 15")
+                if (preg_match('/^[\d,\s]+$/', $user->carrera)) {
+                    $ids = explode(',', $user->carrera);
+                    $names = \App\Models\Carrera::whereIn('id', $ids)->pluck('nombre')->toArray();
+                    if (!empty($names)) {
+                        $carreraNombre = implode(', ', $names);
+                    } else {
+                        $carreraNombre = $user->carrera; // Fallback
+                    }
+                } else {
+                    $carreraNombre = $user->carrera; // Es un texto literal
+                }
+            }
+
+            $user->setAttribute('carrera_nombre', $carreraNombre);
+            $user->setAttribute('sede_nombre', $sedeNombre);
+            return $user;
+        });
+
         return response()->json($users);
     }
 
@@ -40,6 +91,7 @@ class UserController extends Controller
             'telefono' => 'nullable|string|max:20',
             'rol_id' => 'required|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
+            'sede_id' => 'nullable|exists:sedes,id',
             'estado' => 'boolean'
         ]);
 
@@ -53,14 +105,45 @@ class UserController extends Controller
         }
 
         // Password default 'password' if not set, else hash it
-        if ($request->has('password') && !empty($request->password)) {
-            $validated['password'] = Hash::make($request->password);
-        } else {
-            $validated['password'] = Hash::make('password');
-        }
+        // Password default es el CI
+        $validated['password'] = Hash::make($validated['ci']);
+        $validated['password_change_required'] = true;
 
         $user = User::create($validated);
         $user->load('rol');
+
+        // Lógica para Director de Carrera
+        // Asumimos que el rol con ID 6 (o codigo DIRECTOR_CARRERA) es para directores.
+        // Lo ideal es buscar por código, pero aqui usaremos el nombre del rol o codigo si esta cargado
+        // O verificamos si el request trae 'rol_id' correspondiente.
+        // Mejor: Si el rol tiene codigo 'DIRECTOR_CARRERA'.
+
+        if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            // Crear perfil director
+            $director = \App\Models\Director::create([
+                'user_id' => $user->id,
+                'nombres' => $user->nombre,
+                'apellidos' => $user->apellido,
+                'sede_id' => $request->sede_id, // Asignar sede
+                // 'carrera_id' => ... asignamos la primera como principal?
+            ]);
+
+            // Asignar carreras (ids vienen en $validated['carrera'] como string "1, 2" o array si el validador lo permitiera)
+            // En el store frontend hicimos .join(', '). Recibimos "1, 2".
+            if (!empty($validated['carrera'])) {
+                $carreraIds = explode(',', $validated['carrera']);
+                $carreraIds = array_map('trim', $carreraIds);
+
+                // Actualizar carreras para que apunten a este director
+                \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
+
+                // Set primary career to director profile just in case
+                if (count($carreraIds) > 0) {
+                    $director->carrera_id = $carreraIds[0];
+                    $director->save();
+                }
+            }
+        }
 
         return response()->json($user, 201);
     }
@@ -77,6 +160,7 @@ class UserController extends Controller
             'telefono' => 'nullable|string|max:20',
             'rol_id' => 'sometimes|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
+            'sede_id' => 'nullable|exists:sedes,id',
             'estado' => 'boolean',
             'password' => 'nullable|string|min:6'
         ]);
@@ -89,6 +173,46 @@ class UserController extends Controller
 
         $user->update($validated);
         $user->load('rol');
+
+        // Sync Director Data
+        if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            // Update or Create Director profile
+            $director = \App\Models\Director::firstOrCreate(
+                ['user_id' => $user->id],
+                [
+                    'nombres' => $user->nombre,
+                    'apellidos' => $user->apellido,
+                    'sede_id' => $request->sede_id ?? $user->sede_id
+                ]
+            );
+
+            // Update fields
+            $director->update([
+                'nombres' => $validated['nombre'] ?? $director->nombres,
+                'apellidos' => $validated['apellido'] ?? $director->apellidos,
+                'sede_id' => $request->sede_id ?? $director->sede_id
+            ]);
+
+            // Sync Carreras
+            if (isset($validated['carrera'])) { // Si se envió el campo carrera
+                // Desvincular anteriores
+                \App\Models\Carrera::where('director_id', $director->id)->update(['director_id' => null]);
+
+                if (!empty($validated['carrera'])) {
+                    $carreraIds = explode(',', $validated['carrera']);
+                    $carreraIds = array_map('trim', $carreraIds);
+
+                    // Vincular nuevas
+                    \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
+
+                    // Update primary
+                    if (count($carreraIds) > 0) {
+                        $director->carrera_id = $carreraIds[0];
+                        $director->save();
+                    }
+                }
+            }
+        }
 
         return response()->json($user);
     }

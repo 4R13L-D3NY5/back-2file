@@ -39,7 +39,8 @@ class Asignatura extends Model
         'competencia_asignatura',
         'competencia_global_especifica',
         'reglamento_normativa',
-        'organizacion_calendario'
+        'organizacion_calendario',
+        'comun_token'
     ];
 
     /**

@@ -66,6 +66,7 @@ class AsignaturaController extends Controller
                 'id' => $a->id,
                 'codigo' => $a->codigo,
                 'nombre' => $a->nombre,
+                'comun_token' => $a->comun_token, // Added for frontend indicator
                 'creditos' => $a->creditos,
                 'semestre' => $context?->pivot?->semestre,
                 'horas_teoricas' => $a->horas_teoricas,

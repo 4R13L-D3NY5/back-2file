@@ -29,6 +29,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('carreras', CarreraController::class)->only(['index', 'update']);
 
     // Asignaturas
+    Route::get('/asignaturas', [AsignaturaController::class, 'index']);
     Route::post('/asignaturas', [AsignaturaController::class, 'store']);
     Route::get('/asignaturas/{id}', [AsignaturaController::class, 'show']);
     Route::put('/asignaturas/{id}', [AsignaturaController::class, 'update']);
@@ -155,5 +156,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
         Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
         Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
+    });
+
+    // Materias Comunes
+    Route::prefix('materias-comunes')->group(function () {
+        Route::get('/', [\App\Http\Controllers\MateriaComunController::class, 'index']);
+        Route::get('/candidates', [\App\Http\Controllers\MateriaComunController::class, 'candidates']);
+        Route::post('/link', [\App\Http\Controllers\MateriaComunController::class, 'link']);
+        Route::post('/unlink/{id}', [\App\Http\Controllers\MateriaComunController::class, 'unlink']);
     });
 });
