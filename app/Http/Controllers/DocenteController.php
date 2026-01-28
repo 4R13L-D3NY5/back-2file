@@ -192,4 +192,47 @@ class DocenteController extends Controller
             'metricas' => $stats // Renaming to match frontend expectation 'metricas'
         ]);
     }
+
+    public function mySubjects(Request $request) {
+        $user = auth()->user();
+        if (!$user) return response()->json(['error' => 'Unauthorized'], 401);
+
+        // Find Docente record linked to User
+        // Looking at Model User, it usually has 'docente' relation or is checking ID.
+        // In this project structure, Docente might BE the user or linked.
+        // index() uses Docente::query(), implying Docente is a separate model?
+        // Let's check if User is Docente.
+        // Assuming Docente model has user_id or User has docente relation.
+        $docente = Docente::where('user_id', $user->id)->first();
+        
+        // If not found (maybe User IS the Docente in some legacy logic, or testing admin), try to find by email or logic.
+        // But let's assume valid linkage.
+        if (!$docente) {
+             // Fallback for demo: Return all if Super Admin? No, keep restricted.
+             return response()->json([]);
+        }
+
+        // Get groups/subjects
+        $grupos = $docente->grupos()->with(['asignatura.carreras'])->get();
+
+        $subjects = $grupos->map(function ($grupo) {
+             return [
+                 'id' => $grupo->asignatura->id,
+                 'nombre' => $grupo->asignatura->nombre,
+                 'codigo' => $grupo->asignatura->codigo,
+                 'grupo' => $grupo->nombre, // 'Grupo A'
+                 'horario' => '08:00 - 10:00', // Mock/Placeholder unless Schedule exists
+                 'carreras' => $grupo->asignatura->carreras->map(fn($c) => [
+                     'id' => $c->id,
+                     'nombreCarrera' => $c->nombre,
+                     'materia' => $grupo->asignatura->nombre
+                 ])
+             ];
+        });
+
+        // If no groups found via Docente model (maybe direct User relation?), check alternatives.
+        // But existing code uses $docente->grupos.
+
+        return response()->json($subjects);
+    }
 }

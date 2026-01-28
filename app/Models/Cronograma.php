@@ -15,6 +15,7 @@ class Cronograma extends Model
         'asignatura_id',
         'grupo_id',
         'tema_id',
+        'cumplido',
         // New fields for Planning Semestral
         'periodo_examen',
         'semana_academica',

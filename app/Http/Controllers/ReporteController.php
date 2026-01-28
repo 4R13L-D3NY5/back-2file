@@ -161,6 +161,7 @@ class ReporteController extends Controller
                 $promedioGeneral = $materiaAvanceCount > 0 ? round($materiaAvanceSum / $materiaAvanceCount) : 0;
 
                 $reporteMaterias[] = [
+                    'id' => $asignatura->id,
                     'codigo' => $asignatura->codigo,
                     'nombre' => $asignatura->nombre,
                     // 'semestre' => $asignatura->semestre, // If column exists, otherwise infer or ignore
