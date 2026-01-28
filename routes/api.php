@@ -138,6 +138,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('usuarios', \App\Http\Controllers\UserController::class);
     Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
     Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
+    Route::get('/my-subjects', [\App\Http\Controllers\DocenteController::class, 'mySubjects']);
 
     // Cascading Filter Endpoints
     Route::get('sedes/{id}/carreras', [\App\Http\Controllers\SedeController::class, 'carreras']);
@@ -166,6 +167,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/link', [\App\Http\Controllers\MateriaComunController::class, 'link']);
         Route::post('/unlink/{id}', [\App\Http\Controllers\MateriaComunController::class, 'unlink']);
     });
+    // Clas Monitoring (Control de Clase)
+    Route::post('/cronogramas/find-or-create', [\App\Http\Controllers\CronogramaController::class, 'findOrCreate']);
+    Route::put('/cronogramas/{id}/seguimiento', [\App\Http\Controllers\CronogramaController::class, 'updateSeguimiento']);
+
     // Reportes (Nuevo)
     Route::get('/reportes/director', [\App\Http\Controllers\ReporteController::class, 'index']);
+    Route::get('/seguimiento-semanal/check-status', [\App\Http\Controllers\SeguimientoSemanalController::class, 'checkStatus']);
+    Route::post('/seguimiento-semanal/bulk-generate', [\App\Http\Controllers\SeguimientoSemanalController::class, 'bulkGenerate']);
+    Route::apiResource('seguimiento-semanal', \App\Http\Controllers\SeguimientoSemanalController::class);
 });
