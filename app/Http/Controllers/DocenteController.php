@@ -9,7 +9,12 @@ class DocenteController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Docente::query()->with(['grupos.asignatura.carreras.sedes', 'grupos.horarios']);
+        $query = Docente::query()->with([
+            'grupos.asignatura.carreras.sedes',
+            'grupos.asignatura.unidades.temas',
+            'grupos.cronogramas.asistencias',
+            'grupos.horarios'
+        ]);
 
         // Search
         if ($request->has('q') && $request->q) {
@@ -54,56 +59,137 @@ class DocenteController extends Controller
         $docentes = $query->orderBy('nombre_completo')->get();
 
         $data = $docentes->map(function ($docente) {
-            // Calcular estadísticas basades en Grupos
             $grupos = $docente->grupos;
-            $materiasIds = $grupos->pluck('asignatura_id')->unique();
+            $materiasData = [];
 
-            // Inferencia de Sede (Tomar del primer grupo)
+            // Group by Asignatura/Materia to show detailed progress per subject
+            foreach ($grupos as $grupo) {
+                if (!$grupo->asignatura) continue;
+
+                $asignatura = $grupo->asignatura;
+
+                // --- 1. Avance de Temas ---
+                // Total themes in the subject
+                $totalTemas = $asignatura->temas_count ?? $asignatura->unidades->sum(function ($u) {
+                    return $u->temas->count();
+                });
+                // Themes covered (Cronogramas registered)
+                $temasAvanzados = $grupo->cronogramas->count();
+
+                $avanceTemas = 0;
+                if ($totalTemas > 0) {
+                    $avanceTemas = min(100, round(($temasAvanzados / $totalTemas) * 100));
+                }
+
+                // --- 2. Asistencia ---
+                // Average attendance across all cronogramas for this group
+                $asistenciaPromedio = 0;
+                $totalAsistencias = 0;
+                $asistenciasCount = 0;
+
+                foreach ($grupo->cronogramas as $cronograma) {
+                    // If relations loaded, calculate
+                    if ($cronograma->asistencias->count() > 0) {
+                        $presentes = $cronograma->asistencias->where('asistio', 1)->count();
+                        $total = $cronograma->asistencias->count();
+                        $totalAsistencias += ($presentes / $total) * 100;
+                        $asistenciasCount++;
+                    }
+                }
+
+                if ($asistenciasCount > 0) {
+                    $asistenciaPromedio = round($totalAsistencias / $asistenciasCount);
+                } else {
+                    // Fallback randomness if no attendance data yet (For Demo/Real Feel if empty)
+                    // Or keep 0. Let's keep 0 if real.
+                    $asistenciaPromedio = 0;
+                }
+
+                // --- 3. Documentación Status ---
+                // Heuristics based on PlanificacionPersonal existence
+                // Check if ANY planning exists for this user + subject
+                // Ideally, we check specific "types" or just existence.
+                $hasPlanning = \App\Models\PlanificacionPersonal::where('user_id', $docente->id)
+                    ->whereHas('tema.unidad.asignatura', function ($q) use ($asignatura) {
+                        $q->where('id', $asignatura->id);
+                    })->exists();
+
+                $pac = $hasPlanning; // Simple heuristic: If they planned, PAC is "Done"
+                $syllabus = $hasPlanning; // Syllabus is usually generated from plan
+                $planClase = $avanceTemas > 0; // If they have cronogramas, they have class plans (implied)
+
+                // Detailed State
+                $estado = 'Al día';
+                if ($avanceTemas < 20 && $totalTemas > 0) $estado = 'Atrasado';
+                if (!$hasPlanning) $estado = 'Sin documentación';
+
+                $materiasData[] = [
+                    'id' => $asignatura->id,
+                    'codigo' => $asignatura->codigo,
+                    'nombre' => $asignatura->nombre,
+                    'grupo' => $grupo->nombre, // 'Grupo 1'
+                    'avanceTemas' => $avanceTemas,
+                    'asistencia' => $asistenciaPromedio,
+                    'pac' => $pac,
+                    'planClase' => $planClase,
+                    'syllabus' => $syllabus,
+                    'estado' => $estado
+                ];
+            }
+
+            // Inferencia de Sede (First Group)
             $sede = null;
             $firstGrupo = $grupos->first();
             if ($firstGrupo && $firstGrupo->asignatura) {
-                // Try via pivot first (most accurate)
+                // Try via pivot first
                 $carrera = $firstGrupo->asignatura->carreras->first();
-                if ($carrera) {
-                    // We need Sede name. Use 'sedes' relationship (Many-to-Many)
-                    $firstSede = $carrera->sedes->first();
-                    if ($firstSede) {
-                        $sede = $firstSede;
-                    } elseif ($carrera->sede) {
-                        $sede = $carrera->sede;
-                    }
+                if ($carrera && $carrera->sedes->first()) {
+                    $sede = $carrera->sedes->first();
+                } elseif ($carrera && $carrera->sede) {
+                    $sede = $carrera->sede;
                 }
             }
 
-            // Merge stats into full model array
-            $mapped = $docente->toArray();
-
-            // Override or append calculated fields
-            $mapped['materias_count'] = $materiasIds->count();
-            $mapped['grupos_count'] = $grupos->count();
-            $mapped['horas_semanales'] = 0; // TODO: Calcular real
-
-            // Inferred Sede Override
-            if (empty($mapped['sede']) && $sede) {
-                $mapped['sede'] = ['nombre' => $sede->nombre];
-                $mapped['sede_id'] = $sede->id;
-                $mapped['sede_nombre'] = $sede->nombre; // Helper
+            // Initials calculation
+            $parts = explode(' ', trim($docente->nombre_completo));
+            $initials = '';
+            if (count($parts) > 0) {
+                // First letter of first name
+                $initials .= strtoupper(substr($parts[0], 0, 1));
+                // First letter of last name (if exists)
+                if (count($parts) > 1) {
+                    $initials .= strtoupper(substr(end($parts), 0, 1));
+                }
             }
 
-            return $mapped;
+            // Mapping Response
+            return [
+                'id' => $docente->id,
+                'nombre' => $docente->nombre_completo,
+                'ci' => $docente->ci ?? 'N/A',
+                'email' => $docente->email,
+                'iniciales' => $initials ?: 'DC',
+                'carrera' => $firstGrupo->asignatura->carrera_id ?? null, // Simplification
+                'carrera_nombre' => $firstGrupo->asignatura->carreras->first()->nombre ?? 'General',
+                'materiasData' => $materiasData,
+                // Stats for top-level cards (calculated from materias)
+                'materias_count' => count($materiasData),
+                'estado_general' => collect($materiasData)->pluck('estado')->contains('Sin documentación') ? 'Sin documentación' : 'Al día',
+                'sede_nombre' => $sede ? $sede->nombre : 'Cochabamba'
+            ];
         });
 
-        // Calculate Stats based on the filtered result
+        // Calculate Stats based on the processed data (not just raw query)
         $stats = [
-            'total_docentes' => $data->count(),
-            'activos' => $data->where('estado', true)->count(),
-            'total_materias' => $data->sum('materias_count'),
-            'total_grupos' => $data->sum('grupos_count')
+            'totalDocentes' => $data->count(),
+            'alDia' => $data->filter(fn($d) => $d['estado_general'] === 'Al día')->count(),
+            'conRetraso' => $data->filter(fn($d) => $d['estado_general'] === 'Atrasado')->count(),
+            'sinDocumentacion' => $data->filter(fn($d) => $d['estado_general'] === 'Sin documentación')->count(),
         ];
 
         return response()->json([
             'data' => $data,
-            'stats' => $stats
+            'metricas' => $stats // Renaming to match frontend expectation 'metricas'
         ]);
     }
 }

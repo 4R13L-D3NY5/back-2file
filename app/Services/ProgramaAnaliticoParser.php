@@ -72,7 +72,9 @@ class ProgramaAnaliticoParser
             if (empty($line)) continue;
 
             // 1. Detect Bibliografia Section
-            if (Str::contains(strtoupper($line), 'BIBLIOGRAF') && Str::contains(strtoupper($line), 'REF')) {
+            // Updated to be more flexible: BIBLIOGRAFIA or REFERENCIAS
+            $upperLine = strtoupper($line);
+            if (Str::contains($upperLine, 'BIBLIOGRAF') || Str::contains($upperLine, 'REFERENCIA')) {
                 $inBibliografia = true;
                 continue;
             }
@@ -84,7 +86,8 @@ class ProgramaAnaliticoParser
 
             // 2. Detect Unidad
             // Pattern: "UNIDAD DE APRENDIZAJE [ROMAN/NUM]: [TITLE]"
-            if (preg_match('/^UNIDAD DE APRENDIZAJE\s+([IVXLCDM\d]+)[:\.]?\s*(.*)/i', $line, $matches)) {
+            // Updated to allow optional spaces and flexible separators
+            if (preg_match('/^UNIDAD DE APRENDIZAJE\s+([IVXLCDM\d]+)\s*[:\.\-]?\s*(.*)/i', $line, $matches)) {
 
                 // Save previous topic description if exists
                 if ($currentTema) {
@@ -105,8 +108,9 @@ class ProgramaAnaliticoParser
             }
 
             // 3. Detect Tema
-            // Pattern: "TEMA Nº[NUM].- [TITLE]"
-            if (preg_match('/^TEMA\s*Nº\s*(\d+)[\.\-]\s*(.*)/i', $line, $matches)) {
+            // Pattern: "TEMA Nº[NUM].- [TITLE]" or "TEMA Nº [NUM]: [TITLE]"
+            // Updated to allow multiple separators like ".-" or ":"
+            if (preg_match('/^TEMA\s*Nº\s*(\d+)\s*[:\.\-]+\s*(.*)/i', $line, $matches)) {
                 // Save previous topic
                 if ($currentTema && $currentUnidad) {
                     $currentUnidad['temas'][] = $currentTema;

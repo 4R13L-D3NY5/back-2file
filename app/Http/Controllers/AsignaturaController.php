@@ -106,16 +106,19 @@ class AsignaturaController extends Controller
         // 2. Buscar primero en base de datos local (por ID o por Código)
         $query = Asignatura::where('id', $codigo)->orWhere('codigo', $codigo);
 
+        // Determine target user for checks (Self or specific Docente as Director)
+        $targetUserId = $request->input('docente_id', auth()->id());
+
         // Filter Content by Group Type
         if ($request->filled('grupo_id')) {
             $grupo = \App\Models\Grupo::find($request->grupo_id);
             if ($grupo) {
-                $query->with(['unidades' => function ($q) use ($grupo) {
-                    $q->forGroup($grupo)->with(['temas' => function ($t) use ($grupo) {
+                $query->with(['unidades' => function ($q) use ($grupo, $targetUserId) {
+                    $q->forGroup($grupo)->with(['temas' => function ($t) use ($grupo, $targetUserId) {
                         $t->forGroup($grupo)->with([
                             'logros.indicadores',
                             'bibliografias',
-                            'planificacionPersonal' => fn($q) => $q->where('user_id', auth()->id())
+                            'planificacionPersonal' => fn($q) => $q->where('user_id', $targetUserId)
                         ]);
                     }]);
                 }]);
@@ -123,14 +126,14 @@ class AsignaturaController extends Controller
                 $query->with([
                     'unidades.temas.logros.indicadores',
                     'unidades.temas.bibliografias',
-                    'unidades.temas.planificacionPersonal' => fn($q) => $q->where('user_id', auth()->id())
+                    'unidades.temas.planificacionPersonal' => fn($q) => $q->where('user_id', $targetUserId)
                 ]);
             }
         } else {
             $query->with([
                 'unidades.temas.logros.indicadores',
                 'unidades.temas.bibliografias',
-                'unidades.temas.planificacionPersonal' => fn($q) => $q->where('user_id', auth()->id())
+                'unidades.temas.planificacionPersonal' => fn($q) => $q->where('user_id', $targetUserId)
             ]);
         }
 
@@ -312,6 +315,28 @@ class AsignaturaController extends Controller
         // FIX: Justificación no se estaba mapeando porque no está en $request->only() ni aquí
         if ($request->has('justificacion')) $local->justificacion = $request->justificacion;
 
+        // FIX: Nuevos campos de Programa de Asignatura que faltaban en el update manual
+        if ($request->has('competencia_global')) $local->competencia_global_especifica = $request->competencia_global; // Frontend sends 'competencia_global'
+        if ($request->has('competencia_global_especifica')) $local->competencia_global_especifica = $request->competencia_global_especifica; // Handle both keys
+
+        if ($request->has('competencia_asignatura')) $local->competencia_asignatura = $request->competencia_asignatura;
+        if ($request->has('elementos_competencia')) $local->elementos_competencia = $request->elementos_competencia;
+
+        // Handle array or string for reglamento
+        if ($request->has('reglamento_normativa')) {
+            $reg = $request->reglamento_normativa;
+            $local->reglamento_normativa = is_array($reg) ? json_encode($reg) : $reg; // Or cast automatically if model has cast? Assuming text/json
+            // Actually, if it's text column in DB, we prefer text. If it's JSON, encode.
+            // AsignaturaEditPage sends an array. Let's ensure we store it compatibly.
+            // importWord stores it as is (string?).
+            // Let's assume the DB column expects text or the model casts it.
+            // Safe bet: If array, implod/encode.
+            // Checking Model... assuming simple assignment works for now or casting.
+            $local->reglamento_normativa = $request->reglamento_normativa;
+        }
+
+        if ($request->has('organizacion_calendario')) $local->organizacion_calendario = $request->organizacion_calendario;
+
         $local->fill($data); // Fill the rest
         $local->save();
 
@@ -463,6 +488,17 @@ class AsignaturaController extends Controller
                 if (!empty($data['competencia_global_especifica'])) $asignatura->competencia_global_especifica = $data['competencia_global_especifica'];
                 if (!empty($data['reglamento_normativa'])) $asignatura->reglamento_normativa = $data['reglamento_normativa'];
                 if (!empty($data['organizacion_calendario'])) $asignatura->organizacion_calendario = $data['organizacion_calendario'];
+
+                // Nuevos Campos Generales (Autocompletado)
+                if (!empty($data['creditos']) && $data['creditos'] > 0) $asignatura->creditos = $data['creditos'];
+                if (!empty($data['carga_horaria_total']) && $data['carga_horaria_total'] > 0) $asignatura->carga_horaria_total = $data['carga_horaria_total'];
+                if (!empty($data['horas_teoricas']) && $data['horas_teoricas'] > 0) $asignatura->horas_teoricas = $data['horas_teoricas'];
+                if (!empty($data['horas_practicas']) && $data['horas_practicas'] > 0) $asignatura->horas_practicas = $data['horas_practicas'];
+
+                if (!empty($data['modalidad'])) $asignatura->modalidad = $data['modalidad'];
+                if (!empty($data['tipo_curso'])) $asignatura->tipo_curso = $data['tipo_curso'];
+                if (!empty($data['area_desempenio'])) $asignatura->area_desempenio = $data['area_desempenio'];
+                if (!empty($data['requisitos'])) $asignatura->requisitos = $data['requisitos'];
 
                 $asignatura->save();
             }

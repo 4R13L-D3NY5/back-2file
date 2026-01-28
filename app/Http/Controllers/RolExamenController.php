@@ -15,23 +15,36 @@ class RolExamenController extends Controller
      */
     public function index(Request $request)
     {
-        $query = RolExamen::query();
+        // Start with RolExamen model
+        $query = RolExamen::query()->select('rol_examenes.*');
 
+        // Simple conditional clauses
         if ($request->has('gestion')) {
-            $query->gestion($request->gestion);
+            $query->where('rol_examenes.gestion', $request->gestion);
         }
 
         if ($request->has('carrera_id')) {
-            $query->carrera($request->carrera_id);
+            $query->where('rol_examenes.carrera_id', $request->carrera_id);
         }
 
         if ($request->has('materia_codigo')) {
-            $query->materia($request->materia_codigo);
+            $query->where('rol_examenes.materia_codigo', $request->materia_codigo);
         }
 
-        $examenes = $query->orderBy('semana')
-            ->orderBy('fecha')
-            ->orderBy('hora_inicio')
+        // Join to get Semestre
+        // rol_examenes.materia_codigo -> asignaturas.codigo
+        // asignaturas.id -> asignatura_carrera.asignatura_id
+        // rol_examenes.carrera_id -> asignatura_carrera.carrera_id
+        $query->leftJoin('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
+            ->leftJoin('asignatura_carrera', function ($join) {
+                $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
+                    ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id');
+            })
+            ->addSelect('asignatura_carrera.semestre');
+
+        $examenes = $query->orderBy('rol_examenes.semana')
+            ->orderBy('rol_examenes.fecha')
+            ->orderBy('rol_examenes.hora_inicio')
             ->get();
 
         return response()->json([
@@ -51,7 +64,7 @@ class RolExamenController extends Controller
         $gestion = $request->get('gestion', date('Y') . '-I');
 
         $examenes = RolExamen::where('materia_codigo', $materiaId)
-            ->orWhere(function($q) use ($materiaId) {
+            ->orWhere(function ($q) use ($materiaId) {
                 $q->whereRaw('UPPER(materia_codigo) = ?', [strtoupper($materiaId)]);
             })
             ->gestion($gestion)
@@ -70,6 +83,7 @@ class RolExamenController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'file' => 'required|file|mimes:xlsx,xls|max:5120',
+            'carrera_id' => 'required|exists:carreras,id',
         ]);
 
         if ($validator->fails()) {
@@ -90,6 +104,7 @@ class RolExamenController extends Controller
 
             $imported = 0;
             $errors = [];
+            $warnings = [];
 
             DB::beginTransaction();
 
@@ -101,15 +116,16 @@ class RolExamenController extends Controller
 
                 try {
                     // Validar formato de fila
-                    // A: Código, B: Nombre, C: Tipo, D: Semana, E: Fecha, F: Hora Inicio, G: Hora Fin
+                    // A: Código, B: Nombre, C: Tipo, D: Grupo, E: Semana, F: Fecha, G: Hora Inicio, H: Hora Fin, I: Aula
                     $codigo = trim($row[0] ?? '');
                     $nombre = trim($row[1] ?? '');
                     $tipo = trim($row[2] ?? '');
-                    $semana = intval($row[3] ?? 0);
-                    $fecha = $this->parseDate($row[4] ?? '');
-                    $horaInicio = $this->parseTime($row[5] ?? '');
-                    $horaFin = $this->parseTime($row[6] ?? '');
-                    $aula = trim($row[7] ?? '');
+                    $grupo = trim($row[3] ?? '');
+                    $semana = intval($row[4] ?? 0);
+                    $fecha = $this->parseDate($row[5] ?? ''); // Shifted
+                    $horaInicio = $this->parseTime($row[6] ?? ''); // Shifted
+                    $horaFin = $this->parseTime($row[7] ?? ''); // Shifted
+                    $aula = trim($row[8] ?? ''); // Shifted
 
                     if (empty($codigo) || empty($tipo) || $semana <= 0) {
                         $errors[] = "Fila {$rowNumber}: Datos incompletos";
@@ -123,6 +139,19 @@ class RolExamenController extends Controller
                         continue;
                     }
 
+                    // VALIDAR REGLAS DE NEGOCIO
+                    $validation = $this->validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipoNormalizado);
+
+                    if (!empty($validation['error'])) {
+                        $errors[] = "Fila {$rowNumber}: " . $validation['error'];
+                        continue; // Block row
+                    }
+
+                    if (!empty($validation['warning'])) {
+                        $warnings[] = "Fila {$rowNumber}: " . $validation['warning'];
+                        // Proceed anyway
+                    }
+
                     // Crear o actualizar examen
                     RolExamen::updateOrCreate(
                         [
@@ -130,6 +159,10 @@ class RolExamenController extends Controller
                             'carrera_id' => $carreraId,
                             'materia_codigo' => $codigo,
                             'tipo_examen' => $tipoNormalizado,
+                            'grupo' => $grupo ?: null, // Include group in unique key if needed? Maybe not strictly unique for CREATE but for UPDATE yes?
+                            // WARNING: unique key logic might need 'grupo' if we want to differentiate exams for different groups of same subject.
+                            // If 'grupo' is null, we treat as general exam?
+                            // Let's assume unique key includes grupo if present.
                         ],
                         [
                             'materia_nombre' => $nombre,
@@ -151,17 +184,137 @@ class RolExamenController extends Controller
             DB::commit();
 
             return response()->json([
-                'message' => "Se importaron {$imported} exámenes",
+                'message' => "Se procesaron {$imported} registros",
                 'imported' => $imported,
                 'errors' => $errors,
+                'warnings' => $warnings,
             ]);
-
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
                 'message' => 'Error procesando archivo: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    private function validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipo)
+    {
+        $result = ['error' => null, 'warning' => null];
+
+        // 1. Validar Semana vs Tipo (Error Blocking)
+        $ranges = [
+            '1er Parcial' => [7, 9],
+            '2do Parcial' => [14, 16],
+            'Final' => [18, 20],
+            '2da Instancia' => [21, 25],
+        ];
+
+        if (isset($ranges[$tipo])) {
+            [$min, $max] = $ranges[$tipo];
+            if ($semana < $min || $semana > $max) {
+                $result['error'] = "El {$tipo} debe ser entre semana {$min} y {$max} (Actual: {$semana})";
+                return $result;
+            }
+        }
+
+        // 2. Validar Dia de Clase (Warning Non-Blocking)
+        // Solo si tenemos fecha y grupo
+        if ($fecha && $grupo) {
+            $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+            if ($asignatura) {
+                // Buscar grupo por nombre vinculado a la asignatura
+                // VALIDACION: Solo buscar en grupos TEORICOS (numerales)
+                $grupoModel = $asignatura->grupos()
+                    ->where('nombre', $grupo)
+                    ->where('tipo', 'TEORICO')
+                    ->first();
+
+                if ($grupoModel) {
+                    $diaExamen = date('N', strtotime($fecha)); // 1 (Mon) - 7 (Sun)
+
+                    // Asumiendo que Horario tiene 'dia' (1-7 o string)
+                    // Necesitamos verificar como se guarda 'dia' en Horario.
+                    // Generalmente es 1-7 o 'LUNES', etc.
+                    // Vamos a asumir 1-7 por ahora o verificar.
+
+                    $diasClaseRaw = $grupoModel->horarios()->pluck('dia')->toArray(); // array of strings e.g. "Lunes", "Miercoles"
+
+                    // Map keys to standard date('N') 1-7
+                    $dayMap = [
+                        'lunes' => 1,
+                        'lun' => 1,
+                        'martes' => 2,
+                        'mar' => 2,
+                        'miercoles' => 3,
+                        'miércoles' => 3,
+                        'mie' => 3,
+                        'mié' => 3,
+                        'jueves' => 4,
+                        'jue' => 4,
+                        'viernes' => 5,
+                        'vie' => 5,
+                        'sabado' => 6,
+                        'sábado' => 6,
+                        'sab' => 6,
+                        'domingo' => 7,
+                        'dom' => 7
+                    ];
+
+                    $diasClase = [];
+                    foreach ($diasClaseRaw as $dia) {
+                        // Simple normalization
+                        $key = str_replace(['á', 'é', 'í', 'ó', 'ú'], ['a', 'e', 'i', 'o', 'u'], strtolower($dia));
+                        if (isset($dayMap[$key])) {
+                            $diasClase[] = $dayMap[$key];
+                        } elseif (is_numeric($dia)) {
+                            $diasClase[] = (int)$dia;
+                        }
+                    }
+
+                    if (!empty($diasClase) && !in_array($diaExamen, $diasClase)) {
+                        $nombresDias = [1 => 'Lunes', 2 => 'Martes', 3 => 'Miércoles', 4 => 'Jueves', 5 => 'Viernes', 6 => 'Sábado', 7 => 'Domingo'];
+                        $diaNombre = $nombresDias[$diaExamen] ?? $diaExamen;
+                        $diaNombre = $nombresDias[$diaExamen] ?? $diaExamen;
+                        $result['error'] = "El examen es el {$diaNombre}, pero el grupo {$grupo} (Teórico) no tiene clases ese día.";
+                        return $result;
+                    }
+                }
+            }
+        }
+
+        // 3. Validar Colisión de Exámenes (Mismo Semestre, Misma Carrera, Mismo Día)
+        if ($fecha) {
+            $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+            if ($asignatura) {
+                // Obtener semestre via pivot table
+                $pivot = \Illuminate\Support\Facades\DB::table('asignatura_carrera')
+                    ->where('asignatura_id', $asignatura->id)
+                    ->where('carrera_id', $carreraId)
+                    ->first();
+
+                $semestre = $pivot ? $pivot->semestre : null;
+
+                if ($semestre) {
+                    $collision = \App\Models\RolExamen::where('carrera_id', $carreraId)
+                        ->whereDate('fecha', $fecha)
+                        ->where('materia_codigo', '!=', $codigo) // Diferente materia
+                        ->whereHas('asignatura', function ($q) use ($carreraId, $semestre) {
+                            $q->whereHas('carreras', function ($cq) use ($carreraId, $semestre) {
+                                $cq->where('carrera_id', $carreraId)
+                                    ->where('semestre', $semestre);
+                            });
+                        })
+                        ->exists();
+
+                    if ($collision) {
+                        $result['error'] = "Ya existe otro examen programado para el semestre {$semestre} en la fecha {$fecha}. (Restricción: Máx 1 examen por día para el mismo semestre)";
+                        return $result;
+                    }
+                }
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -229,29 +382,75 @@ class RolExamenController extends Controller
     }
 
     /**
+     * Eliminar todos los exámenes de una gestión y carrera
+     */
+    public function destroyAll(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'gestion' => 'required|string|max:20',
+            'carrera_id' => 'required|exists:carreras,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Datos inválidos', 'errors' => $validator->errors()], 422);
+        }
+
+        $count = RolExamen::where('gestion', $request->gestion)
+            ->where('carrera_id', $request->carrera_id)
+            ->delete();
+
+        return response()->json(['message' => "Se eliminaron {$count} exámenes correctamente.", 'count' => $count]);
+    }
+
+    /**
      * Descargar plantilla Excel
      */
     public function template()
     {
-        $headers = [
-            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'Content-Disposition' => 'attachment; filename="plantilla_rol_examenes.xlsx"',
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+
+        // 1. Set Headers
+        $headers = ['Código Materia', 'Nombre Materia', 'Tipo Examen', 'Grupo (Teórico)', 'Semana', 'Fecha', 'Hora Inicio', 'Hora Fin', 'Aula'];
+        $sheet->fromArray($headers, NULL, 'A1');
+
+        // 2. Add Formatting
+        $headerStyle = [
+            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['rgb' => '4F46E5']], // Indigo
+            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
+        ];
+        $sheet->getStyle('A1:I1')->applyFromArray($headerStyle);
+
+        foreach (range('A', 'I') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+
+        // 3. Add Sample Data (Different types)
+        $samples = [
+            ['FIS101', 'FÍSICA I', '1er Parcial', '1', '7', date('Y-m-d'), '08:00', '10:00', 'Aula 101'],
+            ['MAT101', 'CALCULO I', '2do Parcial', '1', '14', date('Y-m-d', strtotime('+7 days')), '10:00', '12:00', 'Aula 102'],
+            ['QMC101', 'QUÍMICA I', 'Final', '2', '20', date('Y-m-d', strtotime('+14 days')), '14:00', '16:00', 'Aula 201'],
+            ['INF101', 'INTRODUCCIÓN', '2da Instancia', '1', '22', date('Y-m-d', strtotime('+30 days')), '08:00', '10:00', 'Aula 101'],
         ];
 
-        // En producción, crear un archivo Excel real con PhpSpreadsheet
-        // Por ahora, retornamos un mensaje
-        return response()->json([
-            'message' => 'Descargar plantilla desde la documentación',
-            'formato' => [
-                'A' => 'Código Materia',
-                'B' => 'Nombre Materia',
-                'C' => 'Tipo Examen (1er Parcial, 2do Parcial, Final, 2da Instancia)',
-                'D' => 'Semana (número)',
-                'E' => 'Fecha (YYYY-MM-DD)',
-                'F' => 'Hora Inicio (HH:MM)',
-                'G' => 'Hora Fin (HH:MM)',
-                'H' => 'Aula (opcional)',
-            ]
+        $row = 2;
+        foreach ($samples as $sample) {
+            $sheet->fromArray($sample, NULL, 'A' . $row);
+            $row++;
+        }
+
+        // 4. Add Validation/Comments (Optional but helpful)
+        $sheet->getComment('C1')->getText()->createTextRun('Opciones: 1er Parcial, 2do Parcial, Final, 2da Instancia');
+        $sheet->getComment('D1')->getText()->createTextRun('Número del Grupo Teórico (ej: 1, 2)');
+
+        // 5. Stream Download
+        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+
+        return response()->streamDownload(function () use ($writer) {
+            $writer->save('php://output');
+        }, 'plantilla_rol_examenes.xlsx', [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
     }
 

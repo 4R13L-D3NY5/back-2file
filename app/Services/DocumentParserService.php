@@ -25,7 +25,16 @@ class DocumentParserService
             'reglamento_normativa' => null, // Nuevo campo para reglamento
             'organizacion_calendario' => null, // Nuevo campo
             'bibliografia_basica' => [],
-            'bibliografia_complementaria' => []
+            'bibliografia_complementaria' => [],
+            // Nuevos Campos
+            'creditos' => 0,
+            'carga_horaria_total' => 0,
+            'horas_teoricas' => 0,
+            'horas_practicas' => 0,
+            'modalidad' => null,
+            'semestre' => null, // Int or Text
+            'tipo_curso' => null,
+            'area_desempenio' => null
         ];
 
         // Primero, extraer TODO el texto del documento para poder buscar secciones
@@ -35,10 +44,10 @@ class DocumentParserService
             foreach ($section->getElements() as $element) {
                 if ($element instanceof \PhpOffice\PhpWord\Element\Table) {
                     $allText .= $this->extractAllTextFromTable($element) . "\n\n";
-                } elseif ($element instanceof \PhpOffice\PhpWord\Element\TextRun) {
-                    $allText .= $this->extractTextFromTextRun($element) . "\n";
-                } elseif ($element instanceof \PhpOffice\PhpWord\Element\Text) {
-                    $allText .= $element->getText() . "\n";
+                } else {
+                    // Use generic recursive extraction for TextRun, Text, and unknown types (like Links)
+                    // This matches the robust logic from ProgramaAnaliticoParser
+                    $allText .= $this->extractTextFromElement($element) . "\n";
                 }
             }
         }
@@ -108,6 +117,64 @@ class DocumentParserService
         $this->extractSectionByKeyword($normalizedText, 'ORGANIZACION Y CALENDARIO', 'organizacion_calendario', $data);
         $this->extractSectionByKeyword($normalizedText, 'ORGANIZACIÓN Y CALENDARIO', 'organizacion_calendario', $data);
 
+        // EXTRACTION: DATOS GENERALES (Pattern Matching on Full Text)
+        // Creditos
+        if (preg_match('/(?:Cr[eé]ditos)\s*[:\.]?\s*(\d+)/ui', $normalizedText, $m)) {
+            $data['creditos'] = intval($m[1]);
+        }
+
+        // Carga Horaria Total
+        if (preg_match('/(?:Carga\s*Horaria(?:\s*Total)?)\s*[:\.]?\s*(\d+)/ui', $normalizedText, $m)) {
+            $data['carga_horaria_total'] = intval($m[1]);
+        }
+
+        // Modalidad
+        if (preg_match('/Modalidad\s*[:\.]?\s*([a-z\s]+)(?:[\.;\n]|$)/ui', $normalizedText, $m)) {
+            $data['modalidad'] = trim($m[1]);
+        }
+
+        // Tipo de Curso
+        if (preg_match('/Tipo\s*de\s*Curso\s*[:\.]?\s*([a-z\s]+)(?:[\.;\n]|$)/ui', $normalizedText, $m)) {
+            $data['tipo_curso'] = trim($m[1]);
+        }
+
+        // Area de Desempeno
+        if (preg_match('/[AÁ]rea\s*de\s*Desempe[nñ]o\s*[:\.]?\s*([a-z\s]+)(?:[\.;\n]|$)/ui', $normalizedText, $m)) {
+            $data['area_desempenio'] = trim($m[1]);
+        }
+
+        // Horas Teoricas / Practicas
+        // Pattern: "4 horas teóricas y 6 horas prácticas" OR "Teóricas: 2 ... Prácticas: 2"
+        // Try simple precise patterns first
+        if (preg_match('/(\d+)\s*horas\s*te[oó]ricas/ui', $normalizedText, $m)) {
+            $data['horas_teoricas'] = intval($m[1]);
+        }
+        if (preg_match('/(\d+)\s*horas\s*pr[aá]cticas/ui', $normalizedText, $m)) {
+            $data['horas_practicas'] = intval($m[1]);
+        }
+        // Fallback: Looking for tables or "Teóricas: X"
+        if (preg_match('/Te[oó]ricas\s*[:\.]?\s*(\d+)/ui', $normalizedText, $m)) {
+            // Only overwrite if not found above, or maybe this represents "Sesiones Semanales"?
+            // Context implies "No de Sesiones Semanales: Teoricas: 2"
+            // Let's assume this maps to "Horas Teoricas" if the previous failed, OR map to Sesiones if we add that field.
+            // For now, mapping to horas_teoricas if 0.
+            if ($data['horas_teoricas'] == 0) $data['horas_teoricas'] = intval($m[1]);
+        }
+        if (preg_match('/Pr[aá]cticas\s*[:\.]?\s*(\d+)/ui', $normalizedText, $m)) {
+            if ($data['horas_practicas'] == 0) $data['horas_practicas'] = intval($m[1]);
+        }
+
+        // Semestre
+        if (preg_match('/Semestre\s*[:\.]?\s*([a-z\s0-9º°]+)(?:[\.;\n]|$)/ui', $normalizedText, $m)) {
+            $semTxt = trim($m[1]);
+            $data['semestre'] = $this->parseSemestre($semTxt);
+        }
+
+        // Requisitos / Pre-Requisitos
+        if (preg_match('/(?:Pre-?requisito[s]?|Requisito[s]?)\s*[:\.]?\s*(.*?)(?:[\n]|$)/ui', $normalizedText, $m)) {
+            $data['requisitos'] = trim($m[1]);
+        }
+
         // EXTRA: Intentar capturar secciones de Unidades si están etiquetadas como "PROGRAMA ANALITICO" o "CONTENIDOS ANALITICOS"
         // (DESHABILITADO TEMPORALMENTE: Causaba crash por consumo de memoria/regex en documentos grandes)
         // $this->extractSectionByKeyword($normalizedText, 'PROGRAMA ANALITICO', 'elementos_competencia', $data);
@@ -169,11 +236,11 @@ class DocumentParserService
         $text = '';
         foreach ($cell->getElements() as $element) {
             if ($element instanceof \PhpOffice\PhpWord\Element\TextRun) {
-                $text .= $this->extractTextFromTextRun($element) . "\n";
+                $text .= $this->extractTextFromElement($element) . "\n";
             } elseif ($element instanceof \PhpOffice\PhpWord\Element\Text) {
                 $text .= $element->getText() . "\n";
             } elseif ($element instanceof \PhpOffice\PhpWord\Element\ListItem) {
-                $text .= "• " . $this->extractTextFromTextRun($element->getTextObject()) . "\n";
+                $text .= "• " . $this->extractTextFromElement($element->getTextObject()) . "\n";
             } elseif ($element instanceof \PhpOffice\PhpWord\Element\Table) {
                 // Tabla anidada
                 $text .= $this->extractAllTextFromTable($element) . "\n";
@@ -182,18 +249,28 @@ class DocumentParserService
         return trim($text);
     }
 
-    private function extractTextFromTextRun($textRun): string
+    private function extractTextFromElement($element): string
     {
         $text = '';
-        if (!$textRun) return $text;
-
-        foreach ($textRun->getElements() as $element) {
-            if ($element instanceof \PhpOffice\PhpWord\Element\Text) {
-                $text .= $element->getText() . ' ';
+        if (method_exists($element, 'getText')) {
+            $text .= $element->getText();
+        } elseif (method_exists($element, 'getElements')) {
+            foreach ($element->getElements() as $child) {
+                $text .= $this->extractTextFromElement($child);
             }
         }
-        return trim($text);
+
+        // Ensure some spacing/formatting? ProgramaAnaliticoParser didn't add extra space.
+        // DocumentParserService's previous TextRun extractor added space.
+        // Let's stick to true raw extraction to avoid merging words if elements are tight,
+        // but adding space might be safer for "TextElement" + "TextElement" in same run.
+        // However, ProgramaAnaliticoParser worked without explicit space.
+
+        return $text;
     }
+
+    // extractTextFromTextRun removed/replaced by extractTextFromElement
+
 
     protected function extractSectionByKeyword(string $fullText, string $keyword, string $dataKey, array &$data): void
     {
@@ -319,12 +396,12 @@ class DocumentParserService
      */
     private function extractBibliography(string $fullText, array &$data): void
     {
-        // Regex para Básica/Oficial
-        // Captura: "BIBLIOGRAFIA" + espacio opcional + "BASICA" ó "OFICIAL"
-        $basicaRegex = '/BIBLIOGRAF[ÍI]A\s*(?:B[ÁA]SICA|OFICIAL)/ui';
+        // Regex para Básica/Oficial (Más flexible)
+        // Captura: "BIBLIOGRAFIA" + espacio opcional + "BASICA" ó "OFICIAL" o simplemente "BIBLIOGRAFIA" si luego se detecta Complementaria
+        $basicaRegex = '/BIBLIOGRAF[ÍI]A(?:\s+(?:B[ÁA]SICA|OFICIAL))?/ui';
 
         // Regex para Complementaria
-        $complRegex = '/BIBLIOGRAF[ÍI]A\s*COMPLEMENTARIA/ui';
+        $complRegex = '/(?:BIBLIOGRAF[ÍI]A\s+)?COMPLEMENTARIA/ui';
 
         // Buscar Básica
         if (preg_match($basicaRegex, $fullText, $matches, PREG_OFFSET_CAPTURE)) {
@@ -414,52 +491,163 @@ class DocumentParserService
 
     public function parseFullStructure(string $fullText): array
     {
+        // Usar lógica robusta línea por línea (Portada desde ProgramaAnaliticoParser)
+        $lines = explode("\n", $fullText);
         $structure = [];
 
-        // Regex para Header de Unidad
-        // UNIDAD DE APRENDIZAJE N... o UNIDAD I... o UNIDAD 1...
-        $unitRegex = '/UNIDAD\s+(?:DE\s+APRENDIZAJE\s+)?(?:N[º°]?\s*)?([IVX0-9]+)[\.\s:](.*?)(?=UNIDAD\s+(?:DE\s+APRENDIZAJE\s+)?(?:N[º°]?\s*)?[IVX0-9]+|BIBLIOGRAF|METODOLOG|$)/usi';
+        $currentUnidad = null;
+        $currentTema = null;
 
-        preg_match_all($unitRegex, $fullText, $unitMatches, PREG_OFFSET_CAPTURE);
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (empty($line)) continue;
 
-        if (empty($unitMatches[0])) {
-            return [];
+            // 1. Detect Bibliografia Section (Ignorar si entra aquí, manejado por extractBibliography separado)
+            $upperLine = strtoupper($line);
+            if (str_contains($upperLine, 'BIBLIOGRAF') || str_contains($upperLine, 'REFERENCIA')) {
+                // Stop parsing structure if we hit bibliography?
+                // Usually structure comes before. Let's strictly matching Units/Themes.
+            }
+
+            // 2. Detect Unidad
+            // Pattern: "UNIDAD DE APRENDIZAJE [ROMAN/NUM]: [TITLE]"
+            if (preg_match('/^UNIDAD(?:.*APRENDIZAJE)?\s*(?:N[º°]?\s*)?([IVXLCDM\d]+)\s*[:\.\-]?\s*(.*)/i', $line, $matches)) {
+
+                // Save previous topic
+                if ($currentTema && $currentUnidad) {
+                    $currentUnidad['temas'][] = $currentTema;
+                    $currentTema = null; // Reset tema
+                }
+                // Save previous unidad
+                if ($currentUnidad) {
+                    // Use Unit Number as key if numeric/roman?
+                    // The Controller expects explicit keys? No, just iterates.
+                    // But DocumentParser expects index-based or roman-based keys?
+                    // Previous implementation: $structure[$unitNum] = ...
+
+                    // We need to convert roman to int using existing helper
+                    $uNumStr = $matches[1];
+                    $uNum = $this->romanToInt($uNumStr);
+                    if ($uNum == 0) $uNum = intval($uNumStr);
+
+                    $structure[$uNum] = $currentUnidad;
+                }
+
+                $uNumStr = $matches[1];
+                $uNum = $this->romanToInt($uNumStr);
+                if ($uNum == 0) $uNum = intval($uNumStr);
+
+                $currentUnidad = [
+                    'titulo' => trim($matches[2]),
+                    'contenido_raw' => '',
+                    'temas' => []
+                ];
+                continue;
+            }
+
+            // 3. Detect Tema
+            // Pattern: "TEMA Nº[NUM].- [TITLE]" or "TEMA Nº [NUM]: [TITLE]"
+            if (preg_match('/^TEMA\s*(?:N[º°]?\s*)?(\d+)\s*[:\.\-]+\s*(.*)/i', $line, $matches)) {
+                // Save previous topic
+                if ($currentTema && $currentUnidad) {
+                    $currentUnidad['temas'][] = $currentTema;
+                }
+
+                $currentTema = [
+                    'numero_global' => intval($matches[1]), // Field expected by Controller/Parser logic
+                    'titulo' => trim($matches[2]),
+                    'contenido' => ''
+                ];
+                continue;
+            }
+
+            // 4. Content (Append to current Topic OR current Unit)
+            if ($currentTema) {
+                $currentTema['contenido'] .= $line . " ";
+            } else if ($currentUnidad) {
+                // Si hay contenido antes del primer tema de la unidad (ej: Elemento de competencia)
+                $currentUnidad['contenido_raw'] .= $line . " ";
+            }
         }
 
-        foreach ($unitMatches[0] as $index => $match) {
-            $unitNumStr = $unitMatches[1][$index][0]; // "I", "1", "IV"
-            $unitTitleRaw = $unitMatches[2][$index][0]; // Titulo y contenido
+        // Catch leftovers
+        if ($currentTema && $currentUnidad) {
+            $currentUnidad['temas'][] = $currentTema;
+        }
+        if ($currentUnidad) {
+            // Need to recover unit number for key?
+            // Logic above saves "previous", so we need to save "current" (last one)
+            // But we lost the unit number in the loop variable scope if not careful.
+            // Let's refactor to save unitNum in currentUnidad struct temporarily or track it.
 
-            // Convertir 'IV' a 4
-            $unitNum = $this->romanToInt($unitNumStr);
-            if ($unitNum == 0) $unitNum = intval($unitNumStr);
+            // Quick fix: Add 'numero' to $currentUnidad in detection block
+        }
 
-            // Separar titulo del contenido
-            // Asumimos que el título es la primera linea/frase hasta un salto de linea o "TEMA"
-            // Ojo: $unitTitleRaw incluye todo el contenido de la unidad.
+        // RE-IMPLEMENTATION TO BE SAFE WITH KEYS:
+        return $this->parseFullStructureLineByLine($lines);
+    }
 
-            // Limpiar:
-            $cleanContent = trim($unitTitleRaw);
-            $lines = explode("\n", $cleanContent);
+    private function parseFullStructureLineByLine(array $lines): array
+    {
+        $structure = [];
+        $currentUnidad = null;
+        $currentUnidadNum = 0;
+        $currentTema = null;
 
-            $firstLine = trim($lines[0] ?? '');
-            // Si la primera linea es muy larga, puede ser el titulo.
-            // Si hay "TEMA", cortamos antes.
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if (empty($line)) continue;
 
-            $unitTitle = $firstLine;
-            // Si el titulo tiene "ELEMENTO DE COMPETENCIA", lo quitamos?
-            // A veces viene "UNIDAD I. TITULO DE LA UNIDAD"
+            // 2. Detect Unidad
+            if (preg_match('/^UNIDAD(?:.*APRENDIZAJE)?\s*(?:N[º°]?\s*)?([IVXLCDM\d]+)\s*[:\.\-]?\s*(.*)/i', $line, $matches)) {
 
-            $contentBody = substr($cleanContent, strlen($firstLine));
+                // Close previous
+                if ($currentTema && $currentUnidad) {
+                    $currentUnidad['temas'][] = $currentTema;
+                    $currentTema = null;
+                }
+                if ($currentUnidad) {
+                    $structure[$currentUnidadNum] = $currentUnidad;
+                }
 
-            // Extract temas
-            $temas = $this->parseThemes($contentBody);
+                $uNumStr = $matches[1];
+                $currentUnidadNum = $this->romanToInt($uNumStr);
+                if ($currentUnidadNum == 0) $currentUnidadNum = intval($uNumStr);
 
-            $structure[$unitNum] = [
-                'titulo' => substr($unitTitle, 0, 250),
-                'contenido_raw' => substr($contentBody, 0, 1000), // Para debug
-                'temas' => $temas
-            ];
+                $currentUnidad = [
+                    'titulo' => trim($matches[2]),
+                    'contenido_raw' => '',
+                    'temas' => []
+                ];
+                continue;
+            }
+
+            // 3. Detect Tema
+            // Updated: Use '.?' for "º" or "°" to avoid encoding issues. Add 'u' flag.
+            if (preg_match('/^TEMA\s*(?:N.?\s*)?(\d+)\s*[:\.\-]+\s*(.*)/ui', $line, $matches)) {
+                if ($currentTema && $currentUnidad) {
+                    $currentUnidad['temas'][] = $currentTema;
+                }
+                $currentTema = [
+                    'numero_global' => intval($matches[1]),
+                    'titulo' => trim($matches[2]),
+                    'contenido' => ''
+                ];
+                continue;
+            }
+
+            if ($currentTema) {
+                $currentTema['contenido'] .= $line . " ";
+            } elseif ($currentUnidad) {
+                $currentUnidad['contenido_raw'] .= $line . " ";
+            }
+        }
+
+        if ($currentTema && $currentUnidad) {
+            $currentUnidad['temas'][] = $currentTema;
+        }
+        if ($currentUnidad) {
+            $structure[$currentUnidadNum] = $currentUnidad;
         }
 
         return $structure;
@@ -531,5 +719,32 @@ class DocumentParserService
             }
         }
         return $result;
+    }
+
+    private function parseSemestre($text)
+    {
+        // "Primer semestre", "1er", "6to", "Sexto"
+        $text = mb_strtolower($text);
+        if (preg_match('/(\d+)/', $text, $m)) return intval($m[1]);
+
+        $map = [
+            'primer' => 1,
+            'segundo' => 2,
+            'tercer' => 3,
+            'cuarto' => 4,
+            'quinto' => 5,
+            'sexto' => 6,
+            'septimo' => 7,
+            'séptimo' => 7,
+            'octavo' => 8,
+            'noveno' => 9,
+            'decimo' => 10,
+            'décimo' => 10
+        ];
+
+        foreach ($map as $word => $val) {
+            if (str_contains($text, $word)) return $val;
+        }
+        return 1; // Default fallback
     }
 }

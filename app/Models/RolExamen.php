@@ -17,6 +17,7 @@ class RolExamen extends Model
         'materia_codigo',
         'materia_nombre',
         'tipo_examen',
+        'grupo',
         'semana',
         'fecha',
         'hora_inicio',
@@ -43,6 +44,11 @@ class RolExamen extends Model
     public function createdBy()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function asignatura()
+    {
+        return $this->belongsTo(Asignatura::class, 'materia_codigo', 'codigo');
     }
 
     // ==========================================

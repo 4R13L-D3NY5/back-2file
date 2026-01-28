@@ -1,0 +1,90 @@
+Array
+(
+    [unidades] => Array
+        (
+            [0] => Array
+                (
+                    [numero] => I
+                    [titulo] => INTRODUCCIÓN A LOS LENGUAJES DE PROGRAMACION.
+                    [temas] => Array
+                        (
+                            [0] => Array
+                                (
+                                    [numero] => 1
+                                    [titulo] => INTRODUCCIÓN A LA PROGRAMACIÓN DE ULTIMA GENERACIÓN.
+                                    [contenido] => Introducción a la programación actual, con más oferta laboral y de moda Actualizaciones. Los lenguajes más actualizados y solicitados en la actualidad. Tendencias. Que aplicaciones o lenguajes están siendo implementados por los programadores y las comunidades de desarrolladores 
+                                )
+
+                            [1] => Array
+                                (
+                                    [numero] => 2
+                                    [titulo] => MERCADO.
+                                    [contenido] => Como está actualmente el mercado para los desarrolladores. Diferencias con lenguajes obsoletos. Principales cambios y herramientas distintivos 
+                                )
+
+                        )
+
+                )
+
+            [1] => Array
+                (
+                    [numero] => II
+                    [titulo] => JAVA.
+                    [temas] => Array
+                        (
+                            [0] => Array
+                                (
+                                    [numero] => 3
+                                    [titulo] => DEFINICIÓN.
+                                    [contenido] => Explicación de que es el lenguaje de programación JAVA. Mercado. Características que lo vuelven tan comercial y solicitado Ventajas y desventajas. Lo bueno y lo malo al detalle. 
+                                )
+
+                        )
+
+                )
+
+            [2] => Array
+                (
+                    [numero] => III
+                    [titulo] => PYTHON.
+                    [temas] => Array
+                        (
+                            [0] => Array
+                                (
+                                    [numero] => 4
+                                    [titulo] => DEFINICIÓN.
+                                    [contenido] => Que es el lenguaje de programación Python y por qué esta donde esta. Sintaxis. La forma correcta de desarrollar aplicaciones. Principales características y puesta a práctica. Se detallan y ponen en práctica las principales herramientas que presta python a los desarrolladores. 
+                                )
+
+                        )
+
+                )
+
+            [3] => Array
+                (
+                    [numero] => IV
+                    [titulo] => I.A. LA NUEVA GENERACION GPT.
+                    [temas] => Array
+                        (
+                            [0] => Array
+                                (
+                                    [numero] => 5
+                                    [titulo] => INTRODUCCIÓN.
+                                    [contenido] => Que es una inteligencia artificial Procesos y entorno. Etapas para la realización de una inteligencia artificial avanzada Practicas. Puesta en prueba de inteligencias artificiales php. Que es php y por qué es tan importante. Configuración. Configuración e instalación de paquetes. Aplicación web y de la nube. Finalización y subida de plantilla. 
+                                )
+
+                        )
+
+                )
+
+        )
+
+    [bibliografia] => Array
+        (
+            [0] => Smith, J. (2021). Programación Java: una guía completa (3ra ed.). Editorial ABC.
+            [1] => Gaddis, T. (2021). Comenzando con Python (5ta ed.). Pearson.
+            [2] => Russell, S. J., &amp; Norvig, P. (2021). Inteligencia artificial: Un enfoque moderno (4ta ed.). Pearson.
+            [3] => Smith, J. (2020). Desarrollo Web con PHP y MySQL (2da ed.). Editorial ABC.
+        )
+
+)

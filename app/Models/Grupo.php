@@ -37,4 +37,9 @@ class Grupo extends Model
     {
         return $this->hasMany(Horario::class);
     }
+
+    public function cronogramas(): HasMany
+    {
+        return $this->hasMany(Cronograma::class);
+    }
 }

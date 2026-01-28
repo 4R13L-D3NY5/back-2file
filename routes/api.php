@@ -152,6 +152,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [\App\Http\Controllers\RolExamenController::class, 'index']);
         Route::post('/', [\App\Http\Controllers\RolExamenController::class, 'store']);
         Route::post('/upload', [\App\Http\Controllers\RolExamenController::class, 'upload']);
+        Route::post('/bulk-delete', [\App\Http\Controllers\RolExamenController::class, 'destroyAll']);
         Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
         Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
@@ -165,4 +166,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/link', [\App\Http\Controllers\MateriaComunController::class, 'link']);
         Route::post('/unlink/{id}', [\App\Http\Controllers\MateriaComunController::class, 'unlink']);
     });
+    // Reportes (Nuevo)
+    Route::get('/reportes/director', [\App\Http\Controllers\ReporteController::class, 'index']);
 });
