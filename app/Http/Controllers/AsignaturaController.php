@@ -6,6 +6,7 @@ use App\Models\Asignatura;
 use App\Models\Carrera;
 use App\Services\University\UniversityService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -107,7 +108,7 @@ class AsignaturaController extends Controller
         $query = Asignatura::where('id', $codigo)->orWhere('codigo', $codigo);
 
         // Determine target user for checks (Self or specific Docente as Director)
-        $targetUserId = $request->input('docente_id', auth()->id());
+        $targetUserId = $request->input('docente_id', Auth::id());
 
         // Filter Content by Group Type
         if ($request->filled('grupo_id')) {
@@ -268,7 +269,7 @@ class AsignaturaController extends Controller
             }
 
             // Sync contenido recursivo
-            $this->syncService->syncAnalyticalProgram($newAsignatura, $branchCode, $careerCode, true, $program->toArray());
+            $this->syncService->syncAnalyticalProgram($newAsignatura, $branchCode, $careerCode, true, $program);
 
             return $this->show($request, $codigo); // Llamada recursiva para retornar formato local estandar
 
