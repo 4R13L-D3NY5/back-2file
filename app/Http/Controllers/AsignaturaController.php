@@ -313,7 +313,10 @@ class AsignaturaController extends Controller
             'sesiones_semanales',
             'horas_teoricas',
             'sesiones_semanales_teoricas',
-            'sesiones_semanales_practicas'
+            'sesiones_semanales_practicas',
+            'docente_formacion',
+            'docente_telefono',
+            'docente_email'
         ]);
 
         // Mapeo manual

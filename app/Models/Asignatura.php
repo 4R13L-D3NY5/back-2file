@@ -42,7 +42,10 @@ class Asignatura extends Model
         'competencia_global_especifica',
         'reglamento_normativa',
         'organizacion_calendario',
-        'comun_token'
+        'comun_token',
+        'docente_formacion',
+        'docente_telefono',
+        'docente_email'
     ];
 
     protected $casts = [
