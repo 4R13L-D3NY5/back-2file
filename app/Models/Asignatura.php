@@ -23,6 +23,8 @@ class Asignatura extends Model
         'tipo_curso',
         'modalidad',
         'carga_horaria_total',
+        'horas_detalle',
+        'sesiones_semanales',
         'horas_teoricas',
         'horas_practicas',
         'sesiones_semanales_teoricas',
@@ -41,6 +43,12 @@ class Asignatura extends Model
         'reglamento_normativa',
         'organizacion_calendario',
         'comun_token'
+    ];
+
+    protected $casts = [
+        'reglamento_normativa' => 'array',
+        'elementos_competencia' => 'array',
+        'metodologia_general' => 'array'
     ];
 
     /**
