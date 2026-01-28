@@ -23,7 +23,13 @@ class Cronograma extends Model
         'contenido_procedimental',
         'contenido_actitudinal',
         'criterios_desempeno',
-        'instrumentos_evaluacion'
+        'instrumentos_evaluacion',
+        'cumplido',
+        'pedagogico'
+    ];
+
+    protected $casts = [
+        'pedagogico' => 'array'
     ];
 
     public function asignatura(): BelongsTo

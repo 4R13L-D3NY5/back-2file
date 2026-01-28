@@ -6,6 +6,7 @@ use App\Models\Asignatura;
 use App\Models\Carrera;
 use App\Services\University\UniversityService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -107,7 +108,7 @@ class AsignaturaController extends Controller
         $query = Asignatura::where('id', $codigo)->orWhere('codigo', $codigo);
 
         // Determine target user for checks (Self or specific Docente as Director)
-        $targetUserId = $request->input('docente_id', auth()->id());
+        $targetUserId = $request->input('docente_id', Auth::id());
 
         // Filter Content by Group Type
         if ($request->filled('grupo_id')) {
@@ -268,7 +269,7 @@ class AsignaturaController extends Controller
             }
 
             // Sync contenido recursivo
-            $this->syncService->syncAnalyticalProgram($newAsignatura, $branchCode, $careerCode, true, $program->toArray());
+            $this->syncService->syncAnalyticalProgram($newAsignatura, $branchCode, $careerCode, true, $program);
 
             return $this->show($request, $codigo); // Llamada recursiva para retornar formato local estandar
 
@@ -300,17 +301,33 @@ class AsignaturaController extends Controller
             'horas_teoricas',
             'horas_practicas',
             'horas_laboratorio',
-            'contenidos_minimos', // Frontend key inconsistent? checking vue... formDatos.contenido_minimo
+            'contenidos_minimos',
             'contenido_minimo',
-            'activa'
+            'activa',
+            // Nuevos Campos
+            'area_desempenio',
+            'tipo_curso',
+            'modalidad',
+            'carga_horaria_total',
+            'horas_detalle',
+            'sesiones_semanales',
+            'horas_teoricas',
+            'sesiones_semanales_teoricas',
+            'sesiones_semanales_practicas'
         ]);
 
-        // Mapeo manual de llaves inconsistentes
+        // Mapeo manual
         if ($request->has('objetivo_general')) $local->proposito_general = $request->objetivo_general;
-        if ($request->has('saberes_previos')) $local->requisitos = $request->saberes_previos;
         if ($request->has('metodologia_ensenanza')) $local->metodologia_general = $request->metodologia_ensenanza;
         if ($request->has('criterios_evaluacion')) $local->sistema_evaluacion = $request->criterios_evaluacion;
-        if ($request->has('contenido_minimo')) $local->contenido_minimo = $request->contenido_minimo; // Direct but explicit
+        if ($request->has('contenido_minimo')) $local->contenido_minimo = $request->contenido_minimo;
+
+        // FIX MAPEO REQUISITOS: Priorizar 'requisitos' (nuevo input) sobre 'saberes_previos' (legacy)
+        if ($request->has('requisitos')) {
+            $local->requisitos = $request->requisitos;
+        } elseif ($request->has('saberes_previos')) {
+            $local->requisitos = $request->saberes_previos;
+        }
 
         // FIX: Justificación no se estaba mapeando porque no está en $request->only() ni aquí
         if ($request->has('justificacion')) $local->justificacion = $request->justificacion;
@@ -324,14 +341,6 @@ class AsignaturaController extends Controller
 
         // Handle array or string for reglamento
         if ($request->has('reglamento_normativa')) {
-            $reg = $request->reglamento_normativa;
-            $local->reglamento_normativa = is_array($reg) ? json_encode($reg) : $reg; // Or cast automatically if model has cast? Assuming text/json
-            // Actually, if it's text column in DB, we prefer text. If it's JSON, encode.
-            // AsignaturaEditPage sends an array. Let's ensure we store it compatibly.
-            // importWord stores it as is (string?).
-            // Let's assume the DB column expects text or the model casts it.
-            // Safe bet: If array, implod/encode.
-            // Checking Model... assuming simple assignment works for now or casting.
             $local->reglamento_normativa = $request->reglamento_normativa;
         }
 

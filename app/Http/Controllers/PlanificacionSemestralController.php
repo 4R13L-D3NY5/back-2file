@@ -6,6 +6,7 @@ use App\Models\Asignatura;
 use App\Models\Cronograma;
 use App\Models\Horario;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 class PlanificacionSemestralController extends Controller
@@ -19,7 +20,11 @@ class PlanificacionSemestralController extends Controller
         $grupoId = $request->input('grupo_id');
 
         $asignatura = Asignatura::with(['horarios', 'cronogramas' => function ($q) use ($grupoId) {
-            $q->orderBy('numero_sesion');
+            $q->orderBy('numero_sesion')
+                ->with(['tema.planificacionPersonal' => function ($query) {
+                    $query->where('user_id', Auth::id());
+                }]);
+
             if ($grupoId) {
                 $q->where('grupo_id', $grupoId);
             }
@@ -223,6 +228,22 @@ class PlanificacionSemestralController extends Controller
         });
 
         return response()->json(['message' => 'Contenidos importados correctamente']);
+    }
+
+    /**
+     * Actualiza el seguimiento de una sesión específica de cronograma
+     */
+    public function updateSeguimiento(Request $request, $id)
+    {
+        $cronograma = Cronograma::findOrFail($id);
+
+        $cronograma->update([
+            'cumplido' => $request->input('cumplido', false),
+            'observaciones' => $request->input('observaciones'),
+            'pedagogico' => $request->input('pedagogico') // JSON array
+        ]);
+
+        return response()->json(['message' => 'Seguimiento guardado correctamente']);
     }
 
     private function parseDate($dateString)
