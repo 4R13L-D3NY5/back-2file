@@ -75,4 +75,29 @@ class Tema extends Model
                 ->orWhereNull('tipo');
         });
     }
+
+    /**
+     * Obtiene o crea la planificación personal para un usuario
+     * Si no existe, copia las secuencias de la plantilla general
+     */
+    public function getPlanificacionPersonalParaUsuario($userId)
+    {
+        $planificacion = PlanificacionPersonal::firstOrNew([
+            'tema_id' => $this->id,
+            'user_id' => $userId
+        ]);
+
+        // Si es nueva y no tiene secuencias, copiar de la plantilla
+        if (!$planificacion->exists && $this->secuencias->isNotEmpty()) {
+            $planificacion->secuencia_didactica = $this->secuencias->map(function($sec) {
+                return [
+                    'momento' => $sec->momento,
+                    'descripcion' => $sec->descripcion,
+                    'duracion_minutos' => $sec->duracion_minutos
+                ];
+            })->toArray();
+        }
+
+        return $planificacion;
+    }
 }

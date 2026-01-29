@@ -328,8 +328,10 @@ class PlanificacionController extends Controller
 
         // --- MERGE PERSONAL DATA ---
         $userId = auth()->id();
+        $hasPersonalSequences = false;
+        
         if ($userId) {
-            $personal = PlanificacionPersonal::where('tema_id', $temaId) // Use $temaId here
+            $personal = PlanificacionPersonal::where('tema_id', $temaId)
                 ->where('user_id', $userId)
                 ->first();
 
@@ -340,10 +342,31 @@ class PlanificacionController extends Controller
                 $tema->estrategias_recursos = $personal->estrategias_recursos;
                 $tema->evaluacion_formativa = $personal->evaluacion_formativa;
                 $tema->evaluacion_sumativa = $personal->evaluacion_sumativa;
-                $tema->secuencia_didactica = $personal->secuencia_didactica;
+                
+                // Solo usar secuencias personales si existen y no están vacías
+                if (!empty($personal->secuencia_didactica) && is_array($personal->secuencia_didactica)) {
+                    $tema->secuencia_didactica = $personal->secuencia_didactica;
+                    $hasPersonalSequences = true;
+                }
 
-                // Add flag to frontend knows it is personal (optional)
+                // Add flag to frontend knows it is personal
                 $tema->es_personalizado = true;
+            }
+        }
+
+        // FALLBACK: Si no hay secuencias personales, usar secuencias de la plantilla
+        if (!$hasPersonalSequences && $tema->secuencias->isNotEmpty()) {
+            $tema->secuencia_didactica = $tema->secuencias->map(function($sec, $index) {
+                return [
+                    'id' => time() + $index, // ID único temporal
+                    'momento' => $sec->momento,
+                    'duracion' => $sec->duracion_minutos, // Frontend usa 'duracion'
+                    'actividad' => $sec->descripcion // Frontend usa 'actividad'
+                ];
+            })->toArray();
+            // No cambiar es_personalizado si ya está en true por otras personalizaciones
+            if (!isset($tema->es_personalizado)) {
+                $tema->es_personalizado = false;
             }
         }
 
