@@ -143,7 +143,19 @@ class AsignaturaController extends Controller
         // 3. Si existe localmente, retornamos eso (con alias para el frontend)
         if ($local) {
             // Contexto principal (usamos la primera carrera encontrada o la que venga en el input)
-            $mainCarrera = $local->carreras->first();
+            $reqSedeId = $request->input('sede_id');
+            $mainCarrera = null;
+
+            if ($reqSedeId) {
+                // Try to find a career matching the requested sede
+                $mainCarrera = $local->carreras->first(function ($c) use ($reqSedeId) {
+                    return $c->sede_id == $reqSedeId || ($c->pivot && $c->pivot->sede_id == $reqSedeId);
+                });
+            }
+
+            if (!$mainCarrera) {
+                $mainCarrera = $local->carreras->first();
+            }
 
             // Fallback: Si no hay relación en pivote, usar carrera_id directo (Legacy Data Fix)
             if (!$mainCarrera && $local->carrera_id) {
@@ -215,6 +227,10 @@ class AsignaturaController extends Controller
 
             // Explicit sede_id injection. PRIORITY: Pivot > Career > Fallback
             $response['sede_id'] = $mainCarrera?->pivot?->sede_id ?? $mainCarrera?->sede_id ?? 1;
+
+            // Explicit sede_nombre
+            $response['sede_nombre'] = $mainCarrera?->sede?->nombre
+                ?? ($mainCarrera?->pivot?->sede_id == 1 ? 'Cochabamba' : 'Sede Desconocida');
 
 
             // Horarios desde la estructura normalizada (grupos + horarios)

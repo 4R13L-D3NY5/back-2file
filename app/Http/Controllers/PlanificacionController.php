@@ -55,6 +55,7 @@ class PlanificacionController extends Controller
 
         $tema = $unidad->temas()->create([
             'titulo' => $request->input('titulo', 'Nuevo Tema'),
+            'descripcion' => $request->input('descripcion', ''),
             'orden' => $lastOrder + 1,
             'horas_teoricas' => $request->input('horas_teoricas', 0),
             'horas_practicas' => $request->input('horas_practicas', 0),
@@ -127,6 +128,12 @@ class PlanificacionController extends Controller
 
         $data = $request->all();
         $updateData = [];
+
+        // 0. Campos Básicos
+        if (isset($data['titulo'])) $updateData['titulo'] = $data['titulo'];
+        if (isset($data['descripcion'])) $updateData['descripcion'] = $data['descripcion'];
+        if (isset($data['horas_teoricas'])) $updateData['horas_teoricas'] = $data['horas_teoricas'];
+        if (isset($data['horas_practicas'])) $updateData['horas_practicas'] = $data['horas_practicas'];
 
         // 1. Contenidos
         if (isset($data['contenidos'])) {
@@ -351,6 +358,7 @@ class PlanificacionController extends Controller
         $formatted = [
             'id' => $tema->id,
             'titulo' => $tema->titulo,
+            'descripcion' => $tema->descripcion,
             'horas_practicas' => $tema->horas_practicas,
             'horas_teoricas' => $tema->horas_teoricas,
             // Reconstruir Objetos
