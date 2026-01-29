@@ -39,10 +39,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/asignaturas/{id}/import-word', [AsignaturaController::class, 'importWord']);
 
     // Docentes
+    Route::post('/docentes/sync', [App\Http\Controllers\DocenteController::class, 'sync']);
     Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
 
     // Grupos
     Route::get('grupos', [GrupoController::class, 'index']);
+    Route::get('grupos/{id}', [GrupoController::class, 'show']);
 
     // Grupos Externos (API externa)
     Route::get('grupos-externo', [GruposExternoController::class, 'index']);
@@ -147,6 +149,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('sedes/{id}/carreras', [\App\Http\Controllers\SedeController::class, 'carreras']);
     Route::get('carreras/{id}/asignaturas', [\App\Http\Controllers\CarreraController::class, 'asignaturas']);
     Route::get('carreras/{id}/semestres', [\App\Http\Controllers\CarreraController::class, 'semestres']);
+    Route::get('carreras/{id}', [\App\Http\Controllers\CarreraController::class, 'show']);
+    Route::put('carreras/{id}/contexto', [\App\Http\Controllers\CarreraController::class, 'updateContexto']);
 
     // Module 7b: Vista Patrón de Examen
     Route::get('/examenes-generados/{id}/patron', [\App\Http\Controllers\EvaluacionController::class, 'patron']);

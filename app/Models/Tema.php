@@ -11,6 +11,7 @@ class Tema extends Model
 
     protected $fillable = [
         'titulo',
+        'descripcion',
         'orden',
         'resultado_aprendizaje',
         'horas_practicas',

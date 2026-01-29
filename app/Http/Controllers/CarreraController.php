@@ -78,4 +78,33 @@ class CarreraController extends Controller
 
         return response()->json($semestres);
     }
+    /**
+     * Obtener detalles de una carrera
+     */
+    public function show($id)
+    {
+        return Carrera::findOrFail($id);
+    }
+
+    /**
+     * Actualizar contexto de la carrera (Misión, Visión, Perfil)
+     */
+    public function updateContexto(Request $request, $id)
+    {
+        $carrera = Carrera::findOrFail($id);
+
+        $data = $request->validate([
+            'mision' => 'nullable|string',
+            'vision' => 'nullable|string',
+            'perfil_profesional' => 'nullable|string',
+            'area' => 'nullable|string'
+        ]);
+
+        $carrera->update($data);
+
+        return response()->json([
+            'message' => 'Información actualizada correctamente',
+            'carrera' => $carrera
+        ]);
+    }
 }

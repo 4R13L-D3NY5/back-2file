@@ -151,4 +151,43 @@ class GrupoController extends Controller
             'meta' => $meta
         ]);
     }
+    public function show($id)
+    {
+        $grupo = \App\Models\Grupo::with([
+            'asignatura.carreras.sedes', // To find context
+            'asignatura.carreras.director',
+            'docente.sede',
+            'horarios.aula.bloque'
+        ])->findOrFail($id);
+
+        $asignatura = $grupo->asignatura;
+        $docente = $grupo->docente;
+
+        // Context Logic: Try to find the specific Carrera/Sede context for this group if possible
+        // Since a group belongs to an Asignatura, and Asignatura belongs to many Carreras,
+        // we might just pick the first one or need extra params.
+        // For the Cover, we usually want the Carrera that the group is assigned to.
+        // But Grupo is linked to Asignatura directly.
+        // Let's assume the first Carrera of the Asignatura for now, or use pivot if we had it on Grupo.
+        // Actually, 'asignatura_carrera' pivot has 'semestre' and 'sede_id'.
+
+        $carreraPivot = $asignatura->carreras->first();
+        $carrera = $carreraPivot;
+        $area = $carrera ? $carrera->area : 'ÁREA NO DEFINIDA';
+        $semestre = $carreraPivot ? $carreraPivot->pivot->semestre : 'N/A';
+        $sedeId = $carreraPivot ? $carreraPivot->pivot->sede_id : null;
+        $sede = $sedeId ? \App\Models\Sede::find($sedeId)->nombre : 'SEDE NO DEFINIDA';
+
+        return response()->json([
+            'area' => $area,
+            'carrera' => $carrera ? $carrera->nombre : 'Sin Carrera',
+            'sede' => $sede,
+            'docente_nombre' => $docente ? $docente->nombre_completo : 'Sin Docente',
+            'asignatura' => $asignatura->nombre,
+            'codigo_asignatura' => $asignatura->codigo,
+            'semestre' => $semestre,
+            'grupo' => $grupo->nombre,
+            'gestion' => $grupo->gestion
+        ]);
+    }
 }
