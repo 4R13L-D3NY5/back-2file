@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
             CarreraSeeder::class,
             UserSeeder::class,
             TestRolesSeeder::class,
+            ArielCamaraSeeder::class,
         ]);
     }
 }
