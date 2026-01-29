@@ -56,23 +56,23 @@ class EvaluacionController extends Controller
 
             // 2. Seleccionar Preguntas (Lógica Aleatoria basada en Logros del Parcial)
             // Buscar Logros de la Asignatura que coincidan con el Parcial (o todos si no se filtra)
-            // Asumimos filtro por texto "1er Parcial" en banco_preguntas... 
+            // Asumimos filtro por texto "1er Parcial" en banco_preguntas...
             // O mejor: Logros de la asignatura -> Preguntas.
-            
+
             // Buscar IDs de Logros de esta Asignatura y Periodo
             // Nota: LogroEsperado tiene 'periodo' (Ej: 1er Parcial).
-            $logrosIds = LogroEsperado::whereHas('tema', function($q) use ($request) {
+            $logrosIds = LogroEsperado::whereHas('tema', function ($q) use ($request) {
                 $q->where('asignatura_id', $request->asignatura_id);
             })->where('periodo', $request->parcial)->pluck('id');
 
             // Seleccionar Preguntas del Banco
             $preguntasFaciles = BancoPregunta::whereIn('logro_esperado_id', $logrosIds)
-                                    ->where('dificultad', 'BAJA')->inRandomOrder()->take($request->distribucion_facil)->get();
+                ->where('dificultad', 'BAJA')->inRandomOrder()->take($request->distribucion_facil)->get();
             $preguntasMedias = BancoPregunta::whereIn('logro_esperado_id', $logrosIds)
-                                    ->where('dificultad', 'MEDIA')->inRandomOrder()->take($request->distribucion_medio)->get();
+                ->where('dificultad', 'MEDIA')->inRandomOrder()->take($request->distribucion_medio)->get();
             $preguntasDificiles = BancoPregunta::whereIn('logro_esperado_id', $logrosIds)
-                                    ->where('dificultad', 'ALTA')->inRandomOrder()->take($request->distribucion_dificil)->get();
-            
+                ->where('dificultad', 'ALTA')->inRandomOrder()->take($request->distribucion_dificil)->get();
+
             $poolPreguntas = $preguntasFaciles->merge($preguntasMedias)->merge($preguntasDificiles);
 
             // Validar cantidad insuficiente? (Opcional, por ahora permitimos menos)
@@ -87,7 +87,7 @@ class EvaluacionController extends Controller
             // Insertar en Pivot (Orden aleatorio si 'mezclar_preguntas' es true)
             $orden = 1;
             $shuffled = $evaluacion->mezclar_preguntas ? $poolPreguntas->shuffle() : $poolPreguntas;
-            
+
             $pivotData = [];
             foreach ($shuffled as $pregunta) {
                 $pivotData[$pregunta->id] = ['orden' => $orden++];
@@ -108,11 +108,11 @@ class EvaluacionController extends Controller
     public function patron($examenGeneradoId)
     {
         $examen = ExamenGenerado::with(['evaluacion.asignatura', 'preguntas'])->findOrFail($examenGeneradoId);
-        
+
         // Regla de Negocio: 3 horas después del inicio
         $inicio = \Carbon\Carbon::parse($examen->evaluacion->fecha_examen . ' ' . $examen->evaluacion->hora_inicio);
         $disponible = $inicio->copy()->addHours(3);
-        
+
         if (now()->lt($disponible)) {
             return response()->json([
                 'error' => 'El patrón estará disponible a las ' . $disponible->format('H:i d/m/Y')
@@ -128,7 +128,7 @@ class EvaluacionController extends Controller
             'examen_titulo' => $examen->evaluacion->parcial,
             'tipo_examen' => $examen->tipo, // TIPO A
             'fecha' => $examen->evaluacion->fecha_examen,
-            'preguntas' => $examen->preguntas->map(function($p) {
+            'preguntas' => $examen->preguntas->map(function ($p) {
                 return [
                     'numero' => $p->pivot->orden,
                     'respuesta_correcta' => $p->respuesta_correcta, // Ej: "B" o ["A", "C"]
@@ -136,6 +136,77 @@ class EvaluacionController extends Controller
                 ];
             })
         ];
+
+        return response()->json($data);
+    }
+
+    /**
+     * Listar evaluaciones asignadas al docente (Rol de Exámenes)
+     */
+    public function misEvaluaciones(Request $request)
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
+        // 1. Get Docente linked to User
+        $docente = \App\Models\Docente::where('user_id', $user->id)->first();
+
+        if (!$docente) {
+            return response()->json([]);
+        }
+
+        // 2. Get subjects and groups
+        $gruposDocente = $docente->grupos()->with('asignatura')->get();
+
+        if ($gruposDocente->isEmpty()) {
+            return response()->json([]);
+        }
+
+        // 3. Query RolExamen linked to Docente's Subjects
+        $query = \App\Models\RolExamen::query();
+
+        $query->where(function ($q) use ($gruposDocente) {
+            foreach ($gruposDocente as $grupo) {
+                if ($grupo->asignatura) {
+                    $q->orWhere(function ($sub) use ($grupo) {
+                        $sub->where('materia_codigo', $grupo->asignatura->codigo)
+                            ->where('grupo', $grupo->nombre);
+                    });
+                }
+            }
+        });
+
+        $examenes = $query->orderBy('fecha', 'desc')->orderBy('hora_inicio', 'asc')->get();
+
+        // 4. Map to matched structure
+        $data = $examenes->map(function ($ex) {
+            $estado = 'Programada';
+
+            if ($ex->fecha) {
+                // Assuming date is Carbon cast
+                $start = \Carbon\Carbon::parse($ex->fecha->format('Y-m-d') . ' ' . $ex->hora_inicio);
+                $end = $start->copy()->addHours(2);
+
+                if (now()->gt($end)) $estado = 'Completada';
+                elseif (now()->gt($start) && now()->lt($end)) $estado = 'En Curso';
+            }
+
+            return [
+                'id' => $ex->id,
+                'materia' => $ex->materia_nombre,
+                'codigo' => $ex->materia_codigo,
+                'grupo' => $ex->grupo,
+                'parcial' => $ex->tipo_examen,
+                'fecha' => $ex->fecha ? $ex->fecha->format('Y-m-d') : null,
+                'hora' => $ex->hora_inicio,
+                'aula' => $ex->aula,
+                'preguntas' => 0, // No online exam linked yet
+                'duracion' => 90,
+                'estado' => $estado,
+            ];
+        });
 
         return response()->json($data);
     }

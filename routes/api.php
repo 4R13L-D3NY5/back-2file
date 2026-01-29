@@ -179,4 +179,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/seguimiento-semanal/check-status', [\App\Http\Controllers\SeguimientoSemanalController::class, 'checkStatus']);
     Route::post('/seguimiento-semanal/bulk-generate', [\App\Http\Controllers\SeguimientoSemanalController::class, 'bulkGenerate']);
     Route::apiResource('seguimiento-semanal', \App\Http\Controllers\SeguimientoSemanalController::class);
+
+    // Evaluaciones (Exámenes Programados)
+    Route::get('/mis-evaluaciones', [\App\Http\Controllers\EvaluacionController::class, 'misEvaluaciones']);
 });
