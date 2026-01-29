@@ -25,7 +25,7 @@ class Tema extends Model
         'estrategias_aprendizaje',
         'estrategias_recursos', // cast: array
         'evaluacion_formativa', // cast: array
-        'contenido_sumativa', // cast: array
+        'evaluacion_sumativa', // cast: array
         'orden', // Agregado para ordenamiento
     ];
 

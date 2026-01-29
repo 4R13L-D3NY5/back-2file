@@ -12,8 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('cronogramas', function (Blueprint $table) {
-            $table->boolean('cumplido')->default(false)->after('tema_id');
-            $table->json('pedagogico')->nullable()->after('cumplido');
+            if (!Schema::hasColumn('cronogramas', 'cumplido')) {
+                $table->boolean('cumplido')->default(false)->after('tema_id');
+            }
+            if (!Schema::hasColumn('cronogramas', 'pedagogico')) {
+                $table->json('pedagogico')->nullable()->after('cumplido');
+            }
         });
     }
 
