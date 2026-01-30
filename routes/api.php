@@ -37,6 +37,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/asignaturas/{id}', [AsignaturaController::class, 'destroy']);
     Route::post('/asignaturas/{id}/docentes', [AsignaturaController::class, 'assignDocentes']);
     Route::post('/asignaturas/{id}/import-word', [AsignaturaController::class, 'importWord']);
+    Route::post('/asignaturas/{id}/import-excel', [AsignaturaController::class, 'importExcel']);
 
     // Docentes
     Route::post('/docentes/sync', [App\Http\Controllers\DocenteController::class, 'sync']);
