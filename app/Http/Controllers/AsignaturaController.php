@@ -494,10 +494,10 @@ class AsignaturaController extends Controller
         try {
             $data = $parser->parseWord($request->file('file'));
 
-            // Flags de importación (Default true para compatibilidad)
-            $importDatos = $request->boolean('import_datos', true);
-            $importUnidades = $request->boolean('import_unidades', true);
-            $importBiblio = $request->boolean('import_bibliografia', true);
+            // Flags de importación (Refined split: Word only for Units/Themes)
+            $importDatos = false;
+            $importUnidades = true;
+            $importBiblio = false;
 
             // 1. IMPORTAR DATOS GENERALES (Plan de Asignatura)
             if ($importDatos) {
@@ -631,6 +631,104 @@ class AsignaturaController extends Controller
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error("Import Error: " . $e->getMessage());
             return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Importar datos generales desde Excel (Programa de Asignatura)
+     */
+    public function importExcel(Request $request, $id)
+    {
+        $asignatura = Asignatura::findOrFail($id);
+
+        if (!$request->hasFile('file')) {
+            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+        }
+
+        try {
+            $file = $request->file('file');
+            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file->getPathname());
+            $sheet = $spreadsheet->getActiveSheet();
+            $rows = $sheet->toArray();
+
+            // Usaremos un mapeo de "Etiqueta" -> "Campo"
+            // Buscamos en todas las celdas o asumimos una estructura de pares clave-valor
+            $data = [];
+            foreach ($rows as $row) {
+                if (empty($row[0])) continue;
+                $key = mb_strtolower(trim($row[0]));
+                $val = trim($row[1] ?? '');
+
+                $data[$key] = $val;
+            }
+
+            // Mapeo detallado basado en capturas UI
+            // 1. Identificación
+            if (isset($data['modalidad'])) $asignatura->modalidad = $data['modalidad'];
+            if (isset($data['tipo de curso'])) $asignatura->tipo_curso = $data['tipo de curso'];
+            if (isset($data['área de desempeño'])) $asignatura->area_desempenio = $data['área de desempeño'];
+            if (isset($data['requisitos'])) $asignatura->requisitos = $data['requisitos'];
+            if (isset($data['sesiones teóricas'])) $asignatura->sesiones_semanales_teoricas = intval($data['sesiones teóricas']);
+            if (isset($data['sesiones prácticas'])) $asignatura->sesiones_semanales_practicas = intval($data['sesiones prácticas']);
+
+            // 2. Docente
+            if (isset($data['email docente'])) $asignatura->docente_email = $data['email docente'];
+            if (isset($data['formación docente'])) $asignatura->docente_formacion = $data['formación docente'];
+            if (isset($data['teléfono docente'])) $asignatura->docente_telefono = $data['teléfono docente'];
+
+            // 3. Justificación y Propósito
+            if (isset($data['justificación'])) $asignatura->justificacion = $data['justificación'];
+            if (isset($data['propósito general'])) $asignatura->proposito_general = $data['propósito general'];
+
+            // 4. Competencias
+            if (isset($data['competencia global'])) $asignatura->competencia_global_especifica = $data['competencia global'];
+            if (isset($data['competencia unidad'])) $asignatura->competencia_asignatura = $data['competencia unidad'];
+
+            // 5. Metodología (Array)
+            $metodologia = [];
+            if (isset($data['metodología aula'])) $metodologia['aula'] = $data['metodología aula'];
+            if (isset($data['metodología simulación'])) $metodologia['simulacion'] = $data['metodología simulación'];
+            if (isset($data['metodología hospital'])) $metodologia['hospital'] = $data['metodología hospital'];
+
+            if (!empty($metodologia)) {
+                $asignatura->metodologia_general = array_merge($asignatura->metodologia_general ?? [], $metodologia);
+            }
+
+            // 6. Evaluación
+            if (isset($data['sistema de evaluación'])) $asignatura->sistema_evaluacion = $data['sistema de evaluación'];
+
+            // 7. Criterios y Normativa (Array de strings)
+            // En Excel se espera que las reglas vengan separadas por un carácter especial o cada una en una fila?
+            // Por simplicidad para el usuario, si detectamos líneas múltiples o celdas con prefijo "Regla"
+            $reglas = [];
+            foreach ($rows as $row) {
+                $k = mb_strtolower(trim($row[0] ?? ''));
+                if (strpos($k, 'regla') === 0 || $k === 'normativa') {
+                    $reglas[] = trim($row[1] ?? '');
+                }
+            }
+            if (!empty($reglas)) {
+                $asignatura->reglamento_normativa = $reglas;
+            }
+
+            // 8. Elementos de Competencia (Array)
+            $ec = [];
+            foreach ($rows as $row) {
+                $k = mb_strtolower(trim($row[0] ?? ''));
+                if (strpos($k, 'elemento unidad') === 0) {
+                    $ec[] = trim($row[1] ?? '');
+                }
+            }
+            if (!empty($ec)) {
+                $asignatura->elementos_competencia = $ec;
+            }
+
+            $asignatura->save();
+
+            return response()->json(['message' => 'Programa de Asignatura importado con éxito desde Excel', 'asignatura' => $asignatura]);
+        } catch (\Exception $e) {
+            Log::error("Excel Import Error: " . $e->getMessage());
+            return response()->json(['error' => 'Error al procesar el Excel: ' . $e->getMessage()], 500);
         }
     }
 
