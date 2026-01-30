@@ -713,8 +713,8 @@ class ArielCamaraSeeder extends Seeder
                 $conceptual = null;
                 $procedimental = null;
                 $actitudinal = ['Participación activa y ética profesional.'];
-                $criterios = null;
-                $instrumentos = null;
+                $criterios = "Analiza componentes, Diseña soluciones";
+                $instrumentos = "Lista de cotejo, Prueba escrita";
 
                 if ($tipoContenido === 'Teoría') {
                     $conceptual = ['Introducción y desarrollo de conceptos teóricos.'];
@@ -723,6 +723,8 @@ class ArielCamaraSeeder extends Seeder
                 } else { // Evaluación
                     $conceptual = ['Evaluación teórica de conocimientos.'];
                     $procedimental = ['Evaluación práctica de habilidades.'];
+                    $criterios = "Evalúa rendimiento, Documenta procesos";
+                    $instrumentos = "Examen escrito, Rúbrica de evaluación";
                 }
 
                 // Asociar Temas (Determinar tema para esta sesión)
@@ -735,11 +737,16 @@ class ArielCamaraSeeder extends Seeder
                     $temaId = $temaActual->id;
                 }
 
+                // Calcular semana académica (basada en la fecha de inicio)
+                $diasDesdeInicio = $fechaInicio->diffInDays($fechaActual);
+                $semanaAcademica = (int)floor($diasDesdeInicio / 7) + 1;
+
                 $cronograma = Cronograma::create([
                     'grupo_id' => $grupoPrincipal->id, // SIEMPRE al grupo principal (424)
                     'asignatura_id' => $asignatura->id,
                     'fecha' => $fechaActual->toDateString(),
                     'numero_sesion' => $sesionCount++,
+                    'semana_academica' => $semanaAcademica,
                     'observaciones' => $observaciones,
                     'tema_id' => $temaId, // Fallback para el frontend
                     'contenido_conceptual' => $conceptual, 
