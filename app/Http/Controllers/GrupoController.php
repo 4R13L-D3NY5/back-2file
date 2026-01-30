@@ -163,31 +163,85 @@ class GrupoController extends Controller
         $asignatura = $grupo->asignatura;
         $docente = $grupo->docente;
 
-        // Context Logic: Try to find the specific Carrera/Sede context for this group if possible
-        // Since a group belongs to an Asignatura, and Asignatura belongs to many Carreras,
-        // we might just pick the first one or need extra params.
-        // For the Cover, we usually want the Carrera that the group is assigned to.
-        // But Grupo is linked to Asignatura directly.
-        // Let's assume the first Carrera of the Asignatura for now, or use pivot if we had it on Grupo.
-        // Actually, 'asignatura_carrera' pivot has 'semestre' and 'sede_id'.
+        // Context Logic: Determine Sede from Schedules if possible
+        $sedeIdFromGroup = $grupo->horarios->first()?->aula?->bloque?->sede_id;
 
-        $carreraPivot = $asignatura->carreras->first();
+        // Find the Carrera context that matches the sede of the group
+        $carreraPivot = null;
+        if ($sedeIdFromGroup) {
+            $carreraPivot = $asignatura->carreras->filter(function ($c) use ($sedeIdFromGroup) {
+                return $c->pivot->sede_id == $sedeIdFromGroup;
+            })->first();
+        }
+
+        // Fallback to first if not found by sede
+        if (!$carreraPivot) {
+            $carreraPivot = $asignatura->carreras->first();
+        }
+
         $carrera = $carreraPivot;
         $area = $carrera ? $carrera->area : 'ÁREA NO DEFINIDA';
         $semestre = $carreraPivot ? $carreraPivot->pivot->semestre : 'N/A';
-        $sedeId = $carreraPivot ? $carreraPivot->pivot->sede_id : null;
-        $sede = $sedeId ? \App\Models\Sede::find($sedeId)->nombre : 'SEDE NO DEFINIDA';
+        $sedeId = $carreraPivot ? $carreraPivot->pivot->sede_id : $sedeIdFromGroup;
+        $sede = $sedeId ? \App\Models\Sede::find($sedeId)?->nombre : 'SEDE NO DEFINIDA';
+
+        // Load full related data for PDF generation
+        $asignatura->load([
+            'unidades.temas',
+            'bibliografias'
+        ]);
+
+        $horarios = $grupo->horarios->map(function ($h) {
+            return [
+                'dia' => $h->dia,
+                'hora_inicio' => substr($h->hora_inicio, 0, 5),
+                'hora_fin' => substr($h->hora_fin, 0, 5),
+                'aula' => $h->aula->nombre ?? 'N/A'
+            ];
+        });
+
+        $examenes = \App\Models\RolExamen::where('materia_codigo', $asignatura->codigo)
+            ->where('gestion', $grupo->gestion)
+            ->where(function ($q) use ($grupo) {
+                $q->where('grupo', $grupo->nombre)
+                    ->orWhereNull('grupo');
+            })
+            ->orderBy('semana')
+            ->get()
+            ->map(function ($e) {
+                return [
+                    'tipo' => $e->tipo_examen,
+                    'fecha' => $e->fecha ? $e->fecha->format('d/m/Y') : '-',
+                    'hora' => substr($e->hora_inicio, 0, 5) . ' - ' . substr($e->hora_fin, 0, 5),
+                    'aula' => $e->aula ?? '-'
+                ];
+            });
 
         return response()->json([
             'area' => $area,
             'carrera' => $carrera ? $carrera->nombre : 'Sin Carrera',
+            'carrera_obj' => $carrera,
+            'mision' => $carrera ? $carrera->mision : 'Misión no definida',
+            'vision' => $carrera ? $carrera->vision : 'Visión no definida',
+            'perfil_profesional' => $carrera ? $carrera->perfil_profesional : 'Perfil no definido',
             'sede' => $sede,
             'docente_nombre' => $docente ? $docente->nombre_completo : 'Sin Docente',
             'asignatura' => $asignatura->nombre,
+            'asignatura_obj' => [
+                'id' => $asignatura->id,
+                'nombre' => $asignatura->nombre,
+                'codigo' => $asignatura->codigo,
+                'creditos' => $asignatura->creditos,
+                'unidades' => $asignatura->unidades,
+                'bibliografia' => $asignatura->bibliografias->pluck('titulo'), // Simplificado para PA
+                'objetivo_general' => $asignatura->objetivo_general ?? 'Desarrollar competencias profesionales en el área.'
+            ],
             'codigo_asignatura' => $asignatura->codigo,
             'semestre' => $semestre,
             'grupo' => $grupo->nombre,
-            'gestion' => $grupo->gestion
+            'gestion' => $grupo->gestion,
+            'horarios' => $horarios,
+            'examenes' => $examenes
         ]);
     }
 }

@@ -27,7 +27,16 @@ class AsignaturaController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Asignatura::with(['grupos.docente']);
+        $query = Asignatura::query();
+
+        // Eager load grupos and context, optionally filtered by sede
+        $sedeId = $request->input('sede_id');
+        $query->with(['grupos' => function ($q) use ($sedeId) {
+            if ($sedeId) {
+                $q->where('sede_id', $sedeId);
+            }
+            $q->with('docente');
+        }]);
 
         // Filtros (Pivote y Texto)
         if ($request->filled('sede_id') || $request->filled('carrera_id') || $request->filled('semestre')) {
