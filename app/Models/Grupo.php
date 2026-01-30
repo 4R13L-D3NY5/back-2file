@@ -17,6 +17,7 @@ class Grupo extends Model
         'gestion',
         'asignatura_id',
         'docente_id',
+        'sede_id',
         'nombre',
         'tipo',
         'turno',

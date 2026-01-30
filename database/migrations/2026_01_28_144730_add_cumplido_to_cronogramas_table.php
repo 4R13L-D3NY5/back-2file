@@ -11,9 +11,11 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('cronogramas', function (Blueprint $table) {
-            $table->boolean('cumplido')->default(false)->after('observaciones');
-        });
+        if (!Schema::hasColumn('cronogramas', 'cumplido')) {
+            Schema::table('cronogramas', function (Blueprint $table) {
+                $table->boolean('cumplido')->default(false)->after('observaciones');
+            });
+        }
     }
 
     /**

@@ -201,6 +201,7 @@ class PlanningSyncService
                         ],
                         [
                             'docente_id' => $docente->id,
+                            'sede_id' => $sede->id,
                             'turno' => $turno,
                             'estado' => 'ACTIVO'
                         ]

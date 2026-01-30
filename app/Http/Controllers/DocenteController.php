@@ -13,17 +13,17 @@ class DocenteController extends Controller
             'sede',
             // Optimized Eager Loading
             'grupos.asignatura.carreras', // Removed .sedes (heavy & unused)
-            // 'grupos.asignatura.unidades.temas', // Removing deep load, will use simplistic count or load on demand if needed. 
+            // 'grupos.asignatura.unidades.temas', // Removing deep load, will use simplistic count or load on demand if needed.
             // Better: Load 'unidades' is fine, but 'temas' might be too much if we just need count.
             // Let's keep structure but maybe limit columns? For now, just removing .sedes is big.
-            'grupos.asignatura.unidades.temas' => function($q) {
-                $q->select('id', 'unidad_id', 'nombre'); // Select only needed fields
+            'grupos.asignatura.unidades.temas' => function ($q) {
+                $q->select('id', 'unidad_id', 'titulo'); // 'titulo' instead of 'nombre'
             },
-            'grupos.cronogramas' => function($query) {
+            'grupos.cronogramas' => function ($query) {
                 // Optimization: Get counts instead of loading all assistance records
                 $query->withCount([
                     'asistencias as total_asistencias',
-                    'asistencias as presentes_asistencias' => function($q) {
+                    'asistencias as presentes_asistencias' => function ($q) {
                         $q->where('asistio', 1);
                     }
                 ]);
@@ -53,7 +53,7 @@ class DocenteController extends Controller
             $sedeId = $request->sede_id;
             // Optimización: Filtrar directamente por sede_id del docente (asignado en Sync)
             $query->where('sede_id', $sedeId);
-            
+
             /* RELACION COMPLEJA (LEGACY)
             $query->whereHas('grupos.asignatura.carreras.sedes', function ($q) use ($sedeId) {
                 $q->where('sedes.id', $sedeId);
@@ -129,7 +129,7 @@ class DocenteController extends Controller
                     // Heuristics based on PlanificacionPersonal existence
                     // Check if ANY planning exists for this user + subject
                     // Ideally, we check specific "types" or just existence.
-                    $hasPlanning = \App\Models\PlanificacionPersonal::where('user_id', $docente->id)
+                    $hasPlanning = \App\Models\PlanificacionPersonal::where('user_id', $docente->user_id)
                         ->whereHas('tema.unidad.asignatura', function ($q) use ($asignatura) {
                             $q->where('id', $asignatura->id);
                         })->exists();
