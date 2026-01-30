@@ -27,19 +27,38 @@ class AsignaturaController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Asignatura::with(['grupos.docente']);
+        $query = Asignatura::query();
+
+        // Eager load grupos and context, optionally filtered by sede
+        $sedeId = $request->input('sede_id');
+        $query->with(['grupos' => function ($q) use ($sedeId) {
+            if ($sedeId) {
+                $q->where('sede_id', $sedeId);
+            }
+            $q->with('docente');
+        }]);
 
         // Filtros (Pivote y Texto)
         if ($request->filled('sede_id') || $request->filled('carrera_id') || $request->filled('semestre')) {
             $query->whereHas('carreras', function ($q) use ($request) {
-                if ($request->filled('sede_id')) $q->where('asignatura_carrera.sede_id', $request->sede_id);
+                if ($request->filled('sede_id')) {
+                    $q->where(function($sub) use ($request) {
+                        $sub->where('asignatura_carrera.sede_id', $request->sede_id)
+                            ->orWhere('carreras.sede_id', $request->sede_id);
+                    });
+                }
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
             });
 
             // Cargar contexto específico para mostrar los datos correctos
             $query->with(['carreras' => function ($q) use ($request) {
-                if ($request->filled('sede_id')) $q->where('asignatura_carrera.sede_id', $request->sede_id);
+                if ($request->filled('sede_id')) {
+                    $q->where(function($sub) use ($request) {
+                        $sub->where('asignatura_carrera.sede_id', $request->sede_id)
+                            ->orWhere('carreras.sede_id', $request->sede_id);
+                    });
+                }
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
             }]);
@@ -257,7 +276,10 @@ class AsignaturaController extends Controller
             return response()->json($response);
         }
 
-        // 4. Si NO existe localmente, consultamos a la API y CREAMOS la asignatura localmente (Sync On Demand)
+        // 4. Si NO existe localmente, retornamos 404 inmediato (Optimización: No Lazy Sync)
+        return response()->json(['message' => 'Asignatura no encontrada o no sincronizada.'], 404);
+
+        /* LAZY SYNC DESACTIVADO POR RENDIMIENTO
         try {
             $program = $this->universityService->getAnalyticalProgram($codigo, $branchCode, $careerCode);
 
@@ -293,6 +315,7 @@ class AsignaturaController extends Controller
             \Illuminate\Support\Facades\Log::error('Error syncing asignatura: ' . $e->getMessage());
             return response()->json(['error' => 'Error al sincronizar con API: ' . $e->getMessage()], 503);
         }
+        */
     }
 
     /**

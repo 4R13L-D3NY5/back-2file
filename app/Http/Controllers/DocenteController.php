@@ -10,10 +10,24 @@ class DocenteController extends Controller
     public function index(Request $request)
     {
         $query = Docente::query()->with([
-            'sede', // Load Sede
-            'grupos.asignatura.carreras.sedes',
-            'grupos.asignatura.unidades.temas',
-            'grupos.cronogramas.asistencias',
+            'sede',
+            // Optimized Eager Loading
+            'grupos.asignatura.carreras', // Removed .sedes (heavy & unused)
+            // 'grupos.asignatura.unidades.temas', // Removing deep load, will use simplistic count or load on demand if needed. 
+            // Better: Load 'unidades' is fine, but 'temas' might be too much if we just need count.
+            // Let's keep structure but maybe limit columns? For now, just removing .sedes is big.
+            'grupos.asignatura.unidades.temas' => function($q) {
+                $q->select('id', 'unidad_id', 'nombre'); // Select only needed fields
+            },
+            'grupos.cronogramas' => function($query) {
+                // Optimization: Get counts instead of loading all assistance records
+                $query->withCount([
+                    'asistencias as total_asistencias',
+                    'asistencias as presentes_asistencias' => function($q) {
+                        $q->where('asistio', 1);
+                    }
+                ]);
+            },
             'grupos.horarios'
         ]);
 
@@ -37,10 +51,14 @@ class DocenteController extends Controller
         // Filter: Sede
         if ($request->has('sede_id') && $request->sede_id) {
             $sedeId = $request->sede_id;
-            // Filter docentes who have groups in asignaturas belonging to carreras in the selected sede
+            // Optimización: Filtrar directamente por sede_id del docente (asignado en Sync)
+            $query->where('sede_id', $sedeId);
+            
+            /* RELACION COMPLEJA (LEGACY)
             $query->whereHas('grupos.asignatura.carreras.sedes', function ($q) use ($sedeId) {
                 $q->where('sedes.id', $sedeId);
             });
+            */
         }
 
         // Filter: Carrera
@@ -90,10 +108,10 @@ class DocenteController extends Controller
                     $asistenciasCount = 0;
 
                     foreach ($grupo->cronogramas as $cronograma) {
-                        // If relations loaded, calculate
-                        if ($cronograma->asistencias->count() > 0) {
-                            $presentes = $cronograma->asistencias->where('asistio', 1)->count();
-                            $total = $cronograma->asistencias->count();
+                        // Optimized calculation using withCount attributes
+                        if ($cronograma->total_asistencias > 0) {
+                            $presentes = $cronograma->presentes_asistencias;
+                            $total = $cronograma->total_asistencias;
                             $totalAsistencias += ($presentes / $total) * 100;
                             $asistenciasCount++;
                         }
