@@ -654,20 +654,9 @@ class ArielCamaraSeeder extends Seeder
 
         // Obtener horarios COMBINADOS de todos los grupos (Teoría + Práctica)
         $horarios = $todosLosGrupos->pluck('horarios')->flatten();
-        
-        // Mapeo de días
-        $diasMap = [
-            'Lunes' => 1,
-            'Martes' => 2,
-            'Miércoles' => 3,
-            'Jueves' => 4,
-            'Viernes' => 5,
-            'Sábado' => 6,
-            'Domingo' => 7
-        ];
 
         // Obtener días de clase como enteros (ISO-8601: 1=Lunes, 7=Domingo)
-        $diasClase = $horarios->map(function($h) use ($diasMap) {
+        $diasClase = $horarios->map(function($h) {
             // Normalizar el día (quitar tildes si es necesario o manejar formatos)
             // En el dump vimos "Miercoles" (sin tilde) y "Lunes".
             // Ajustamos el mapa para ser robustos.

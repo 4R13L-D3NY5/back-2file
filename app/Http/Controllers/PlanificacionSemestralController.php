@@ -21,14 +21,37 @@ class PlanificacionSemestralController extends Controller
 
         $asignatura = Asignatura::with(['horarios', 'cronogramas' => function ($q) use ($grupoId) {
             $q->orderBy('numero_sesion')
-                ->with(['temas', 'tema.planificacionPersonal' => function ($query) {
-                    $query->where('user_id', Auth::id());
-                }]);
+                ->with([
+                    'temas',
+                    'tema.secuencias', 
+                    'tema.planificacionPersonal' => function ($query) {
+                        $query->where('user_id', Auth::id());
+                    }
+                ]);
 
             if ($grupoId) {
                 $q->where('grupo_id', $grupoId);
             }
         }])->findOrFail($asignaturaId);
+
+        // Resolver Detalles Pedagógicos para cada sesión
+        $cronogramas = $asignatura->cronogramas->map(function ($cronograma) {
+            // Check if pedagogico is missing required fields (estrategias, evaluacion, secuencia)
+            $needsResolution = empty($cronograma->pedagogico) || 
+                              !isset($cronograma->pedagogico['estrategias']) || 
+                              !isset($cronograma->pedagogico['evaluacion']) || 
+                              !isset($cronograma->pedagogico['secuencia']);
+            
+            if ($needsResolution) {
+                $resolved = $this->resolvePedagogicoDefaults($cronograma);
+                // Merge with existing pedagogico data (preserve tipo_sesion, etc.)
+                $cronograma->pedagogico = array_merge(
+                    $cronograma->pedagogico ?? [],
+                    $resolved
+                );
+            }
+            return $cronograma;
+        });
 
         return response()->json([
             'config' => [
@@ -37,7 +60,7 @@ class PlanificacionSemestralController extends Controller
                 'gestion_academica' => $asignatura->gestion_academica
             ],
             'horarios' => $asignatura->horarios,
-            'planificacion' => $asignatura->cronogramas
+            'planificacion' => $cronogramas
         ]);
     }
 
@@ -235,18 +258,200 @@ class PlanificacionSemestralController extends Controller
     public function updateSeguimiento(Request $request, $id)
     {
         $cronograma = Cronograma::findOrFail($id);
-
-        $cronograma->update([
-            'cumplido' => $request->input('cumplido', false),
-            'observaciones' => $request->input('observaciones'),
-            'pedagogico' => $request->input('pedagogico') // JSON array
+        
+        // Parse pedagogico JSON
+        $pedagogico = json_decode($request->input('pedagogico', '{}'), true);
+        $integracionTransversal = json_decode($request->input('integracion_transversal', '{}'), true);
+        
+        // Handle evidence file uploads
+        $evidencias = [];
+        
+        // Aprendizaje Activo
+        if ($request->hasFile('evidencia_aprendizaje')) {
+            $file = $request->file('evidencia_aprendizaje');
+            $path = $file->store('evidencias/aprendizaje', 'public');
+            $evidencias['aprendizaje_activo'] = $path;
+        }
+        
+        // Evaluación Formativa (can be file or text)
+        if ($request->hasFile('evidencia_evaluacion')) {
+            $file = $request->file('evidencia_evaluacion');
+            $path = $file->store('evidencias/evaluacion', 'public');
+            $evidencias['evaluacion_formativa'] = $path;
+        } elseif ($request->filled('evidencia_evaluacion')) {
+            $evidencias['evaluacion_formativa'] = $request->input('evidencia_evaluacion');
+        }
+        
+        // Secuencia Didáctica
+        if ($request->hasFile('evidencia_secuencia')) {
+            $file = $request->file('evidencia_secuencia');
+            $path = $file->store('evidencias/secuencia', 'public');
+            $evidencias['secuencia_didactica'] = $path;
+        }
+        
+        // Integración Transversal evidences
+        $integracionEvidencias = [];
+        
+        if ($request->hasFile('evidencia_investigacion')) {
+            $file = $request->file('evidencia_investigacion');
+            $path = $file->store('evidencias/investigacion', 'public');
+            $integracionEvidencias['investigacion'] = $path;
+        }
+        
+        if ($request->hasFile('evidencia_interaccion')) {
+            $file = $request->file('evidencia_interaccion');
+            $path = $file->store('evidencias/interaccion', 'public');
+            $integracionEvidencias['interaccion'] = $path;
+        }
+        
+        if ($request->hasFile('evidencia_internalizacion')) {
+            $file = $request->file('evidencia_internalizacion');
+            $path = $file->store('evidencias/internalizacion', 'public');
+            $integracionEvidencias['internalizacion'] = $path;
+        }
+        
+        // Merge integración transversal data with evidences
+        foreach ($integracionTransversal as $key => $value) {
+            if (isset($integracionEvidencias[$key])) {
+                $integracionTransversal[$key]['evidencia'] = $integracionEvidencias[$key];
+            }
+        }
+        
+        // Build complete pedagogico object
+        // Include tema_cumplido as pedagogical information
+        $completePedagogico = array_merge($pedagogico, [
+            'tema_cumplido' => filter_var($request->input('tema_cumplido', false), FILTER_VALIDATE_BOOLEAN),
+            'evidencias' => $evidencias,
+            'integracionTransversal' => $integracionTransversal
         ]);
 
-        return response()->json(['message' => 'Seguimiento guardado correctamente']);
+        // Session is marked as completed when teacher saves the follow-up
+        // regardless of whether the planned topic was covered
+        $cronograma->update([
+            'cumplido' => true,  // Always true when saving follow-up
+            'observaciones' => $request->input('observaciones'),
+            'pedagogico' => $completePedagogico
+        ]);
+
+        return response()->json([
+            'message' => 'Seguimiento guardado correctamente',
+            'pedagogico' => $completePedagogico,
+            'cumplido' => true
+        ]);
     }
 
     private function parseDate($dateString)
     {
         return \Carbon\Carbon::parse($dateString)->format('Y-m-d');
+    }
+
+    /**
+     * Resuelve los valores por defecto de los detalles pedagógicos
+     * Basado en Planificación Personal > Tema > Defaults
+     */
+    private function resolvePedagogicoDefaults($cronograma)
+    {
+        $defaults = [
+            'estrategias' => [],
+            'evaluacion' => [],
+            'secuencia' => [],
+            'integracion' => [
+                'investigacion' => [
+                    ['nombre' => 'Verificación de investigación', 'cumplido' => false],
+                    ['nombre' => 'Análisis crítico', 'cumplido' => false]
+                ],
+                'interaccion' => [
+                    ['nombre' => 'Interacción social', 'cumplido' => false],
+                    ['nombre' => 'Trabajo en equipo', 'cumplido' => false]
+                ],
+                'internalizacion' => [
+                    ['nombre' => 'Internalización de valores', 'cumplido' => false],
+                    ['nombre' => 'Aplicación ética', 'cumplido' => false]
+                ]
+            ]
+        ];
+
+        if (!$cronograma->tema) {
+            return $defaults;
+        }
+
+        $tema = $cronograma->tema;
+        
+        // Check if planificacionPersonal was eager loaded and exists
+        // The relationship is loaded with user_id constraint in the index method
+        $planificacionPersonal = null;
+        if ($tema->relationLoaded('planificacionPersonal')) {
+            $planificacionPersonal = $tema->planificacionPersonal;
+        }
+        
+        // Prioridad: Planificación Personal -> Tema Base
+        $planning = $planificacionPersonal ?? $tema;
+        
+        // Debug logging
+        \Log::info('Resolving pedagogico for tema_id: ' . $tema->id, [
+            'has_planificacion_personal' => !is_null($planificacionPersonal),
+            'planning_type' => get_class($planning),
+            'estrategias_recursos' => $planning->estrategias_recursos ?? 'null',
+            'evaluacion_formativa' => $planning->evaluacion_formativa ?? 'null',
+            'secuencia_didactica' => $planning->secuencia_didactica ?? 'null'
+        ]);
+        
+        // 1. Estrategias
+        if (!empty($planning->estrategias_recursos)) {
+            foreach ($planning->estrategias_recursos as $est) {
+                $defaults['estrategias'][] = ['nombre' => $est, 'cumplido' => false];
+            }
+        }
+        // Si es Tema base, puede tener metodologías como string
+        if (isset($planning->estrategias_metodologicas) && is_string($planning->estrategias_metodologicas)) {
+             $defaults['estrategias'][] = ['nombre' => 'Metodología: ' . substr($planning->estrategias_metodologicas, 0, 50), 'cumplido' => false];
+        } else if (empty($defaults['estrategias'])) {
+             $defaults['estrategias'][] = ['nombre' => 'Clase Magistral', 'cumplido' => false];
+        }
+
+        // 2. Evaluación
+        // Estructura en JSON: evaluacion_formativa: { actividades: [], instrumentos: [] }
+        $evalSources = [$planning->evaluacion_formativa, $planning->evaluacion_sumativa];
+        foreach ($evalSources as $eval) {
+            if ($eval && is_array($eval)) {
+                if (!empty($eval['actividades'])) {
+                    foreach ($eval['actividades'] as $act) {
+                        $defaults['evaluacion'][] = ['nombre' => $act, 'cumplido' => false];
+                    }
+                }
+            }
+        }
+        if (empty($defaults['evaluacion'])) {
+            $defaults['evaluacion'][] = ['nombre' => 'Participación en clase', 'cumplido' => false];
+        }
+
+        // 3. Secuencia Didáctica
+        // En PlanificacionPersonal es un JSON (secuencia_didactica array)
+        if ($planificacionPersonal && !empty($planificacionPersonal->secuencia_didactica)) {
+            foreach ($planificacionPersonal->secuencia_didactica as $sec) {
+                $nombre = $sec['momento'] ?? 'Actividad';
+                if (isset($sec['actividad'])) $nombre .= ': ' . substr($sec['actividad'], 0, 60);
+                $defaults['secuencia'][] = ['nombre' => $nombre, 'cumplido' => false];
+            }
+        } 
+        // En Tema es una relación (secuencias)
+        else if ($tema->secuencias->count() > 0) {
+            foreach ($tema->secuencias as $sec) {
+                $defaults['secuencia'][] = [
+                    'nombre' => $sec->momento . ': ' . substr($sec->descripcion, 0, 60),
+                    'cumplido' => false
+                ];
+            }
+        }
+        // Fallback
+        else {
+            $defaults['secuencia'] = [
+                ['nombre' => 'Inicio', 'cumplido' => false],
+                ['nombre' => 'Desarrollo', 'cumplido' => false],
+                ['nombre' => 'Cierre', 'cumplido' => false]
+            ];
+        }
+
+        return $defaults;
     }
 }
