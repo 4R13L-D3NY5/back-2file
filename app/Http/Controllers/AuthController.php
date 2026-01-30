@@ -47,6 +47,7 @@ class AuthController extends Controller
         $user->load([
             'rol',
             'docente.asignaturas.unidades.temas',
+            'docente.asignaturas.carreras',
             'docente.sede',
             'docente.grupos',
             'director.sede',
@@ -60,11 +61,52 @@ class AuthController extends Controller
             });
         }
 
+        $passwordChangeRequired = (bool) $user->password_change_required;
+
+        // Si la contraseña coincide con el CI (escenario común en primer inicio), forzar cambio
+        if (!$passwordChangeRequired && $user->ci && Hash::check($user->ci, $user->password)) {
+            $passwordChangeRequired = true;
+        }
+
         return response()->json([
             'message' => 'Login exitoso',
             'token' => $token,
             'user' => $user,
-            'password_change_required' => (bool) $user->password_change_required,
+            'password_change_required' => $passwordChangeRequired,
+        ]);
+    }
+
+    /**
+     * Actualizar perfil del usuario
+     */
+    public function updateProfile(Request $request)
+    {
+        $user = $request->user();
+
+        $request->validate([
+            'nombre' => 'required|string|max:255',
+            'apellido' => 'required|string|max:255',
+            'email' => 'required|email|unique:users,email,' . $user->id,
+            'ci' => 'nullable|string|max:20',
+            'telefono' => 'nullable|string|max:20',
+        ]);
+
+        // Actualizar Usuario
+        $user->update($request->only(['nombre', 'apellido', 'email', 'ci', 'telefono']));
+
+        // Sincronizar con el modelo Docente si existe
+        if ($user->docente) {
+            $user->docente->update([
+                'nombre_completo' => "{$user->nombre} {$user->apellido}",
+                'ci' => $user->ci,
+                'email' => $user->email,
+                'celular' => $user->telefono, // Mapear teléfono a celular en docente
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Perfil actualizado correctamente',
+            'user' => $user->load(['rol', 'docente.sede', 'director'])
         ]);
     }
 
@@ -144,6 +186,7 @@ class AuthController extends Controller
         $user = $request->user()->load([
             'rol',
             'docente.asignaturas.unidades.temas', // Load deep relations for progress calc
+            'docente.asignaturas.carreras',
             'docente.sede',
             'docente.grupos',
             'director'
@@ -156,7 +199,12 @@ class AuthController extends Controller
             });
         }
 
-        $user->password_change_required = (bool) $user->password_change_required;
+        $passwordChangeRequired = (bool) $user->password_change_required;
+        if (!$passwordChangeRequired && $user->ci && Hash::check($user->ci, $user->password)) {
+            $passwordChangeRequired = true;
+        }
+
+        $user->password_change_required = $passwordChangeRequired;
         return $user;
     }
 }

@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\Log;
 
 class SyncDocentesCommand extends Command
 {
-    protected $signature = 'sync:docentes 
+    protected $signature = 'sync:docentes
                             {--gestion=1-2026 : Gestión académica}
                             {--sede=1 : ID de sede}
                             {--carrera= : Carrera específica (opcional, por defecto todas)}';
@@ -20,11 +20,24 @@ class SyncDocentesCommand extends Command
     protected $description = 'Sincroniza docentes desde la API externa de UNITEPC a la base de datos local';
 
     protected string $baseUrl = 'http://181.188.185.211:9098';
-    
+
     protected array $carreras = [
-        'carmed', 'carsis', 'carelec', 'carbio', 'carodon', 'carfis', 
-        'carnut', 'carkin', 'carfarm', 'carlab', 'carpsico', 'carder', 
-        'caradm', 'carcont', 'carcivil', 'carind'
+        'carmed',
+        'carsis',
+        'carelec',
+        'carbio',
+        'carodon',
+        'carfis',
+        'carnut',
+        'carkin',
+        'carfarm',
+        'carlab',
+        'carpsico',
+        'carder',
+        'caradm',
+        'carcont',
+        'carcivil',
+        'carind'
     ];
 
     public function handle()
@@ -45,7 +58,7 @@ class SyncDocentesCommand extends Command
         // Obtener docentes de todas las carreras
         foreach ($carrerasAConsultar as $carrera) {
             $this->line("   📚 Consultando carrera: {$carrera}...");
-            
+
             try {
                 $response = Http::timeout(60)->get("{$this->baseUrl}/api/Grupos/listar/", [
                     'gestion' => $gestion,
@@ -59,7 +72,7 @@ class SyncDocentesCommand extends Command
 
                     foreach ($data as $item) {
                         $ci = trim($item['ci']);
-                        
+
                         // Ignorar CIs inválidos
                         if (empty($ci) || $ci === '0') {
                             continue;
@@ -136,7 +149,7 @@ class SyncDocentesCommand extends Command
                 } else {
                     // Crear nuevo usuario
                     $nombreParts = $this->parsearNombre($docenteData['nombre']);
-                    
+
                     $user = User::create([
                         'nombre' => $nombreParts['nombre'],
                         'apellido' => $nombreParts['apellido'],
@@ -146,6 +159,7 @@ class SyncDocentesCommand extends Command
                         'password' => $ci, // El modelo aplica hash automáticamente
                         'rol_id' => $rolDocente->id,
                         'estado' => true,
+                        'password_change_required' => true,
                     ]);
 
                     // Crear registro de docente
@@ -175,7 +189,7 @@ class SyncDocentesCommand extends Command
         $this->info("✅ Sincronización completada:");
         $this->line("   - Docentes creados: {$creados}");
         $this->line("   - Docentes actualizados: {$actualizados}");
-        
+
         if ($errores > 0) {
             $this->warn("   - Errores: {$errores} (ver logs para detalles)");
         }
@@ -189,9 +203,30 @@ class SyncDocentesCommand extends Command
     protected function limpiarNombre(string $nombre): string
     {
         $prefijos = [
-            'Lic.', 'Ing.', 'Dr.', 'Dra.', 'Msc.', 'PhD.', 'Arq.', 'Abg.',
-            'LIC.', 'ING.', 'DR.', 'DRA.', 'MSC.', 'PHD.', 'ARQ.', 'ABG.',
-            'Lic ', 'Ing ', 'Dr ', 'Dra ', 'Msc ', 'PhD ', 'Arq ', 'Abg '
+            'Lic.',
+            'Ing.',
+            'Dr.',
+            'Dra.',
+            'Msc.',
+            'PhD.',
+            'Arq.',
+            'Abg.',
+            'LIC.',
+            'ING.',
+            'DR.',
+            'DRA.',
+            'MSC.',
+            'PHD.',
+            'ARQ.',
+            'ABG.',
+            'Lic ',
+            'Ing ',
+            'Dr ',
+            'Dra ',
+            'Msc ',
+            'PhD ',
+            'Arq ',
+            'Abg '
         ];
 
         $nombreLimpio = trim($nombre);
@@ -210,7 +245,7 @@ class SyncDocentesCommand extends Command
     protected function parsearNombre(string $nombreCompleto): array
     {
         $parts = explode(' ', trim($nombreCompleto));
-        
+
         if (count($parts) >= 3) {
             // Asumimos: NOMBRE APELLIDO1 APELLIDO2 o NOMBRE1 NOMBRE2 APELLIDO
             $nombre = $parts[0];
@@ -237,11 +272,11 @@ class SyncDocentesCommand extends Command
         $base = strtolower(trim($nombre));
         $base = str_replace(' ', '.', $base);
         $base = preg_replace('/[^a-z0-9.]/', '', $base);
-        
+
         // Verificar si ya existe
         $email = "{$base}@unitepc.edu.bo";
         $contador = 1;
-        
+
         while (User::where('email', $email)->exists()) {
             $email = "{$base}{$contador}@unitepc.edu.bo";
             $contador++;
