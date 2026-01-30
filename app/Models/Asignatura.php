@@ -51,7 +51,8 @@ class Asignatura extends Model
     protected $casts = [
         'reglamento_normativa' => 'array',
         'elementos_competencia' => 'array',
-        'metodologia_general' => 'array'
+        'metodologia_general' => 'array',
+        'sistema_evaluacion' => 'array'
     ];
 
     /**
