@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Asignatura;
 use App\Models\PlanificacionPersonal;
+use App\Models\Grupo;
 use Illuminate\Http\Request;
+use Carbon\Carbon;
 
 class ReporteController extends Controller
 {
@@ -191,6 +193,86 @@ class ReporteController extends Controller
         return response()->json([
             'reporteMaterias' => $reporteMaterias,
             'metricas' => $metricas
+        ]);
+    }
+
+    public function getAuditoriaSemanal(Request $request) {
+        $request->validate([
+            'docente_id' => 'required',
+            'asignatura_id' => 'required', // We might need group, but let's infer
+            'semana_numero' => 'required|integer|min:1|max:20'
+        ]);
+
+        // Find the group
+        // Assuming 1 active group for doc/asig in this semester/sede context
+        // Ideally we filter by 'gestion' too, let's pick latest
+        $grupo = Grupo::where('docente_id', $request->docente_id)
+                      ->where('asignatura_id', $request->asignatura_id)
+                      ->latest()
+                      ->first();
+
+        if (!$grupo) {
+            return response()->json([
+                'error' => 'No se encontró grupo asignado para este docente y materia'
+            ], 404);
+        }
+
+        // Determine Semester Start Date based on first Cronograma
+        // (Or could use explicit AcademicCalendar model if we had one)
+        $firstClass = $grupo->cronogramas()->orderBy('fecha', 'asc')->first();
+        
+        if (!$firstClass) {
+             return response()->json([
+                'sesiones' => [],
+                'mensaje' => 'No hay cronograma registrado para esta materia'
+            ]);
+        }
+
+        $startDate = Carbon::parse($firstClass->fecha);
+        
+        // Calculate requested week range
+        // Week 1 starts at startDate
+        $daysToAdd = ($request->semana_numero - 1) * 7;
+        $weekStart = $startDate->copy()->addDays($daysToAdd);
+        $weekEnd = $weekStart->copy()->addDays(6);
+
+        // Fetch Data
+        $sesiones = $grupo->cronogramas()
+                          ->whereBetween('fecha', [$weekStart->toDateString(), $weekEnd->toDateString()])
+                          ->with(['tema', 'asistencias'])
+                          ->get();
+
+        $mappedSesiones = $sesiones->map(function($crono) {
+            // Logic for checks
+            $asistenciaCount = $crono->asistencias->where('asistio', 1)->count();
+            $totalEstudiantes = $crono->asistencias->count();
+            $asistenciaOk = ($totalEstudiantes > 0 && ($asistenciaCount / $totalEstudiantes) > 0.5); // Example threshold
+            
+            $tema = $crono->tema;
+            
+            return [
+                'id' => $crono->id,
+                'fecha' => Carbon::parse($crono->fecha)->format('Y-m-d'),
+                'tema' => $tema ? $tema->titulo : ('Sesión ' . $crono->numero_sesion),
+                'unidad' => $tema && $tema->unidad ? 'Unidad ' . $tema->unidad->numero : 'General',
+                
+                // Indicators
+                'cumplido' => $crono->estado === 'FINALIZADO' && $asistenciaOk, // Logic: marked finished + attendance taken
+                'estrategias' => $tema && (!empty($tema->estrategias_metodologicas) || !empty($tema->estrategias_recursos)),
+                'evaluacion' => $tema && (!empty($tema->evaluacion_formativa) || !empty($tema->evaluacion_sumativa)),
+                'secuencia' => $tema && $tema->secuencias()->exists(),
+                
+                // Raw data for debugging if needed
+                'estado_crono' => $crono->estado
+            ];
+        });
+
+        return response()->json([
+            'sesiones' => $mappedSesiones,
+            'rango' => [
+                'inicio' => $weekStart->format('Y-m-d'),
+                'fin' => $weekEnd->format('Y-m-d')
+            ]
         ]);
     }
 }
