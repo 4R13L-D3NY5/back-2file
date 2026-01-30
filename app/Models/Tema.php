@@ -68,6 +68,11 @@ class Tema extends Model
         return $this->hasOne(PlanificacionPersonal::class);
     }
 
+    public function cronogramas()
+    {
+        return $this->belongsToMany(Cronograma::class, 'cronograma_tema');
+    }
+
     public function scopeForGroup($query, $grupo)
     {
         if (!$grupo) return $query;

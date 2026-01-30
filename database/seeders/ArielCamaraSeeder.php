@@ -162,10 +162,6 @@ class ArielCamaraSeeder extends Seeder
             Cronograma::whereIn('grupo_id', $gruposRedes->pluck('id'))
                         ->where('asignatura_id', $redes->id)
                         ->delete();
-
-            $this->command->info("Generando cronograma unificado (40 sesiones)...");
-            // Pasamos el grupo principal (para el ID) y la colección completa (para los horarios combinados)
-            $this->generarCronogramaUnificado($grupoPrincipal, $gruposRedes, $redes);
         }
 
         // TEMA 1.1: Creación de VLANs
@@ -595,10 +591,15 @@ class ArielCamaraSeeder extends Seeder
         $this->crearPlanificacionPersonal($tRedes2_2, $user->id, $tRedes2_2_personal);
 
 
+        // Finalmente, Generar el Cronograma después de tener todos los temas creados
+        if (!$gruposRedes->isEmpty()) {
+            $this->command->info("Generando cronograma unificado con temas asociados...");
+            
+            // Colección de temas en orden
+            $todosLosTemas = collect([$tRedes1_1, $tRedes1_2, $tRedes2_1, $tRedes2_2]);
 
-
-
-
+            $this->generarCronogramaUnificado($grupoPrincipal, $gruposRedes, $redes, $todosLosTemas);
+        }
     }
 
     /**
@@ -638,7 +639,7 @@ class ArielCamaraSeeder extends Seeder
         );
     }
 
-    private function generarCronogramaUnificado($grupoPrincipal, $todosLosGrupos, $asignatura)
+    private function generarCronogramaUnificado($grupoPrincipal, $todosLosGrupos, $asignatura, $listaTemas = null)
     {
         $fechaInicio = Carbon::create(2026, 2, 9); // 09/02/2026
         $fechaFin = Carbon::create(2026, 6, 27);   // 27/06/2026 (Para tener exactamente 40 sesiones)
@@ -653,20 +654,9 @@ class ArielCamaraSeeder extends Seeder
 
         // Obtener horarios COMBINADOS de todos los grupos (Teoría + Práctica)
         $horarios = $todosLosGrupos->pluck('horarios')->flatten();
-        
-        // Mapeo de días
-        $diasMap = [
-            'Lunes' => 1,
-            'Martes' => 2,
-            'Miércoles' => 3,
-            'Jueves' => 4,
-            'Viernes' => 5,
-            'Sábado' => 6,
-            'Domingo' => 7
-        ];
 
         // Obtener días de clase como enteros (ISO-8601: 1=Lunes, 7=Domingo)
-        $diasClase = $horarios->map(function($h) use ($diasMap) {
+        $diasClase = $horarios->map(function($h) {
             // Normalizar el día (quitar tildes si es necesario o manejar formatos)
             // En el dump vimos "Miercoles" (sin tilde) y "Lunes".
             // Ajustamos el mapa para ser robustos.
@@ -712,8 +702,8 @@ class ArielCamaraSeeder extends Seeder
                 $conceptual = null;
                 $procedimental = null;
                 $actitudinal = ['Participación activa y ética profesional.'];
-                $criterios = null;
-                $instrumentos = null;
+                $criterios = "Analiza componentes, Diseña soluciones";
+                $instrumentos = "Lista de cotejo, Prueba escrita";
 
                 if ($tipoContenido === 'Teoría') {
                     $conceptual = ['Introducción y desarrollo de conceptos teóricos.'];
@@ -722,14 +712,32 @@ class ArielCamaraSeeder extends Seeder
                 } else { // Evaluación
                     $conceptual = ['Evaluación teórica de conocimientos.'];
                     $procedimental = ['Evaluación práctica de habilidades.'];
+                    $criterios = "Evalúa rendimiento, Documenta procesos";
+                    $instrumentos = "Examen escrito, Rúbrica de evaluación";
                 }
 
-                Cronograma::create([
+                // Asociar Temas (Determinar tema para esta sesión)
+                $temaId = null;
+                if ($listaTemas && $listaTemas->isNotEmpty() && $tipoContenido !== 'Evaluación') {
+                    // Distribuir temas: 10 sesiones por tema aprox
+                    // Usamos el número de sesión actual (antes del incremento)
+                    $indexTema = min(floor(($sesionCount - 1) / 10), $listaTemas->count() - 1);
+                    $temaActual = $listaTemas[$indexTema];
+                    $temaId = $temaActual->id;
+                }
+
+                // Calcular semana académica (basada en la fecha de inicio)
+                $diasDesdeInicio = $fechaInicio->diffInDays($fechaActual);
+                $semanaAcademica = (int)floor($diasDesdeInicio / 7) + 1;
+
+                $cronograma = Cronograma::create([
                     'grupo_id' => $grupoPrincipal->id, // SIEMPRE al grupo principal (424)
                     'asignatura_id' => $asignatura->id,
                     'fecha' => $fechaActual->toDateString(),
                     'numero_sesion' => $sesionCount++,
+                    'semana_academica' => $semanaAcademica,
                     'observaciones' => $observaciones,
+                    'tema_id' => $temaId, // Fallback para el frontend
                     'contenido_conceptual' => $conceptual, 
                     'contenido_procedimental' => $procedimental,
                     'contenido_actitudinal' => $actitudinal,
@@ -740,6 +748,12 @@ class ArielCamaraSeeder extends Seeder
                         'tipo_sesion' => $tipoContenido
                     ]
                 ]);
+
+                // Asociar Temas vía pivot (para el futuro)
+                if ($temaId) {
+                    $cronograma->temas()->attach($temaId);
+                    $this->command->info("Sesión {$cronograma->numero_sesion}: Asociado tema '{$temaActual->titulo}' (ID: {$temaId})");
+                }
             }
 
             $fechaActual->addDay();
