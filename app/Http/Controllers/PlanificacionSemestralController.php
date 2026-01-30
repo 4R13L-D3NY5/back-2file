@@ -21,7 +21,7 @@ class PlanificacionSemestralController extends Controller
 
         $asignatura = Asignatura::with(['horarios', 'cronogramas' => function ($q) use ($grupoId) {
             $q->orderBy('numero_sesion')
-                ->with(['tema.planificacionPersonal' => function ($query) {
+                ->with(['temas', 'tema.planificacionPersonal' => function ($query) {
                     $query->where('user_id', Auth::id());
                 }]);
 
@@ -83,29 +83,28 @@ class PlanificacionSemestralController extends Controller
                 $asignatura->cronogramas()->whereNull('grupo_id')->delete();
             }
 
-            $dataToInsert = array_map(function ($sesion) use ($grupoId) {
-                return [
-                    'numero_sesion' => $sesion['numeroGlobal'] ?? $sesion['numero_sesion'],
-                    'fecha' => $this->parseDate($sesion['fecha']), // Ensure YYYY-MM-DD
-                    'semana_academica' => $sesion['semana'],
-                    'periodo_examen' => $sesion['periodoExamen'] ?? null,
-                    'tema_id' => null,
+            foreach ($sesiones as $sesionData) {
+                $cronograma = $asignatura->cronogramas()->create([
+                    'numero_sesion' => $sesionData['numeroGlobal'] ?? $sesionData['numero_sesion'],
+                    'fecha' => $this->parseDate($sesionData['fecha']),
+                    'semana_academica' => $sesionData['semana'] ?? null,
+                    'periodo_examen' => $sesionData['periodoExamen'] ?? null,
+                    'tema_id' => $sesionData['tema_id'] ?? null,
                     'grupo_id' => $grupoId,
+                    'contenido_conceptual' => $sesionData['conceptual'] ?? null,
+                    'contenido_procedimental' => $sesionData['procedimental'] ?? null,
+                    'contenido_actitudinal' => $sesionData['actitudinal'] ?? null,
+                    'criterios_desempeno' => $sesionData['criteriosDesempeno'] ?? null,
+                    'instrumentos_evaluacion' => $sesionData['instrumentosEvaluacion'] ?? null,
+                    'observaciones' => $sesionData['observaciones'] ?? null
+                ]);
 
-                    // Strings
-                    'contenido_conceptual' => $sesion['conceptual'] ?? null,
-                    'contenido_procedimental' => $sesion['procedimental'] ?? null,
-                    'contenido_actitudinal' => $sesion['actitudinal'] ?? null,
-                    'criterios_desempeno' => $sesion['criteriosDesempeno'] ?? null,
-                    'instrumentos_evaluacion' => $sesion['instrumentosEvaluacion'] ?? null,
-
-                    // Flags
-                    'observaciones' => null
-                ];
-            }, $sesiones);
-
-            if (!empty($dataToInsert)) {
-                $asignatura->cronogramas()->createMany($dataToInsert);
+                // Sincronizar múltiples temas si vienen en el request
+                if (isset($sesionData['temas_ids']) && is_array($sesionData['temas_ids'])) {
+                    $cronograma->temas()->sync($sesionData['temas_ids']);
+                } elseif (!empty($sesionData['tema_id'])) {
+                    $cronograma->temas()->sync([$sesionData['tema_id']]);
+                }
             }
         });
 

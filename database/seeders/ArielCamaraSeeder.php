@@ -162,10 +162,6 @@ class ArielCamaraSeeder extends Seeder
             Cronograma::whereIn('grupo_id', $gruposRedes->pluck('id'))
                         ->where('asignatura_id', $redes->id)
                         ->delete();
-
-            $this->command->info("Generando cronograma unificado (40 sesiones)...");
-            // Pasamos el grupo principal (para el ID) y la colección completa (para los horarios combinados)
-            $this->generarCronogramaUnificado($grupoPrincipal, $gruposRedes, $redes);
         }
 
         // TEMA 1.1: Creación de VLANs
@@ -595,10 +591,15 @@ class ArielCamaraSeeder extends Seeder
         $this->crearPlanificacionPersonal($tRedes2_2, $user->id, $tRedes2_2_personal);
 
 
+        // Finalmente, Generar el Cronograma después de tener todos los temas creados
+        if (!$gruposRedes->isEmpty()) {
+            $this->command->info("Generando cronograma unificado con temas asociados...");
+            
+            // Colección de temas en orden
+            $todosLosTemas = collect([$tRedes1_1, $tRedes1_2, $tRedes2_1, $tRedes2_2]);
 
-
-
-
+            $this->generarCronogramaUnificado($grupoPrincipal, $gruposRedes, $redes, $todosLosTemas);
+        }
     }
 
     /**
@@ -638,7 +639,7 @@ class ArielCamaraSeeder extends Seeder
         );
     }
 
-    private function generarCronogramaUnificado($grupoPrincipal, $todosLosGrupos, $asignatura)
+    private function generarCronogramaUnificado($grupoPrincipal, $todosLosGrupos, $asignatura, $listaTemas = null)
     {
         $fechaInicio = Carbon::create(2026, 2, 9); // 09/02/2026
         $fechaFin = Carbon::create(2026, 6, 27);   // 27/06/2026 (Para tener exactamente 40 sesiones)
@@ -724,12 +725,23 @@ class ArielCamaraSeeder extends Seeder
                     $procedimental = ['Evaluación práctica de habilidades.'];
                 }
 
-                Cronograma::create([
+                // Asociar Temas (Determinar tema para esta sesión)
+                $temaId = null;
+                if ($listaTemas && $listaTemas->isNotEmpty() && $tipoContenido !== 'Evaluación') {
+                    // Distribuir temas: 10 sesiones por tema aprox
+                    // Usamos el número de sesión actual (antes del incremento)
+                    $indexTema = min(floor(($sesionCount - 1) / 10), $listaTemas->count() - 1);
+                    $temaActual = $listaTemas[$indexTema];
+                    $temaId = $temaActual->id;
+                }
+
+                $cronograma = Cronograma::create([
                     'grupo_id' => $grupoPrincipal->id, // SIEMPRE al grupo principal (424)
                     'asignatura_id' => $asignatura->id,
                     'fecha' => $fechaActual->toDateString(),
                     'numero_sesion' => $sesionCount++,
                     'observaciones' => $observaciones,
+                    'tema_id' => $temaId, // Fallback para el frontend
                     'contenido_conceptual' => $conceptual, 
                     'contenido_procedimental' => $procedimental,
                     'contenido_actitudinal' => $actitudinal,
@@ -740,6 +752,12 @@ class ArielCamaraSeeder extends Seeder
                         'tipo_sesion' => $tipoContenido
                     ]
                 ]);
+
+                // Asociar Temas vía pivot (para el futuro)
+                if ($temaId) {
+                    $cronograma->temas()->attach($temaId);
+                    $this->command->info("Sesión {$cronograma->numero_sesion}: Asociado tema '{$temaActual->titulo}' (ID: {$temaId})");
+                }
             }
 
             $fechaActual->addDay();
