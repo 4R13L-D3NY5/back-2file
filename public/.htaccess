@@ -1,9 +1,9 @@
+# --- CONFIGURACION CORS MANUAL PARA CPANEL ---
 <IfModule mod_headers.c>
-    SetEnvIf Origin "https://documentacion.xpertiaplus.com" AccessControlAllowOrigin=$0
-    Header always set Access-Control-Allow-Origin %{AccessControlAllowOrigin}e env=AccessControlAllowOrigin
-    Header always set Access-Control-Allow-Methods "POST, GET, OPTIONS, DELETE, PUT"
-    Header always set Access-Control-Allow-Headers "Content-Type, Accept, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN"
-    Header always set Access-Control-Allow-Credentials "true"
+    Header set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com"
+    Header set Access-Control-Allow-Methods "GET, POST, OPTIONS, DELETE, PUT"
+    Header set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN"
+    Header set Access-Control-Allow-Credentials "true"
 </IfModule>
 
 <IfModule mod_rewrite.c>
@@ -13,9 +13,9 @@
 
     RewriteEngine On
 
-    # Handle Preflight OPTIONS requests
+    # Responder directamente a peticiones OPTIONS (Preflight)
     RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule ^(.*)$ $1 [R=204,L]
+    RewriteRule ^(.*)$ $1 [R=200,L]
 
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
