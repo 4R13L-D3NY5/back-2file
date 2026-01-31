@@ -312,4 +312,53 @@ class DocenteController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Store a newly created resource in storage.
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'nombre_completo' => 'required|string|max:255',
+            'ci' => 'required|string|unique:docentes,ci',
+            'email' => 'nullable|email',
+            'sede_id' => 'required|exists:sedes,id',
+            'celular' => 'nullable|string',
+            'grado_academico' => 'nullable|string'
+        ]);
+
+        $docente = Docente::create($validated);
+        return response()->json($docente, 201);
+    }
+
+    /**
+     * Update the specified resource in storage.
+     */
+    public function update(Request $request, $id)
+    {
+        $docente = Docente::findOrFail($id);
+
+        $validated = $request->validate([
+            'nombre_completo' => 'sometimes|required|string|max:255',
+            'ci' => 'sometimes|required|string|unique:docentes,ci,' . $id,
+            'email' => 'nullable|email',
+            'sede_id' => 'sometimes|required|exists:sedes,id',
+            'celular' => 'nullable|string',
+            'grado_academico' => 'nullable|string',
+            'estado' => 'sometimes|boolean'
+        ]);
+
+        $docente->update($validated);
+        return response()->json($docente);
+    }
+
+    /**
+     * Remove the specified resource from storage.
+     */
+    public function destroy($id)
+    {
+        $docente = Docente::findOrFail($id);
+        $docente->delete();
+        return response()->json(null, 204);
+    }
 }

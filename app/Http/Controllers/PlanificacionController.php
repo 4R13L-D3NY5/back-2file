@@ -20,7 +20,7 @@ class PlanificacionController extends Controller
     public function updateUnidad(Request $request, $id)
     {
         $unidad = Unidad::findOrFail($id);
-        $unidad->update($request->only('objetivo', 'contenido_minimo', 'titulo', 'elemento_competencia'));
+        $unidad->update($request->only('objetivo', 'contenido_minimo', 'titulo', 'elemento_competencia', 'numero'));
         return response()->json($unidad);
     }
 
@@ -336,7 +336,7 @@ class PlanificacionController extends Controller
         // --- MERGE PERSONAL DATA ---
         $userId = auth()->id();
         $hasPersonalSequences = false;
-        
+
         if ($userId) {
             $personal = PlanificacionPersonal::where('tema_id', $temaId)
                 ->where('user_id', $userId)
@@ -349,7 +349,7 @@ class PlanificacionController extends Controller
                 $tema->estrategias_recursos = $personal->estrategias_recursos;
                 $tema->evaluacion_formativa = $personal->evaluacion_formativa;
                 $tema->evaluacion_sumativa = $personal->evaluacion_sumativa;
-                
+
                 // Solo usar secuencias personales si existen y no están vacías
                 if (!empty($personal->secuencia_didactica) && is_array($personal->secuencia_didactica)) {
                     $tema->secuencia_didactica = $personal->secuencia_didactica;
@@ -363,7 +363,7 @@ class PlanificacionController extends Controller
 
         // FALLBACK: Si no hay secuencias personales, usar secuencias de la plantilla
         if (!$hasPersonalSequences && $tema->secuencias->isNotEmpty()) {
-            $tema->secuencia_didactica = $tema->secuencias->map(function($sec, $index) {
+            $tema->secuencia_didactica = $tema->secuencias->map(function ($sec, $index) {
                 return [
                     'id' => time() + $index, // ID único temporal
                     'momento' => $sec->momento,
