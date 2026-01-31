@@ -139,7 +139,7 @@ class DashboardController extends Controller
         });
 
         // 3. Users by Role
-        $roles = Rol::withCount('usuarios')->get();
+        $roles = Rol::withCount('users')->get();
         $usuariosPorRol = $roles->map(function ($rol) use ($totalUsuarios) {
             return [
                 'nombre' => $rol->nombre,

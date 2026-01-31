@@ -181,7 +181,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/cronogramas/{id}/seguimiento', [\App\Http\Controllers\CronogramaController::class, 'updateSeguimiento']);
 
     // Reportes (Nuevo)
+    Route::get('/reportes/auditoria-semanal', [\App\Http\Controllers\ReporteController::class, 'getAuditoriaSemanal']);
     Route::get('/reportes/director', [\App\Http\Controllers\ReporteController::class, 'index']);
+    Route::get('/reportes/director/weekly', [\App\Http\Controllers\ReporteController::class, 'generateWeeklyReport']);
     Route::get('/seguimiento-semanal/check-status', [\App\Http\Controllers\SeguimientoSemanalController::class, 'checkStatus']);
     Route::post('/seguimiento-semanal/bulk-generate', [\App\Http\Controllers\SeguimientoSemanalController::class, 'bulkGenerate']);
     Route::apiResource('seguimiento-semanal', \App\Http\Controllers\SeguimientoSemanalController::class);
