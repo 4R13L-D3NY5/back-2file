@@ -19,7 +19,7 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => ['https://documentacion.xpertiaplus.com', 'http://localhost:9000'],
+    'allowed_origins' => ['https://documentacion.xpertiaplus.com'],
 
     'allowed_origins_patterns' => [],
 
