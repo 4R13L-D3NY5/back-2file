@@ -1,7 +1,8 @@
 <IfModule mod_headers.c>
-    Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com"
-    Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
-    Header always set Access-Control-Allow-Headers "Origin, X-Requested-With, Content-Type, Accept, Authorization, X-XSRF-TOKEN, X-CSRF-TOKEN"
+    SetEnvIf Origin "https://documentacion.xpertiaplus.com" AccessControlAllowOrigin=$0
+    Header always set Access-Control-Allow-Origin %{AccessControlAllowOrigin}e env=AccessControlAllowOrigin
+    Header always set Access-Control-Allow-Methods "POST, GET, OPTIONS, DELETE, PUT"
+    Header always set Access-Control-Allow-Headers "Content-Type, Accept, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN"
     Header always set Access-Control-Allow-Credentials "true"
 </IfModule>
 
@@ -14,7 +15,7 @@
 
     # Handle Preflight OPTIONS requests
     RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule ^(.*)$ $1 [R=200,L]
+    RewriteRule ^(.*)$ $1 [R=204,L]
 
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
