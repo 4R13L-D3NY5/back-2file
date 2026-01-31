@@ -14,9 +14,8 @@ use App\Http\Controllers\PlanificacionController;
 use App\Http\Controllers\PlanificacionSemestralController;
 
 // Public Routes
-Route::post('/login', [AuthController::class, 'login'])->name('login');
+Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,1')->name('login');
 Route::post('/register', [AuthController::class, 'register']);
-Route::get('/test-publico', [AsignaturaController::class, 'index']); // RUTA TEMPORAL DE PRUEBA
 
 // Protected Routes
 Route::middleware('auth:sanctum')->group(function () {
@@ -54,6 +53,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Stats
     Route::get('admin/stats', [DashboardController::class, 'index']);
+    Route::get('admin/dashboard/director', [DashboardController::class, 'director']);
 
     // Planificación (Temas y Subniveles)
     Route::prefix('planificacion')->group(function () {

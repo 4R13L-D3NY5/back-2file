@@ -95,6 +95,11 @@ class Asignatura extends Model
         return $this->hasMany(Unidad::class);
     }
 
+    public function temas()
+    {
+        return $this->hasManyThrough(Tema::class, Unidad::class);
+    }
+
     public function bibliografias(): HasMany
     {
         return $this->hasMany(Bibliografia::class);

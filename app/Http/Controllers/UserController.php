@@ -11,8 +11,14 @@ class UserController extends Controller
 {
     public function index(Request $request)
     {
-        $query = User::with(['rol', 'director.carrera', 'docente.sede', 'sede'])
-            ->orderBy('id', 'desc');
+        $query = User::with([
+            'rol',
+            'director.carrera',
+            'director.carreras',
+            'director.sede',
+            'docente.sede',
+            'sede'
+        ])->orderBy('id', 'desc');
 
         if ($request->has('search')) {
             $search = $request->input('search');
@@ -27,17 +33,16 @@ class UserController extends Controller
 
         $users = $query->get();
 
-        // Transformar datos para frontend
+        // Transformar datos para frontend (Optimizado)
         $users->transform(function ($user) {
             // Resolver Sede
             $sedeNombre = null;
             if ($user->sede) {
                 $sedeNombre = $user->sede->nombre;
-            } elseif ($user->director) {
-                $sede = \App\Models\Sede::find($user->director->sede_id);
-                if ($sede) $sedeNombre = $sede->nombre;
             } elseif ($user->docente && $user->docente->sede) {
                 $sedeNombre = $user->docente->sede->nombre;
+            } elseif ($user->director && $user->director->sede) {
+                $sedeNombre = $user->director->sede->nombre;
             }
 
             // Resolver Carrera
@@ -47,26 +52,21 @@ class UserController extends Controller
             if ($user->director) {
                 if ($user->director->carrera) {
                     $carreraNombre = $user->director->carrera->nombre;
-                } else {
-                    // Si tiene multiples carreras o estan solo en la tabla carrera(director_id)
-                    $carreras = \App\Models\Carrera::where('director_id', $user->director->id)->pluck('nombre')->toArray();
-                    if (!empty($carreras)) {
-                        $carreraNombre = implode(', ', $carreras);
-                    }
+                } elseif ($user->director->carreras->isNotEmpty()) {
+                    $carreraNombre = $user->director->carreras->pluck('nombre')->implode(', ');
                 }
             }
 
-            // 2. Si falló o no es director, intentar parsear la columna 'carrera' (legacy/string ids)
+            // 2. Si falló o no es director, intentar parsear la columna 'carrera' (legacy/string ids o texto)
             if (!$carreraNombre && $user->carrera) {
                 // Si parece ser una lista de IDs (ej: "14, 15")
                 if (preg_match('/^[\d,\s]+$/', $user->carrera)) {
-                    $ids = explode(',', $user->carrera);
+                    $ids = array_map('trim', explode(',', $user->carrera));
+                    // Aquí todavía podríamos tener un pequeño N+1 si no sabemos qué carreras son,
+                    // pero al menos limitamos a los IDs del campo legacy.
+                    // Optimización: Cache de nombres de carrera para este request si fuera muy pesado.
                     $names = \App\Models\Carrera::whereIn('id', $ids)->pluck('nombre')->toArray();
-                    if (!empty($names)) {
-                        $carreraNombre = implode(', ', $names);
-                    } else {
-                        $carreraNombre = $user->carrera; // Fallback
-                    }
+                    $carreraNombre = !empty($names) ? implode(', ', $names) : $user->carrera;
                 } else {
                     $carreraNombre = $user->carrera; // Es un texto literal
                 }
