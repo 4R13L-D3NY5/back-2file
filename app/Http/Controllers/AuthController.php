@@ -121,11 +121,11 @@ class AuthController extends Controller
 
         $user = $request->user();
 
-        if (Hash::check($request->new_password, $user->password)) {
-            throw ValidationException::withMessages([
-                'new_password' => ['La nueva contraseña no puede ser igual a la anterior.'],
-            ]);
-        }
+        // if (Hash::check($request->new_password, $user->password)) {
+        //     throw ValidationException::withMessages([
+        //         'new_password' => ['La nueva contraseña no puede ser igual a la anterior.'],
+        //     ]);
+        // }
 
         $user->password = Hash::make($request->new_password);
         $user->password_change_required = false;
