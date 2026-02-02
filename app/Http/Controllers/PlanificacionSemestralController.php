@@ -119,7 +119,8 @@ class PlanificacionSemestralController extends Controller
                     'contenido_actitudinal' => $sesionData['actitudinal'] ?? null,
                     'criterios_desempeno' => $sesionData['criteriosDesempeno'] ?? null,
                     'instrumentos_evaluacion' => $sesionData['instrumentosEvaluacion'] ?? null,
-                    'observaciones' => $sesionData['observaciones'] ?? null
+                    'observaciones' => $sesionData['observaciones'] ?? null,
+                    'contenido_items_seleccionados' => $sesionData['contenido_items_seleccionados'] ?? []
                 ]);
 
                 // Sincronizar múltiples temas si vienen en el request

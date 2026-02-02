@@ -24,6 +24,7 @@ class Cronograma extends Model
         'contenido_actitudinal',
         'criterios_desempeno',
         'instrumentos_evaluacion',
+        'contenido_items_seleccionados', // Array de items seleccionados "temaId:itemIndex"
         'cumplido',
         'pedagogico'
     ];
@@ -35,6 +36,7 @@ class Cronograma extends Model
         'contenido_actitudinal' => 'array',
         'criterios_desempeno' => 'array',
         'instrumentos_evaluacion' => 'array',
+        'contenido_items_seleccionados' => 'array',
     ];
 
     public function asignatura(): BelongsTo

@@ -12,6 +12,7 @@ class Tema extends Model
     protected $fillable = [
         'titulo',
         'descripcion',
+        'contenido_items', // Array de items de contenido
         'orden',
         'resultado_aprendizaje',
         'horas_practicas',
@@ -31,6 +32,7 @@ class Tema extends Model
     ];
 
     protected $casts = [
+        'contenido_items' => 'array',
         'contenido_conceptual' => 'array',
         'contenido_procedimental' => 'array',
         'contenido_actitudinal' => 'array',
