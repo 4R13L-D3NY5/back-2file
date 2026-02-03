@@ -19,13 +19,23 @@ class PlanificacionSemestralController extends Controller
     {
         $grupoId = $request->input('grupo_id');
 
-        $asignatura = Asignatura::with(['horarios', 'cronogramas' => function ($q) use ($grupoId) {
+        // IMPORTANTE: docente_id es el ID de la tabla 'docentes', NO el user_id
+        // Debemos convertir docente_id -> user_id para filtrar PlanificacionPersonal
+        $targetUserId = Auth::id();
+        if ($request->filled('docente_id')) {
+            $docente = \App\Models\Docente::find($request->input('docente_id'));
+            if ($docente && $docente->user_id) {
+                $targetUserId = $docente->user_id;
+            }
+        }
+
+        $asignatura = Asignatura::with(['horarios', 'cronogramas' => function ($q) use ($grupoId, $targetUserId) {
             $q->orderBy('numero_sesion')
                 ->with([
                     'temas',
-                    'tema.secuencias', 
-                    'tema.planificacionPersonal' => function ($query) {
-                        $query->where('user_id', Auth::id());
+                    'tema.secuencias',
+                    'tema.planificacionPersonal' => function ($query) use ($targetUserId) {
+                        $query->where('user_id', $targetUserId);
                     }
                 ]);
 
@@ -37,11 +47,11 @@ class PlanificacionSemestralController extends Controller
         // Resolver Detalles Pedagógicos para cada sesión
         $cronogramas = $asignatura->cronogramas->map(function ($cronograma) {
             // Check if pedagogico is missing required fields (estrategias, evaluacion, secuencia)
-            $needsResolution = empty($cronograma->pedagogico) || 
-                              !isset($cronograma->pedagogico['estrategias']) || 
-                              !isset($cronograma->pedagogico['evaluacion']) || 
-                              !isset($cronograma->pedagogico['secuencia']);
-            
+            $needsResolution = empty($cronograma->pedagogico) ||
+                !isset($cronograma->pedagogico['estrategias']) ||
+                !isset($cronograma->pedagogico['evaluacion']) ||
+                !isset($cronograma->pedagogico['secuencia']);
+
             if ($needsResolution) {
                 $resolved = $this->resolvePedagogicoDefaults($cronograma);
                 // Merge with existing pedagogico data (preserve tipo_sesion, etc.)
@@ -259,21 +269,21 @@ class PlanificacionSemestralController extends Controller
     public function updateSeguimiento(Request $request, $id)
     {
         $cronograma = Cronograma::findOrFail($id);
-        
+
         // Parse pedagogico JSON
         $pedagogico = json_decode($request->input('pedagogico', '{}'), true);
         $integracionTransversal = json_decode($request->input('integracion_transversal', '{}'), true);
-        
+
         // Handle evidence file uploads
         $evidencias = [];
-        
+
         // Aprendizaje Activo
         if ($request->hasFile('evidencia_aprendizaje')) {
             $file = $request->file('evidencia_aprendizaje');
             $path = $file->store('evidencias/aprendizaje', 'public');
             $evidencias['aprendizaje_activo'] = $path;
         }
-        
+
         // Evaluación Formativa (can be file or text)
         if ($request->hasFile('evidencia_evaluacion')) {
             $file = $request->file('evidencia_evaluacion');
@@ -282,42 +292,42 @@ class PlanificacionSemestralController extends Controller
         } elseif ($request->filled('evidencia_evaluacion')) {
             $evidencias['evaluacion_formativa'] = $request->input('evidencia_evaluacion');
         }
-        
+
         // Secuencia Didáctica
         if ($request->hasFile('evidencia_secuencia')) {
             $file = $request->file('evidencia_secuencia');
             $path = $file->store('evidencias/secuencia', 'public');
             $evidencias['secuencia_didactica'] = $path;
         }
-        
+
         // Integración Transversal evidences
         $integracionEvidencias = [];
-        
+
         if ($request->hasFile('evidencia_investigacion')) {
             $file = $request->file('evidencia_investigacion');
             $path = $file->store('evidencias/investigacion', 'public');
             $integracionEvidencias['investigacion'] = $path;
         }
-        
+
         if ($request->hasFile('evidencia_interaccion')) {
             $file = $request->file('evidencia_interaccion');
             $path = $file->store('evidencias/interaccion', 'public');
             $integracionEvidencias['interaccion'] = $path;
         }
-        
+
         if ($request->hasFile('evidencia_internalizacion')) {
             $file = $request->file('evidencia_internalizacion');
             $path = $file->store('evidencias/internalizacion', 'public');
             $integracionEvidencias['internalizacion'] = $path;
         }
-        
+
         // Merge integración transversal data with evidences
         foreach ($integracionTransversal as $key => $value) {
             if (isset($integracionEvidencias[$key])) {
                 $integracionTransversal[$key]['evidencia'] = $integracionEvidencias[$key];
             }
         }
-        
+
         // Build complete pedagogico object
         // Include tema_cumplido as pedagogical information
         $completePedagogico = array_merge($pedagogico, [
@@ -377,17 +387,17 @@ class PlanificacionSemestralController extends Controller
         }
 
         $tema = $cronograma->tema;
-        
+
         // Check if planificacionPersonal was eager loaded and exists
         // The relationship is loaded with user_id constraint in the index method
         $planificacionPersonal = null;
         if ($tema->relationLoaded('planificacionPersonal')) {
             $planificacionPersonal = $tema->planificacionPersonal;
         }
-        
+
         // Prioridad: Planificación Personal -> Tema Base
         $planning = $planificacionPersonal ?? $tema;
-        
+
         // Debug logging
         \Log::info('Resolving pedagogico for tema_id: ' . $tema->id, [
             'has_planificacion_personal' => !is_null($planificacionPersonal),
@@ -396,7 +406,7 @@ class PlanificacionSemestralController extends Controller
             'evaluacion_formativa' => $planning->evaluacion_formativa ?? 'null',
             'secuencia_didactica' => $planning->secuencia_didactica ?? 'null'
         ]);
-        
+
         // 1. Estrategias
         if (!empty($planning->estrategias_recursos)) {
             foreach ($planning->estrategias_recursos as $est) {
@@ -405,9 +415,9 @@ class PlanificacionSemestralController extends Controller
         }
         // Si es Tema base, puede tener metodologías como string
         if (isset($planning->estrategias_metodologicas) && is_string($planning->estrategias_metodologicas)) {
-             $defaults['estrategias'][] = ['nombre' => 'Metodología: ' . substr($planning->estrategias_metodologicas, 0, 50), 'cumplido' => false];
+            $defaults['estrategias'][] = ['nombre' => 'Metodología: ' . substr($planning->estrategias_metodologicas, 0, 50), 'cumplido' => false];
         } else if (empty($defaults['estrategias'])) {
-             $defaults['estrategias'][] = ['nombre' => 'Clase Magistral', 'cumplido' => false];
+            $defaults['estrategias'][] = ['nombre' => 'Clase Magistral', 'cumplido' => false];
         }
 
         // 2. Evaluación
@@ -434,7 +444,7 @@ class PlanificacionSemestralController extends Controller
                 if (isset($sec['actividad'])) $nombre .= ': ' . substr($sec['actividad'], 0, 60);
                 $defaults['secuencia'][] = ['nombre' => $nombre, 'cumplido' => false];
             }
-        } 
+        }
         // En Tema es una relación (secuencias)
         else if ($tema->secuencias->count() > 0) {
             foreach ($tema->secuencias as $sec) {

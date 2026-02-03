@@ -18,11 +18,10 @@ class AsignaturaController extends Controller
     protected MateriasComunesSyncService $materiasComunesSyncService;
 
     public function __construct(
-        UniversityService $universityService, 
+        UniversityService $universityService,
         \App\Services\AsignaturaSyncService $syncService,
         MateriasComunesSyncService $materiasComunesSyncService
-    )
-    {
+    ) {
         $this->universityService = $universityService;
         $this->syncService = $syncService;
         $this->materiasComunesSyncService = $materiasComunesSyncService;
@@ -49,7 +48,7 @@ class AsignaturaController extends Controller
         if ($request->filled('sede_id') || $request->filled('carrera_id') || $request->filled('semestre')) {
             $query->whereHas('carreras', function ($q) use ($request) {
                 if ($request->filled('sede_id')) {
-                    $q->where(function($sub) use ($request) {
+                    $q->where(function ($sub) use ($request) {
                         $sub->where('asignatura_carrera.sede_id', $request->sede_id)
                             ->orWhere('carreras.sede_id', $request->sede_id);
                     });
@@ -61,7 +60,7 @@ class AsignaturaController extends Controller
             // Cargar contexto específico para mostrar los datos correctos
             $query->with(['carreras' => function ($q) use ($request) {
                 if ($request->filled('sede_id')) {
-                    $q->where(function($sub) use ($request) {
+                    $q->where(function ($sub) use ($request) {
                         $sub->where('asignatura_carrera.sede_id', $request->sede_id)
                             ->orWhere('carreras.sede_id', $request->sede_id);
                     });
@@ -134,7 +133,15 @@ class AsignaturaController extends Controller
         $query = Asignatura::where('id', $codigo)->orWhere('codigo', $codigo);
 
         // Determine target user for checks (Self or specific Docente as Director)
-        $targetUserId = $request->input('docente_id', Auth::id());
+        // IMPORTANTE: docente_id es el ID de la tabla 'docentes', NO el user_id
+        // Debemos convertir docente_id -> user_id para filtrar PlanificacionPersonal
+        $targetUserId = Auth::id();
+        if ($request->filled('docente_id')) {
+            $docente = \App\Models\Docente::find($request->input('docente_id'));
+            if ($docente && $docente->user_id) {
+                $targetUserId = $docente->user_id;
+            }
+        }
 
         // Filter Content by Group Type
         if ($request->filled('grupo_id')) {
