@@ -159,7 +159,7 @@ class SyncDocentesCommand extends Command
                         'password' => $ci, // El modelo aplica hash automáticamente
                         'rol_id' => $rolDocente->id,
                         'estado' => true,
-                        'password_change_required' => true,
+                        'password_change_required' => false,
                     ]);
 
                     // Crear registro de docente

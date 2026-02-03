@@ -107,7 +107,7 @@ class UserController extends Controller
         // Password default 'password' if not set, else hash it
         // Password default es el CI
         $validated['password'] = Hash::make($validated['ci']);
-        $validated['password_change_required'] = true;
+        $validated['password_change_required'] = false;
 
         $user = User::create($validated);
         $user->load('rol');

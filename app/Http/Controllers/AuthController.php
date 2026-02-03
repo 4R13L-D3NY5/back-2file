@@ -63,10 +63,10 @@ class AuthController extends Controller
 
         $passwordChangeRequired = (bool) $user->password_change_required;
 
-        // Si la contraseña coincide con el CI (escenario común en primer inicio), forzar cambio
-        if (!$passwordChangeRequired && $user->ci && Hash::check($user->ci, $user->password)) {
-            $passwordChangeRequired = true;
-        }
+        // Ya no forzamos cambio de contraseña incluso si coincide con CI
+        // if (!$passwordChangeRequired && $user->ci && Hash::check($user->ci, $user->password)) {
+        //     $passwordChangeRequired = true;
+        // }
 
         return response()->json([
             'message' => 'Login exitoso',
@@ -150,7 +150,7 @@ class AuthController extends Controller
             'email' => $request->email,
             'password' => Hash::make($request->password),
             'rol_id' => 1,
-            'password_change_required' => true,
+            'password_change_required' => false,
         ]);
 
         $token = $user->createToken('auth-token')->plainTextToken;
@@ -193,9 +193,10 @@ class AuthController extends Controller
         }
 
         $passwordChangeRequired = (bool) $user->password_change_required;
-        if (!$passwordChangeRequired && $user->ci && Hash::check($user->ci, $user->password)) {
-            $passwordChangeRequired = true;
-        }
+        // Ya no forzamos cambio de contraseña incluso si coincide con CI
+        // if (!$passwordChangeRequired && $user->ci && Hash::check($user->ci, $user->password)) {
+        //     $passwordChangeRequired = true;
+        // }
 
         $user->password_change_required = $passwordChangeRequired;
         return $user;
