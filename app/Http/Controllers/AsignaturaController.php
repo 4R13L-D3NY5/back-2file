@@ -35,6 +35,9 @@ class AsignaturaController extends Controller
     {
         $query = Asignatura::query();
 
+        // NOTE: Role-based filtering (Director de Carrera) is handled by the frontend
+        // The frontend sends sede_id and carrera_id filters based on user's assigned data
+
         // Eager load grupos and context, optionally filtered by sede
         $sedeId = $request->input('sede_id');
         $query->with(['grupos' => function ($q) use ($sedeId) {
