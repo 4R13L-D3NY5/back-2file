@@ -189,23 +189,37 @@ class PlanningSyncService
                     $turno = ($hora < 12) ? 'MAÑANA' : (($hora < 18) ? 'TARDE' : 'NOCHE');
                     $tipo = isset($dto->tipoClase) ? strtoupper($dto->tipoClase) : 'TEORICO';
 
-                    // Use firstOrCreate-like logic but with specific keys to prevent duplicates
-                    // Constraint: unique(['asignatura_id', 'nombre', 'tipo', 'gestion'])
-                    // We move 'docente_id' and 'turno' to attributes to update, not matching criteria.
-                    $grupo = Grupo::updateOrCreate(
-                        [
-                            'gestion' => $dto->gestion,
-                            'asignatura_id' => $asignatura->id,
-                            'nombre' => $dto->grupo,
-                            'tipo' => $tipo
-                        ],
-                        [
-                            'docente_id' => $docente->id,
+                    // FIX: Prevent overwriting docente_id if group exists
+                    // We identify the group strictly by its logical keys
+                    $existingGrupo = Grupo::where([
+                        'gestion' => $dto->gestion,
+                        'asignatura_id' => $asignatura->id,
+                        'nombre' => $dto->grupo,
+                        'tipo' => $tipo
+                    ])->first();
+
+                    if ($existingGrupo) {
+                        // UPDATE PATH: Conservative
+                        // We do NOT update 'docente_id' to prevent API inconsistencies overwriting valid data
+                        $grupo = $existingGrupo;
+                        $grupo->update([
                             'sede_id' => $sede->id,
                             'turno' => $turno,
                             'estado' => 'ACTIVO'
-                        ]
-                    );
+                        ]);
+                    } else {
+                        // CREATE PATH: Full trust on first sync
+                        $grupo = Grupo::create([
+                            'gestion' => $dto->gestion,
+                            'asignatura_id' => $asignatura->id,
+                            'nombre' => $dto->grupo,
+                            'tipo' => $tipo,
+                            'docente_id' => $docente->id, // Assign only on creation
+                            'sede_id' => $sede->id,
+                            'turno' => $turno,
+                            'estado' => 'ACTIVO'
+                        ]);
+                    }
                     $stats['grupos']++;
 
                     // 8. Horario
