@@ -7,4 +7,4 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-\Illuminate\Support\Facades\Schedule::command('academic:sync 1-2026')->cron('0 0,6,12,18 * * *');
+\Illuminate\Support\Facades\Schedule::command('academic:sync 1-2026')->cron('0 0,6,12,18 * * *')->timezone('America/La_Paz');
