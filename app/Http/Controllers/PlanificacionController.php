@@ -387,29 +387,62 @@ class PlanificacionController extends Controller
         // --- MERGE PERSONAL DATA ---
         $userId = auth()->id();
         $hasPersonalSequences = false;
+        $personal = null;
 
         if ($userId) {
+            // 1. Primero intentar obtener datos personales del usuario logueado
             $personal = PlanificacionPersonal::where('tema_id', $temaId)
                 ->where('user_id', $userId)
                 ->first();
 
-            if ($personal) {
-                // Override shared fields with personal data for the response
-                $tema->estrategias_metodologicas = $personal->estrategias_metodologicas;
-                $tema->estrategias_aprendizaje = $personal->estrategias_aprendizaje;
-                $tema->estrategias_recursos = $personal->estrategias_recursos;
-                $tema->evaluacion_formativa = $personal->evaluacion_formativa;
-                $tema->evaluacion_sumativa = $personal->evaluacion_sumativa;
+            // 2. FALLBACK: Si el usuario logueado NO tiene datos personales,
+            //    buscar los datos del docente asignado a esta asignatura
+            if (!$personal) {
+                // Obtener asignatura a través de tema -> unidad -> asignatura
+                $asignatura = $tema->unidad?->asignatura;
+                
+                if ($asignatura) {
+                    // Obtener user_ids de los docentes asignados a esta asignatura
+                    $docenteUserIds = \App\Models\Grupo::where('asignatura_id', $asignatura->id)
+                        ->whereNotNull('docente_id')
+                        ->with('docente')
+                        ->get()
+                        ->pluck('docente.user_id')
+                        ->filter()
+                        ->unique()
+                        ->toArray();
 
-                // Solo usar secuencias personales si existen y no están vacías
-                if (!empty($personal->secuencia_didactica) && is_array($personal->secuencia_didactica)) {
-                    $tema->secuencia_didactica = $personal->secuencia_didactica;
-                    $hasPersonalSequences = true;
+                    if (!empty($docenteUserIds)) {
+                        // Buscar datos personales de cualquiera de los docentes asignados
+                        $personal = PlanificacionPersonal::where('tema_id', $temaId)
+                            ->whereIn('user_id', $docenteUserIds)
+                            ->first();
+                        
+                        if ($personal) {
+                            // Flag para indicar que se está viendo datos de otro usuario
+                            $tema->viendo_datos_docente = true;
+                        }
+                    }
                 }
-
-                // Add flag to frontend knows it is personal
-                $tema->es_personalizado = true;
             }
+        }
+
+        if ($personal) {
+            // Override shared fields with personal data for the response
+            $tema->estrategias_metodologicas = $personal->estrategias_metodologicas;
+            $tema->estrategias_aprendizaje = $personal->estrategias_aprendizaje;
+            $tema->estrategias_recursos = $personal->estrategias_recursos;
+            $tema->evaluacion_formativa = $personal->evaluacion_formativa;
+            $tema->evaluacion_sumativa = $personal->evaluacion_sumativa;
+
+            // Solo usar secuencias personales si existen y no están vacías
+            if (!empty($personal->secuencia_didactica) && is_array($personal->secuencia_didactica)) {
+                $tema->secuencia_didactica = $personal->secuencia_didactica;
+                $hasPersonalSequences = true;
+            }
+
+            // Add flag to frontend knows it is personal
+            $tema->es_personalizado = true;
         }
 
         // FALLBACK: Si no hay secuencias personales, usar secuencias de la plantilla
