@@ -190,12 +190,13 @@ class PlanningSyncService
                     $tipo = isset($dto->tipoClase) ? strtoupper($dto->tipoClase) : 'TEORICO';
 
                     // FIX: Prevent overwriting docente_id if group exists
-                    // We identify the group strictly by its logical keys
+                    // We identify the group strictly by its logical keys INCLUDING SEDE
                     $existingGrupo = Grupo::where([
                         'gestion' => $dto->gestion,
                         'asignatura_id' => $asignatura->id,
                         'nombre' => $dto->grupo,
-                        'tipo' => $tipo
+                        'tipo' => $tipo,
+                        'sede_id' => $sede->id // Critical: Scope by Sede
                     ])->first();
 
                     if ($existingGrupo) {
