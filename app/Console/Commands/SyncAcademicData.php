@@ -79,17 +79,17 @@ class SyncAcademicData extends Command
         } else {
             $this->info("Auto-detecting tasks from Active Sedes in Database...");
 
-            // Fetch all active Sedes with their attached Carreras
-            $sedes = \App\Models\Sede::where('activo', true)
-                ->whereHas('carreras') // Only process sedes that have careers
-                ->with('carreras')
-                ->get();
+            // Fetch all active Sedes
+            $sedes = \App\Models\Sede::where('activo', true)->get();
+            // Fetch ALL careers in the database (not just linked ones)
+            $allCarreras = \App\Models\Carrera::all();
 
             foreach ($sedes as $sede) {
                 // Filter by Sede argument if present
                 if ($sedeArg && $sedeArg != $sede->id) continue;
 
-                foreach ($sede->carreras as $carrera) {
+                // Try ALL careers for this sede (Planning API will return empty if not applicable)
+                foreach ($allCarreras as $carrera) {
                     // Filter by Carrera argument if present
                     if ($carreraArg && $carreraArg != $carrera->sigla) continue;
 
