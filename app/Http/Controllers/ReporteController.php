@@ -54,11 +54,11 @@ class ReporteController extends Controller
         $allUserIds = $asignaturas->pluck('grupos.*.docente.user_id')->flatten()->filter()->unique();
         $planningMap = [];
         if ($allUserIds->isNotEmpty()) {
-            $planningMap = DB::table('planificacion_personal')
-                ->join('temas', 'planificacion_personal.tema_id', '=', 'temas.id')
+            $planningMap = DB::table('planificaciones_personales')
+                ->join('temas', 'planificaciones_personales.tema_id', '=', 'temas.id')
                 ->join('unidades', 'temas.unidad_id', '=', 'unidades.id')
-                ->whereIn('planificacion_personal.user_id', $allUserIds)
-                ->select('planificacion_personal.user_id', 'unidades.asignatura_id')
+                ->whereIn('planificaciones_personales.user_id', $allUserIds)
+                ->select('planificaciones_personales.user_id', 'unidades.asignatura_id')
                 ->distinct()
                 ->get()
                 ->groupBy('user_id')
@@ -131,6 +131,7 @@ class ReporteController extends Controller
 
                 $docentesFormatted[] = [
                     'id' => $grupo->docente->id,
+                    'ci' => $grupo->docente->ci,
                     'nombre' => $grupo->docente->nombre_completo,
                     'iniciales' => $initials ?: 'DC',
                     'grupo' => $grupo->nombre,
@@ -159,7 +160,7 @@ class ReporteController extends Controller
             }
         }
 
-        return response()->json([
+        $data = [
             'reporteMaterias' => $reporteMaterias,
             'metricas' => [
                 'totalDocentes' => $allDocentesIds->unique()->count(),
@@ -167,7 +168,20 @@ class ReporteController extends Controller
                 'cumplimientoTemas' => $totalAvanceCount > 0 ? round($totalAvanceSum / $totalAvanceCount) : 0,
                 'documentacionPendiente' => $totalPendingDocs
             ]
-        ]);
+        ];
+
+        return response()->json($this->cleanUtf8($data));
+    }
+
+    private function cleanUtf8($data)
+    {
+        if (is_array($data)) {
+            return array_map([$this, 'cleanUtf8'], $data);
+        }
+        if (is_string($data)) {
+            return mb_convert_encoding($data, 'UTF-8', 'UTF-8');
+        }
+        return $data;
     }
 
 
@@ -250,5 +264,92 @@ class ReporteController extends Controller
                 'fin' => $weekEnd->format('Y-m-d')
             ]
         ]);
+    }
+    public function generateWeeklyReport(Request $request)
+    {
+        $request->validate([
+            'carrera_id' => 'required',
+            'sede_id' => 'required',
+            'fecha_inicio' => 'required|date'
+        ]);
+
+        $carreraId = $request->carrera_id;
+        $sedeId = $request->sede_id;
+        $startDate = Carbon::parse($request->fecha_inicio);
+        $endDate = $startDate->copy()->addDays(6);
+
+        // Fetch subjects linked to career/sede
+        $asignaturas = Asignatura::whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
+            $q->where('carreras.id', $carreraId)
+                ->where('asignatura_carrera.sede_id', $sedeId);
+        })->with(['grupos.docente', 'grupos.cronogramas' => function ($q) use ($startDate, $endDate) {
+            $q->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
+                ->withCount(['asistencias' => function ($aq) {
+                    $aq->where('asistio', true);
+                }]);
+        }])->get();
+
+        $reports = [];
+
+        foreach ($asignaturas as $asignatura) {
+            foreach ($asignatura->grupos as $grupo) {
+                if (!$grupo->docente) continue;
+
+                $sessions = $grupo->cronogramas; // Filtered by date in eager load
+                if ($sessions->isEmpty()) continue; // Skip if no classes scheduled this week
+
+                $checks = [];
+                $alertLevel = 'VERDE';
+
+                foreach ($sessions as $session) {
+                    // 1. Asistencia Check (> 50% just as placeholder threshold)
+                    // We need total students count, assuming we can get it from enrollment or count total asistencias rows
+                    // For now, let's use a simple heuristic if we don't have total enrollment easily accessible here
+                    // Assuming cronograma->asistencias_count might be total attendance records created (present + absent)
+                    $totalRecords = $session->asistencias()->count();
+                    $present = $session->asistencias_count; // From withCount 'asistencias' where asistio=true
+
+                    $attendanceOk = $totalRecords > 0 ? ($present / $totalRecords) >= 0.5 : false;
+
+                    // 2. Content Check (If theme is assigned)
+                    $contentOk = !empty($session->tema_id);
+
+                    // 3. Resources/Strategies (Check if pedagogico field is filled)
+                    // pedagogico is cast to array in model
+                    $pedagogico = $session->pedagogico;
+                    $planningOk = !empty($pedagogico) && !empty($pedagogico['estrategias']);
+
+                    // 4. Completed Check
+                    $completedOk = $session->cumplido;
+
+                    $checks[] = [
+                        'fecha' => $session->fecha,
+                        'asistencia' => $attendanceOk,
+                        'contenido' => $contentOk,
+                        'planificacion' => $planningOk,
+                        'cumplido' => $completedOk
+                    ];
+
+                    if (!$completedOk || !$attendanceOk) {
+                        $alertLevel = 'ROJO';
+                    } else if (!$planningOk) {
+                        $alertLevel = ($alertLevel === 'ROJO') ? 'ROJO' : 'AMARILLO';
+                    }
+                }
+
+                $reports[] = [
+                    'id' => $grupo->id . '-' . $startDate->timestamp,
+                    'asignatura' => $asignatura->nombre,
+                    'carrera' => $asignatura->carreras->where('id', $carreraId)->first()->nombre ?? 'N/A',
+                    'docente' => $grupo->docente->nombre_completo,
+                    'semana_inicio' => $startDate->toDateString(),
+                    'criterios' => $checks,
+                    'alerta' => $alertLevel,
+                    'acciones' => $alertLevel === 'ROJO' ? 'Verificar' : 'Ninguna'
+                ];
+            }
+        }
+
+        return response()->json($reports);
     }
 }

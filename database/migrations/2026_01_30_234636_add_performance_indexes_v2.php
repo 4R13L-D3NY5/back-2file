@@ -12,22 +12,40 @@ return new class extends Migration
     public function up(): void
     {
         // 1. Cronogramas: Index for date range filtering and group association
-        Schema::table('cronogramas', function (Blueprint $table) {
-            // Check if column exists just in case
-            if (Schema::hasColumn('cronogramas', 'grupo_id')) {
-                $table->index(['grupo_id', 'fecha'], 'idx_crono_grp_fecha');
+        if (Schema::hasTable('cronogramas')) {
+            try {
+                Schema::table('cronogramas', function (Blueprint $table) {
+                    if (Schema::hasColumn('cronogramas', 'grupo_id')) {
+                        $table->index(['grupo_id', 'fecha'], 'idx_crono_grp_fecha');
+                    }
+                });
+            } catch (\Exception $e) {
             }
-        });
+        }
 
         // 2. Asistencias: Index for reports
-        Schema::table('asistencias', function (Blueprint $table) {
-            $table->index(['cronograma_id', 'asistio'], 'idx_asist_crono_asistio');
-        });
+        if (Schema::hasTable('asistencias')) {
+            try {
+                Schema::table('asistencias', function (Blueprint $table) {
+                    if (Schema::hasColumn('asistencias', 'cronograma_id')) {
+                        $table->index(['cronograma_id', 'asistio'], 'idx_asist_crono_asistio');
+                    }
+                });
+            } catch (\Exception $e) {
+            }
+        }
 
-        // 3. Planificacion Personal: Status check index
-        Schema::table('planificacion_personal', function (Blueprint $table) {
-            $table->index(['user_id', 'tema_id'], 'idx_pp_u_t');
-        });
+        // 3. Planificaciones Personales: Status check index
+        if (Schema::hasTable('planificaciones_personales')) {
+            try {
+                Schema::table('planificaciones_personales', function (Blueprint $table) {
+                    if (Schema::hasColumn('planificaciones_personales', 'user_id')) {
+                        $table->index(['user_id', 'tema_id'], 'idx_pp_u_t');
+                    }
+                });
+            } catch (\Exception $e) {
+            }
+        }
     }
 
     /**
@@ -35,16 +53,31 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('cronogramas', function (Blueprint $table) {
-            $table->dropIndex('idx_crono_grp_fecha');
-        });
+        if (Schema::hasTable('cronogramas')) {
+            try {
+                Schema::table('cronogramas', function (Blueprint $table) {
+                    $table->dropIndex('idx_crono_grp_fecha');
+                });
+            } catch (\Exception $e) {
+            }
+        }
 
-        Schema::table('asistencias', function (Blueprint $table) {
-            $table->dropIndex('idx_asist_crono_asistio');
-        });
+        if (Schema::hasTable('asistencias')) {
+            try {
+                Schema::table('asistencias', function (Blueprint $table) {
+                    $table->dropIndex('idx_asist_crono_asistio');
+                });
+            } catch (\Exception $e) {
+            }
+        }
 
-        Schema::table('planificacion_personal', function (Blueprint $table) {
-            $table->dropIndex('idx_pp_u_t');
-        });
+        if (Schema::hasTable('planificaciones_personales')) {
+            try {
+                Schema::table('planificaciones_personales', function (Blueprint $table) {
+                    $table->dropIndex('idx_pp_u_t');
+                });
+            } catch (\Exception $e) {
+            }
+        }
     }
 };
