@@ -117,14 +117,42 @@ class UniversitySyncService
         $carrera = Carrera::where('sigla', $careerCode)->first();
         if (!$carrera) return;
 
-        // Sync pivot with semestre
+        // Sync pivot with semestre - using DB::table to handle duplicates gracefully
         $semestre = $data['semester'] ?? null;
-        $asignatura->carreras()->syncWithoutDetaching([
-            $carrera->id => [
-                'semestre' => $semestre,
-                'sede_id' => $sede->id,
-            ]
-        ]);
+
+        try {
+            // Check if pivot entry exists
+            $exists = DB::table('asignatura_carrera')
+                ->where('asignatura_id', $asignatura->id)
+                ->where('carrera_id', $carrera->id)
+                ->where('sede_id', $sede->id)
+                ->exists();
+
+            if ($exists) {
+                // Update existing
+                DB::table('asignatura_carrera')
+                    ->where('asignatura_id', $asignatura->id)
+                    ->where('carrera_id', $carrera->id)
+                    ->where('sede_id', $sede->id)
+                    ->update([
+                        'semestre' => $semestre,
+                        'updated_at' => now()
+                    ]);
+            } else {
+                // Insert new
+                DB::table('asignatura_carrera')->insert([
+                    'asignatura_id' => $asignatura->id,
+                    'carrera_id' => $carrera->id,
+                    'sede_id' => $sede->id,
+                    'semestre' => $semestre,
+                    'created_at' => now(),
+                    'updated_at' => now()
+                ]);
+            }
+        } catch (\Exception $e) {
+            // Log but don't fail the entire sync
+            Log::warning("Failed to sync pivot for course {$courseCode}: " . $e->getMessage());
+        }
 
         $stats['courses_synced']++;
         $stats['pivot_created']++;
