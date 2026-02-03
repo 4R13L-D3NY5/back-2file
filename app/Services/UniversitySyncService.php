@@ -17,12 +17,7 @@ class UniversitySyncService
 {
     private UniversityService $client;
 
-    // BranchOffice codes mapped to Sede IDs
-    private const BRANCH_OFFICE_MAP = [
-        'cba' => 1,   // Cochabamba
-        'lpz' => 6,   // La Paz
-        'scz' => 9,   // Santa Cruz (STC in DB)
-    ];
+    // BRANCH_OFFICE_MAP removed - now using database Sedes with 'codigo' field
 
     public function __construct(UniversityService $client)
     {
@@ -31,6 +26,7 @@ class UniversitySyncService
 
     /**
      * Sync all data from University API
+     * Dynamically reads active Sedes from database
      */
     public function syncAll(callable $progressCallback = null): array
     {
@@ -42,15 +38,14 @@ class UniversitySyncService
         ];
 
         return DB::transaction(function () use (&$stats, $progressCallback) {
-            foreach (self::BRANCH_OFFICE_MAP as $branchCode => $sedeId) {
-                try {
-                    // Get or verify Sede exists
-                    $sede = Sede::find($sedeId);
-                    if (!$sede) {
-                        Log::warning("University Sync: Sede {$sedeId} not found, skipping {$branchCode}");
-                        continue;
-                    }
+            // Dynamic: Fetch all active Sedes from database
+            $sedes = Sede::where('activo', true)->get();
 
+            foreach ($sedes as $sede) {
+                // Use the 'codigo' field (lowercase) as the branchCode for the API
+                $branchCode = strtolower($sede->codigo);
+
+                try {
                     if ($progressCallback) {
                         $progressCallback("Syncing {$branchCode} (Sede: {$sede->nombre})...");
                     }

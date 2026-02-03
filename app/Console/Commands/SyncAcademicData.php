@@ -12,14 +12,7 @@ class SyncAcademicData extends Command
     protected $signature = 'academic:sync {gestion=1-2026} {--carrera=} {--sede=} {--all} {--queue : Run in background queue}';
     protected $description = 'Synchronize academic data from external API';
 
-    private const SEDE_MAP = [
-        1 => ['CARCCP', 'CARCPU', 'CARAYE', 'CARDER', 'CARSON', 'CARSIS', 'CARIBI', 'CARBYF', 'CARNYD', 'CARODO', 'CARFIS', 'CARFON', 'CARPRO', 'CARENL', 'CARMED'],
-        5 => ['CARVET'],
-        6 => ['CARSON', 'CARODO'],
-        8 => ['CARICO', 'CARENL'],
-        9 => ['CARSON', 'CARODO', 'CARENL', 'CARMED'],
-        12 => ['CARMED']
-    ];
+    // SEDE_MAP removed in favor of dynamic DB lookup
 
     public function handle(PlanningSyncService $planningService, UniversitySyncService $universityService)
     {
@@ -79,16 +72,31 @@ class SyncAcademicData extends Command
         $url = 'http://181.188.185.211:9098/api/Grupos/listar/';
         $tasks = [];
 
-        // Determine what to sync
+        // Dynamic Task Generation from Database
         if ($carreraArg && $sedeArg) {
+            // Manual specific sync
             $tasks[] = ['sede' => $sedeArg, 'carrera' => $carreraArg];
         } else {
-            $this->info("Auto-detecting tasks from Known Configuration...");
-            foreach (self::SEDE_MAP as $sedeId => $carreras) {
-                if ($sedeArg && $sedeArg != $sedeId) continue;
-                foreach ($carreras as $sigla) {
-                    if ($carreraArg && $carreraArg != $sigla) continue;
-                    $tasks[] = ['sede' => $sedeId, 'carrera' => $sigla];
+            $this->info("Auto-detecting tasks from Active Sedes in Database...");
+
+            // Fetch all active Sedes with their attached Carreras
+            $sedes = \App\Models\Sede::where('activo', true)
+                ->whereHas('carreras') // Only process sedes that have careers
+                ->with('carreras')
+                ->get();
+
+            foreach ($sedes as $sede) {
+                // Filter by Sede argument if present
+                if ($sedeArg && $sedeArg != $sede->id) continue;
+
+                foreach ($sede->carreras as $carrera) {
+                    // Filter by Carrera argument if present
+                    if ($carreraArg && $carreraArg != $carrera->sigla) continue;
+
+                    $tasks[] = [
+                        'sede' => $sede->id,
+                        'carrera' => $carrera->sigla
+                    ];
                 }
             }
         }
