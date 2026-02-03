@@ -83,7 +83,7 @@ class PlanningSyncService
 
                     // 5. Asignatura
                     // Matches DTO: siglaP (Code), materia (Name)
-                    $asignatura = Asignatura::firstOrCreate(
+                    $asignatura = Asignatura::updateOrCreate(
                         ['codigo' => $dto->siglaP],
                         ['nombre' => $dto->materia]
                     );
