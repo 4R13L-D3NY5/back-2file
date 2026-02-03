@@ -49,7 +49,8 @@ class AuthController extends Controller
             'docente.asignaturas.unidades.temas',
             'docente.asignaturas.carreras',
             'docente.sede',
-            'docente.grupos',
+            'docente.grupos.horarios',
+            'docente.grupos.asignatura',
             'director.sede',
             'director.carrera'
         ]);
@@ -58,6 +59,13 @@ class AuthController extends Controller
         if ($user->docente) {
             $user->docente->asignaturas->each(function ($asignatura) {
                 $asignatura->append(['progreso', 'estadisticas_progreso']);
+            });
+
+            // Also append to asignaturas within groups
+            $user->docente->grupos->each(function ($grupo) {
+                if ($grupo->asignatura) {
+                    $grupo->asignatura->append(['progreso', 'estadisticas_progreso']);
+                }
             });
         }
 
@@ -181,7 +189,8 @@ class AuthController extends Controller
             'docente.asignaturas.unidades.temas', // Load deep relations for progress calc
             'docente.asignaturas.carreras',
             'docente.sede',
-            'docente.grupos',
+            'docente.grupos.horarios',
+            'docente.grupos.asignatura',
             'director.sede',
             'director.carrera',
             'director.carreras'
@@ -191,6 +200,13 @@ class AuthController extends Controller
         if ($user->docente) {
             $user->docente->asignaturas->each(function ($asignatura) {
                 $asignatura->append(['progreso', 'estadisticas_progreso']);
+            });
+
+            // Also append to asignaturas within groups
+            $user->docente->grupos->each(function ($grupo) {
+                if ($grupo->asignatura) {
+                    $grupo->asignatura->append(['progreso', 'estadisticas_progreso']);
+                }
             });
         }
 
