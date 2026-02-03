@@ -81,21 +81,35 @@ class SyncAcademicData extends Command
 
             // Fetch all active Sedes
             $sedes = \App\Models\Sede::where('activo', true)->get();
+
+            // FALLBACK: Known careers that University API incorrectly omits from List Careers
+            // These careers exist and have data in Planning API but don't appear in University API's career list
+            $fallbackCarreras = [
+                'CARDER', // Derecho - confirmed to have courses but not in List Careers
+                'CARSON', // Sonido - may be missing
+                'CARMED', // Medicina - often has API errors
+                'CARVET', // Veterinaria - often has API errors
+                'CARENL', // Enfermería La Paz - often has API errors
+            ];
+
             // Fetch ALL careers in the database (not just linked ones)
-            $allCarreras = \App\Models\Carrera::all();
+            $allCarrerasFromDb = \App\Models\Carrera::all()->pluck('sigla')->toArray();
+
+            // Merge database careers with fallback list (unique values only)
+            $allCarreraSiglas = array_unique(array_merge($allCarrerasFromDb, $fallbackCarreras));
 
             foreach ($sedes as $sede) {
                 // Filter by Sede argument if present
                 if ($sedeArg && $sedeArg != $sede->id) continue;
 
                 // Try ALL careers for this sede (Planning API will return empty if not applicable)
-                foreach ($allCarreras as $carrera) {
+                foreach ($allCarreraSiglas as $carreraSigla) {
                     // Filter by Carrera argument if present
-                    if ($carreraArg && $carreraArg != $carrera->sigla) continue;
+                    if ($carreraArg && $carreraArg != $carreraSigla) continue;
 
                     $tasks[] = [
                         'sede' => $sede->id,
-                        'carrera' => $carrera->sigla
+                        'carrera' => $carreraSigla
                     ];
                 }
             }
