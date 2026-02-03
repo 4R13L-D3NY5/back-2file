@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Log;
 
 /**
  * Servicio de Sincronización para Materias Comunes
- * 
+ *
  * Maneja la replicación automática de datos de documentación
  * entre asignaturas vinculadas (comun_token) cuando el mismo
  * docente dicta ambas materias.
@@ -29,7 +29,7 @@ class MateriasComunesSyncService
 
     /**
      * Obtiene asignaturas vinculadas que comparten el mismo docente.
-     * 
+     *
      * @param Asignatura $source Asignatura origen
      * @return Collection Colección de Asignaturas hermanas con mismo docente
      */
@@ -119,7 +119,7 @@ class MateriasComunesSyncService
 
     /**
      * Sincroniza TODA la documentación de una asignatura a sus hermanas vinculadas
-     * 
+     *
      * @param Asignatura $source Asignatura origen (la que tiene los datos más completos)
      * @return int Número de asignaturas sincronizadas
      */
@@ -130,7 +130,7 @@ class MateriasComunesSyncService
         }
 
         $linked = $this->getLinkedSubjectsWithSameTeacher($source);
-        
+
         if ($linked->isEmpty()) {
             return 0;
         }
@@ -239,12 +239,13 @@ class MateriasComunesSyncService
 
             $temaData = [
                 'titulo' => $sourceTema->titulo,
-                'descripcion' => $sourceTema->descripcion,
+                // 'descripcion' => $sourceTema->descripcion, // Removed from DB
                 'orden' => $sourceTema->orden,
                 'resultado_aprendizaje' => $sourceTema->resultado_aprendizaje,
                 'horas_practicas' => $sourceTema->horas_practicas,
                 'horas_teoricas' => $sourceTema->horas_teoricas,
                 'tipo' => $sourceTema->tipo,
+                'contenido_items' => $sourceTema->contenido_items,
                 'contenido_conceptual' => $sourceTema->contenido_conceptual,
                 'contenido_procedimental' => $sourceTema->contenido_procedimental,
                 'contenido_actitudinal' => $sourceTema->contenido_actitudinal,
@@ -309,7 +310,7 @@ class MateriasComunesSyncService
     /**
      * Sincroniza PlanificacionPersonal de un usuario específico a materias vinculadas
      * (Llamado desde PlanificacionController después de guardar datos personales)
-     * 
+     *
      * @param Tema $tema El tema origen
      * @param int $userId El user_id del usuario que guardó los datos
      * @return int Número de materias sincronizadas
@@ -336,7 +337,7 @@ class MateriasComunesSyncService
                 foreach ($linked as $target) {
                     // Verificar que el usuario es docente compartido
                     $sharedUserIds = $this->getSharedTeacherUserIds($asignatura, $target);
-                    
+
                     if (!in_array($userId, $sharedUserIds)) {
                         continue; // Este usuario no es docente de la materia destino
                     }
@@ -376,7 +377,7 @@ class MateriasComunesSyncService
     private function syncLogrosStructure(Tema $sourceTema, Tema $targetTema): void
     {
         $sourceLogros = $sourceTema->logros()->with('indicadores')->get();
-        
+
         // Eliminar logros existentes en el destino y recrear
         $targetTema->logros()->delete();
 
@@ -504,12 +505,13 @@ class MateriasComunesSyncService
 
                     $temaData = [
                         'titulo' => $tema->titulo,
-                        'descripcion' => $tema->descripcion,
+                        // 'descripcion' => $tema->descripcion, // Removed from DB
                         'orden' => $tema->orden,
                         'resultado_aprendizaje' => $tema->resultado_aprendizaje,
                         'horas_practicas' => $tema->horas_practicas,
                         'horas_teoricas' => $tema->horas_teoricas,
                         'tipo' => $tema->tipo,
+                        'contenido_items' => $tema->contenido_items,
                         'contenido_conceptual' => $tema->contenido_conceptual,
                         'contenido_procedimental' => $tema->contenido_procedimental,
                         'contenido_actitudinal' => $tema->contenido_actitudinal,

@@ -11,7 +11,7 @@ class Tema extends Model
 
     protected $fillable = [
         'titulo',
-        'descripcion',
+        // 'descripcion', // removed column
         'contenido_items', // Array de items de contenido
         'orden',
         'resultado_aprendizaje',
@@ -97,7 +97,7 @@ class Tema extends Model
 
         // Si es nueva y no tiene secuencias, copiar de la plantilla
         if (!$planificacion->exists && $this->secuencias->isNotEmpty()) {
-            $planificacion->secuencia_didactica = $this->secuencias->map(function($sec) {
+            $planificacion->secuencia_didactica = $this->secuencias->map(function ($sec) {
                 return [
                     'momento' => $sec->momento,
                     'descripcion' => $sec->descripcion,

@@ -29,13 +29,13 @@ class PlanificacionController extends Controller
     {
         $unidad = Unidad::findOrFail($id);
         $unidad->update($request->only('objetivo', 'contenido_minimo', 'titulo', 'elemento_competencia', 'numero'));
-        
+
         // Sincronizar a materias vinculadas del mismo docente
         $synced = $this->syncService->syncUnidad($unidad);
-        
+
         $response = $unidad->toArray();
         $response['synced_to'] = $synced;
-        
+
         return response()->json($response);
     }
 
@@ -49,13 +49,13 @@ class PlanificacionController extends Controller
         ]);
 
         $unidad = Unidad::create($request->all());
-        
+
         // Sincronizar a materias vinculadas del mismo docente
         $synced = $this->syncService->syncUnidad($unidad);
-        
+
         $response = $unidad->toArray();
         $response['synced_to'] = $synced;
-        
+
         return response()->json($response, 201);
     }
 
@@ -64,13 +64,13 @@ class PlanificacionController extends Controller
         $unidad = Unidad::findOrFail($id);
         $numero = $unidad->numero;
         $asignatura = $unidad->asignatura;
-        
+
         $unidad->temas()->delete(); // Cascada manual si no está en DB
         $unidad->delete();
-        
+
         // Eliminar en materias vinculadas del mismo docente
         $this->syncService->deleteUnidadFromLinked($numero, $asignatura);
-        
+
         return response()->json(null, 204);
     }
 
@@ -84,7 +84,8 @@ class PlanificacionController extends Controller
 
         $tema = $unidad->temas()->create([
             'titulo' => $request->input('titulo', 'Nuevo Tema'),
-            'descripcion' => $request->input('descripcion', ''),
+            // 'descripcion' removed from DB
+
             'contenido_items' => $request->input('contenido_items', []),
             'orden' => $lastOrder + 1,
             'horas_teoricas' => $request->input('horas_teoricas', 0),
@@ -93,10 +94,10 @@ class PlanificacionController extends Controller
 
         // Sincronizar a materias vinculadas del mismo docente
         $synced = $this->syncService->syncTema($tema);
-        
+
         $response = $tema->toArray();
         $response['synced_to'] = $synced;
-        
+
         return response()->json($response, 201);
     }
 
@@ -146,7 +147,7 @@ class PlanificacionController extends Controller
         foreach ($temas as $index => $t) {
             $t->update(['orden' => $index + 1]);
         }
-        
+
         // Eliminar en materias vinculadas del mismo docente
         $this->syncService->deleteTemaFromLinked($orden, $unidad);
 
@@ -172,7 +173,8 @@ class PlanificacionController extends Controller
 
         // 0. Campos Básicos
         if (isset($data['titulo'])) $updateData['titulo'] = $data['titulo'];
-        if (isset($data['descripcion'])) $updateData['descripcion'] = $data['descripcion'];
+        // 'descripcion' removed from DB
+
         if (isset($data['contenido_items'])) $updateData['contenido_items'] = $data['contenido_items'];
         if (isset($data['horas_teoricas'])) $updateData['horas_teoricas'] = $data['horas_teoricas'];
         if (isset($data['horas_practicas'])) $updateData['horas_practicas'] = $data['horas_practicas'];
@@ -296,7 +298,7 @@ class PlanificacionController extends Controller
 
         // RELOAD Logros for response
         $tema->load('logros.indicadores');
-        
+
         // Sincronizar a materias vinculadas del mismo docente
         $synced = $this->syncService->syncTema($tema);
 
@@ -430,7 +432,8 @@ class PlanificacionController extends Controller
         $formatted = [
             'id' => $tema->id,
             'titulo' => $tema->titulo,
-            'descripcion' => $tema->descripcion,
+            'descripcion' => '', // Deprecated field
+
             'contenido_items' => $tema->contenido_items ?? [],
             'horas_practicas' => $tema->horas_practicas,
             'horas_teoricas' => $tema->horas_teoricas,
