@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Asignatura;
 use App\Models\Carrera;
 use App\Services\University\UniversityService;
+use App\Services\MateriasComunesSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -14,11 +15,17 @@ class AsignaturaController extends Controller
 {
     protected $universityService;
     protected $syncService;
+    protected MateriasComunesSyncService $materiasComunesSyncService;
 
-    public function __construct(UniversityService $universityService, \App\Services\AsignaturaSyncService $syncService)
+    public function __construct(
+        UniversityService $universityService, 
+        \App\Services\AsignaturaSyncService $syncService,
+        MateriasComunesSyncService $materiasComunesSyncService
+    )
     {
         $this->universityService = $universityService;
         $this->syncService = $syncService;
+        $this->materiasComunesSyncService = $materiasComunesSyncService;
     }
 
     /**
@@ -432,6 +439,10 @@ class AsignaturaController extends Controller
                     'updated_at' => now()
                 ]);
         }
+
+        // SINCRONIZACIÓN MATERIAS COMUNES: Propagar a materias vinculadas del mismo docente
+        $synced = $this->materiasComunesSyncService->syncAllDocumentationToLinked($local);
+        $response['synced_to_comunes'] = $synced;
 
         return response()->json($response);
     }

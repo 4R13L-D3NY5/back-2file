@@ -10,10 +10,18 @@ use App\Models\SecuenciaTema;
 use App\Models\LogroEsperado;
 use App\Models\Indicador;
 use App\Models\PlanificacionPersonal;
+use App\Services\MateriasComunesSyncService;
 use Illuminate\Http\Request;
 
 class PlanificacionController extends Controller
 {
+    protected MateriasComunesSyncService $syncService;
+
+    public function __construct(MateriasComunesSyncService $syncService)
+    {
+        $this->syncService = $syncService;
+    }
+
     /**
      * Actualizar Unidad (Objetivo/Competencia)
      */
@@ -21,7 +29,14 @@ class PlanificacionController extends Controller
     {
         $unidad = Unidad::findOrFail($id);
         $unidad->update($request->only('objetivo', 'contenido_minimo', 'titulo', 'elemento_competencia', 'numero'));
-        return response()->json($unidad);
+        
+        // Sincronizar a materias vinculadas del mismo docente
+        $synced = $this->syncService->syncUnidad($unidad);
+        
+        $response = $unidad->toArray();
+        $response['synced_to'] = $synced;
+        
+        return response()->json($response);
     }
 
     public function storeUnidad(Request $request)
@@ -34,14 +49,28 @@ class PlanificacionController extends Controller
         ]);
 
         $unidad = Unidad::create($request->all());
-        return response()->json($unidad, 201);
+        
+        // Sincronizar a materias vinculadas del mismo docente
+        $synced = $this->syncService->syncUnidad($unidad);
+        
+        $response = $unidad->toArray();
+        $response['synced_to'] = $synced;
+        
+        return response()->json($response, 201);
     }
 
     public function destroyUnidad($id)
     {
         $unidad = Unidad::findOrFail($id);
+        $numero = $unidad->numero;
+        $asignatura = $unidad->asignatura;
+        
         $unidad->temas()->delete(); // Cascada manual si no está en DB
         $unidad->delete();
+        
+        // Eliminar en materias vinculadas del mismo docente
+        $this->syncService->deleteUnidadFromLinked($numero, $asignatura);
+        
         return response()->json(null, 204);
     }
 
@@ -61,7 +90,13 @@ class PlanificacionController extends Controller
             'horas_practicas' => $request->input('horas_practicas', 0),
         ]);
 
-        return response()->json($tema, 201);
+        // Sincronizar a materias vinculadas del mismo docente
+        $synced = $this->syncService->syncTema($tema);
+        
+        $response = $tema->toArray();
+        $response['synced_to'] = $synced;
+        
+        return response()->json($response, 201);
     }
 
     public function moveTema(Request $request, $id)
@@ -100,6 +135,8 @@ class PlanificacionController extends Controller
     {
         $tema = Tema::findOrFail($id);
         $unidadId = $tema->unidad_id;
+        $orden = $tema->orden;
+        $unidad = $tema->unidad;
 
         $tema->delete();
 
@@ -108,6 +145,9 @@ class PlanificacionController extends Controller
         foreach ($temas as $index => $t) {
             $t->update(['orden' => $index + 1]);
         }
+        
+        // Eliminar en materias vinculadas del mismo docente
+        $this->syncService->deleteTemaFromLinked($orden, $unidad);
 
         return response()->json(null, 204);
     }
@@ -187,6 +227,9 @@ class PlanificacionController extends Controller
                 ['tema_id' => $tema->id, 'user_id' => $userId],
                 $personalData
             );
+
+            // SINCRONIZAR datos personales a materias vinculadas del mismo docente
+            $this->syncService->syncPersonalDataForUser($tema, $userId);
         }
 
         // Only update shared fields on Tema
@@ -251,10 +294,14 @@ class PlanificacionController extends Controller
 
         // RELOAD Logros for response
         $tema->load('logros.indicadores');
+        
+        // Sincronizar a materias vinculadas del mismo docente
+        $synced = $this->syncService->syncTema($tema);
 
         // Prepare response matching Frontend expectations
         $response = $tema->toArray();
         $response['logros_esperados'] = $response['logros'];
+        $response['synced_to'] = $synced;
 
         return response()->json($response);
     }
