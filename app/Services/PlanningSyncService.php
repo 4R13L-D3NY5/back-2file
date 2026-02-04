@@ -83,8 +83,34 @@ class PlanningSyncService
 
                     // 5. Asignatura
                     // Matches DTO: siglaP (Code), materia (Name)
+
+                    // COLLISION DETECTION LOGIC
+                    // Problem: SON-123 is "Teoria Musical" in LPZ but "Programacion II" in CBA
+                    // Solution: Check if name differs significantly. If so, create branch-specific code.
+
+                    $codigoFinal = $dto->siglaP;
+
+                    // 1. Try to find precise match (Code + Name similarity)
+                    // We check if the BASE code exists first
+                    $asignaturaBase = Asignatura::where('codigo', $dto->siglaP)->first();
+
+                    if ($asignaturaBase) {
+                        // Calculate similarity between stored name and incoming name
+                        // normalize: uppercase, ASCII only could be better but fuzzy match is okay
+                        similar_text(strtoupper($asignaturaBase->nombre), strtoupper($dto->materia), $percent);
+
+                        // If names are very different (< 50% similar), assign a suffixed code
+                        if ($percent < 50) {
+                            $sedeSuffix = strtoupper(substr($dto->nombreSede, 0, 3)); // CBA, LPZ, SCZ
+                            // Force suffix if NOT already suffixed
+                            if (!str_contains($codigoFinal, '-' . $sedeSuffix)) {
+                                $codigoFinal = $dto->siglaP . '-' . $sedeSuffix;
+                            }
+                        }
+                    }
+
                     $asignatura = Asignatura::updateOrCreate(
-                        ['codigo' => $dto->siglaP],
+                        ['codigo' => $codigoFinal],
                         ['nombre' => $dto->materia]
                     );
                     $stats['asignaturas']++;
