@@ -220,7 +220,8 @@ class PlanningSyncService
 
                     if ($dto->idHorario) {
                         // Primary lookup: by unique API identifier
-                        $existingGrupo = Grupo::where('id_horario_api', $dto->idHorario)->first();
+                        // DISABLED FOR STABILITY
+                        //$existingGrupo = Grupo::where('id_horario_api', $dto->idHorario)->first();
                     }
 
                     // Fallback: legacy lookup for data without idHorario
@@ -240,12 +241,13 @@ class PlanningSyncService
                         $updateData = [
                             'sede_id' => $sede->id,
                             'turno' => $turno,
-                            'estado' => 'ACTIVO'
+                            'estado' => 'ACTIVO',
+                            // MASSIVE FIX: Always update docente to what API says
+                            'docente_id' => $docente->id
                         ];
 
                         // If found by idHorario, we trust the API data completely
                         if ($dto->idHorario && $existingGrupo->id_horario_api === $dto->idHorario) {
-                            $updateData['docente_id'] = $docente->id;
                             $updateData['asignatura_id'] = $asignatura->id;
                             $updateData['nombre'] = $dto->grupo;
                             $updateData['tipo'] = $tipo;
@@ -255,7 +257,7 @@ class PlanningSyncService
                     } else {
                         // CREATE PATH: Full trust on first sync
                         $grupo = Grupo::create([
-                            'id_horario_api' => $dto->idHorario,
+                            //'id_horario_api' => $dto->idHorario, // DISABLED
                             'gestion' => $dto->gestion,
                             'asignatura_id' => $asignatura->id,
                             'nombre' => $dto->grupo,
