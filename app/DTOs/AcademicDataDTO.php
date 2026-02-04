@@ -5,6 +5,7 @@ namespace App\DTOs;
 class AcademicDataDTO
 {
     public function __construct(
+        public ?int $idHorario,
         public int $idSede,
         public string $nombreSede,
         public string $nomBloque,
@@ -28,6 +29,7 @@ class AcademicDataDTO
     public static function fromArray(array $data): self
     {
         return new self(
+            idHorario: isset($data['idHorario']) ? (int) $data['idHorario'] : null,
             idSede: (int) ($data['idSede'] ?? 0),
             nombreSede: trim($data['nombreSede'] ?? ''),
             nomBloque: trim($data['nomBloque'] ?? 'Sin Bloque'),

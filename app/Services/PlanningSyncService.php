@@ -189,33 +189,52 @@ class PlanningSyncService
                     $turno = ($hora < 12) ? 'MAÑANA' : (($hora < 18) ? 'TARDE' : 'NOCHE');
                     $tipo = isset($dto->tipoClase) ? strtoupper($dto->tipoClase) : 'TEORICO';
 
-                    // FIX: Prevent overwriting docente_id if group exists
-                    // We identify the group strictly by its logical keys INCLUDING SEDE
-                    $existingGrupo = Grupo::where([
-                        'gestion' => $dto->gestion,
-                        'asignatura_id' => $asignatura->id,
-                        'nombre' => $dto->grupo,
-                        'tipo' => $tipo,
-                        'sede_id' => $sede->id // Critical: Scope by Sede
-                    ])->first();
+                    // IMPROVED: Use idHorario as primary lookup key for precise sync
+                    $existingGrupo = null;
 
-                    if ($existingGrupo) {
-                        // UPDATE PATH: Conservative
-                        // We do NOT update 'docente_id' to prevent API inconsistencies overwriting valid data
-                        $grupo = $existingGrupo;
-                        $grupo->update([
-                            'sede_id' => $sede->id,
-                            'turno' => $turno,
-                            'estado' => 'ACTIVO'
-                        ]);
-                    } else {
-                        // CREATE PATH: Full trust on first sync
-                        $grupo = Grupo::create([
+                    if ($dto->idHorario) {
+                        // Primary lookup: by unique API identifier
+                        $existingGrupo = Grupo::where('id_horario_api', $dto->idHorario)->first();
+                    }
+
+                    // Fallback: legacy lookup for data without idHorario
+                    if (!$existingGrupo) {
+                        $existingGrupo = Grupo::where([
                             'gestion' => $dto->gestion,
                             'asignatura_id' => $asignatura->id,
                             'nombre' => $dto->grupo,
                             'tipo' => $tipo,
-                            'docente_id' => $docente->id, // Assign only on creation
+                            'sede_id' => $sede->id
+                        ])->first();
+                    }
+
+                    if ($existingGrupo) {
+                        // UPDATE PATH: Now updates docente_id since we have a reliable identifier
+                        $grupo = $existingGrupo;
+                        $updateData = [
+                            'sede_id' => $sede->id,
+                            'turno' => $turno,
+                            'estado' => 'ACTIVO'
+                        ];
+
+                        // If found by idHorario, we trust the API data completely
+                        if ($dto->idHorario && $existingGrupo->id_horario_api === $dto->idHorario) {
+                            $updateData['docente_id'] = $docente->id;
+                            $updateData['asignatura_id'] = $asignatura->id;
+                            $updateData['nombre'] = $dto->grupo;
+                            $updateData['tipo'] = $tipo;
+                        }
+
+                        $grupo->update($updateData);
+                    } else {
+                        // CREATE PATH: Full trust on first sync
+                        $grupo = Grupo::create([
+                            'id_horario_api' => $dto->idHorario,
+                            'gestion' => $dto->gestion,
+                            'asignatura_id' => $asignatura->id,
+                            'nombre' => $dto->grupo,
+                            'tipo' => $tipo,
+                            'docente_id' => $docente->id,
                             'sede_id' => $sede->id,
                             'turno' => $turno,
                             'estado' => 'ACTIVO'

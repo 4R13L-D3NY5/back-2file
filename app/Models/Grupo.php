@@ -14,6 +14,7 @@ class Grupo extends Model
     protected $table = 'grupos';
 
     protected $fillable = [
+        'id_horario_api',
         'gestion',
         'asignatura_id',
         'docente_id',
