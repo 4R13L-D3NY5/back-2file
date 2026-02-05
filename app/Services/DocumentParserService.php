@@ -598,11 +598,15 @@ class DocumentParserService
             $line = trim($line);
             if (empty($line)) continue;
 
+            // Debug LOG con encoding check
+            // Log::info("Line: " . mb_convert_encoding($line, 'UTF-8', 'UTF-8')); 
+
             // 2. Detect Unidad
             if (preg_match('/^UNIDAD(?:.*APRENDIZAJE)?\s*(?:N[º°]?\s*)?([IVXLCDM\d]+)\s*[:\.\-]?\s*(.*)/i', $line, $matches)) {
 
                 // Close previous
                 if ($currentTema && $currentUnidad) {
+                    $this->finalizeTema($currentTema);
                     $currentUnidad['temas'][] = $currentTema;
                     $currentTema = null;
                 }
@@ -619,20 +623,29 @@ class DocumentParserService
                     'contenido_raw' => '',
                     'temas' => []
                 ];
+                Log::info("MATCH UNIDAD: $line");
                 continue;
             }
 
-            // 3. Detect Tema
-            // Updated: Use '.?' for "º" or "°" to avoid encoding issues. Add 'u' flag.
-            if (preg_match('/^TEMA\s*(?:N.?\s*)?(\d+)\s*[:\.\-]+\s*(.*)/ui', $line, $matches)) {
+            // 3. Detect Tema - REGEX REFINADO V2
+            // Soporta: 
+            // - TEMA 1
+            // - TEMA N° 1
+            // - TEMA N. 1
+            // - TEMA N.º 1 (N + dot + degree)
+            // - TEMA N.º 4. (trailing dot)
+            if (preg_match('/^TEMA\s*(?:N(?:[\.º°]|\s)*)?(\d+)\s*[:\.\-\)\s]*\s*(.*)/ui', $line, $matches)) {
                 if ($currentTema && $currentUnidad) {
+                    $this->finalizeTema($currentTema);
                     $currentUnidad['temas'][] = $currentTema;
                 }
                 $currentTema = [
                     'numero_global' => intval($matches[1]),
                     'titulo' => trim($matches[2]),
-                    'contenido' => ''
+                    'contenido' => '',
+                    'contenido_items' => []
                 ];
+                Log::info("MATCH TEMA: " . $matches[1] . " - " . $matches[2]);
                 continue;
             }
 
@@ -644,6 +657,7 @@ class DocumentParserService
         }
 
         if ($currentTema && $currentUnidad) {
+            $this->finalizeTema($currentTema);
             $currentUnidad['temas'][] = $currentTema;
         }
         if ($currentUnidad) {
@@ -653,14 +667,56 @@ class DocumentParserService
         return $structure;
     }
 
+    private function finalizeTema(array &$tema)
+    {
+        $tema['contenido'] = trim($tema['contenido']);
+        // Parsear contenido a items
+        $tema['contenido_items'] = $this->parseContentToItems($tema['contenido']);
+    }
+
+    private function parseContentToItems(string $content): array
+    {
+        if (empty($content)) return [];
+
+        // Normalizar separadores a pipe '|'
+        // Separadores: saltos de linea, bullets, guiones al inicio, comas, puntos finales (ojo con abreviaciones)
+        
+        // 1. Reemplazar bullets comunes
+        $text = preg_replace('/[•\-\*]\s+/u', '|', $content);
+
+        // 2. Reemplazar saltos de línea reales (si el parser los mantuvo)
+        $text = str_replace(["\r\n", "\r", "\n"], '|', $text);
+
+        // 3. Reemplazar comas (la captura 3 muestra uso intensivo de comas para separar)
+        // PRECAUCIÓN: No separar números decimales "1,5"
+        $text = preg_replace('/,(?!\d)/', '|', $text);
+
+        // 4. Reemplazar puntos, intentando evitar abreviaciones comunes
+        $text = preg_replace('/\.\s+/u', '|', $text);
+        
+        // Explode
+        $items = explode('|', $text);
+        
+        // Limpiar
+        $finalItems = [];
+        foreach ($items as $item) {
+            $cleaned = trim($item);
+            // Quitar puntos finales sobrantes
+            $cleaned = rtrim($cleaned, '.');
+            
+            if (mb_strlen($cleaned) > 2) { 
+                $finalItems[] = $cleaned;
+            }
+        }
+
+        return array_values($finalItems);
+    }
+
     private function parseThemes(string $unitText): array
     {
         $temas = [];
-        // Regex Mejorado:
-        // 1. TEMA opcionalmente seguido de N, N°, No, Numero
-        // 2. Separadores laxos (espacios, puntos, guiones)
-        // 3. Captura titulo
-        $themeRegex = '/TEMA\s*(?:N[º°o\.]?\s*)?(\d+)\s*[\.\-:\)]*\s*([^\n\r]+)/ui';
+        // Regex Mejorado V2 consistente
+        $themeRegex = '/TEMA\s*(?:N(?:[\.º°]|\s)*)?(\d+)\s*[:\.\-\)\s]*\s*([^\n\r]+)/ui';
 
         preg_match_all($themeRegex, $unitText, $matches, PREG_OFFSET_CAPTURE);
 
@@ -679,11 +735,13 @@ class DocumentParserService
 
             $content = substr($unitText, $startPos, $endPos - $startPos);
             $content = trim($content);
+            $items = $this->parseContentToItems($content);
 
             $temas[] = [
                 'numero_global' => intval($themeVal),
                 'titulo' => $themeTitle,
-                'contenido' => $content
+                'contenido' => $content,
+                'contenido_items' => $items
             ];
         }
 

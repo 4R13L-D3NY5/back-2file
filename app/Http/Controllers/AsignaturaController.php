@@ -641,6 +641,7 @@ class AsignaturaController extends Controller
                             $unidad->temas()->create([
                                 'titulo' => $tituloFinal,
                                 'contenido' => $contenidoFinal,
+                                'contenido_items' => $temaData['contenido_items'] ?? [], // Guardar items parseados
                                 'orden' => $i + 1,
                                 'horas' => 0
                             ]);
