@@ -164,13 +164,14 @@ class PlanningSyncService
 
                     $docenteNombre = $dto->docente ?: 'Docente ' . $dto->ci;
 
-                    $docente = Docente::withTrashed()->updateOrCreate(
-                        ['ci' => $dto->ci],
-                        [
-                            'nombre_completo' => $docenteNombre,
-                            'sede_id' => $sede->id, // Asignación explícita de Sede
-                        ]
-                    );
+                    $docente = Docente::withTrashed()->firstOrNew(['ci' => $dto->ci]);
+
+                    $docente->nombre_completo = $docenteNombre;
+                    // Only set Sede if it's new or has no sede assignment
+                    if (!$docente->exists || !$docente->sede_id) {
+                        $docente->sede_id = $sede->id;
+                    }
+                    $docente->save();
 
                     if ($docente->trashed()) {
                         $docente->restore();
