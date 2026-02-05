@@ -20,6 +20,18 @@ class SyncAcademicData extends Command
         $carreraArg = $this->option('carrera');
         $sedeArg = $this->option('sede');
 
+        // Resolve Sede Code (e.g., 'cba') to ID if string provided
+        if ($sedeArg && !is_numeric($sedeArg)) {
+            $sedeObj = \App\Models\Sede::where('codigo', $sedeArg)->first();
+            if ($sedeObj) {
+                $this->info("Resolved Sede Code '$sedeArg' to ID: " . $sedeObj->id);
+                $sedeArg = $sedeObj->id;
+            } else {
+                $this->error("Sede Code '$sedeArg' not found.");
+                return;
+            }
+        }
+
         $this->info("Starting Academic Sync for Gestion: $gestion...");
 
         // OPTIMIZATION: Queue Mode
