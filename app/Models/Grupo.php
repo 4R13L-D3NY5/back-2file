@@ -17,6 +17,7 @@ class Grupo extends Model
         'id_horario_api',
         'gestion',
         'asignatura_id',
+        'carrera_id',
         'docente_id',
         'sede_id',
         'nombre',
@@ -28,6 +29,11 @@ class Grupo extends Model
     public function asignatura(): BelongsTo
     {
         return $this->belongsTo(Asignatura::class);
+    }
+
+    public function carrera(): BelongsTo
+    {
+        return $this->belongsTo(Carrera::class);
     }
 
     public function docente(): BelongsTo

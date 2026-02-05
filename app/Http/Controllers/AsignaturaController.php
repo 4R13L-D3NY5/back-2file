@@ -50,11 +50,20 @@ class AsignaturaController extends Controller
         // NOTE: Role-based filtering (Director de Carrera) is handled by the frontend
         // The frontend sends sede_id and carrera_id filters based on user's assigned data
 
-        // Eager load grupos and context, optionally filtered by sede
+        // Eager load grupos and context, optionally filtered by sede and carrera
         $sedeId = $request->input('sede_id');
-        $query->with(['grupos' => function ($q) use ($sedeId) {
+        $carreraId = $request->input('carrera_id');
+
+        $query->with(['grupos' => function ($q) use ($sedeId, $carreraId) {
             if ($sedeId) {
                 $q->where('sede_id', $sedeId);
+            }
+            if ($carreraId) {
+                // Durante la transición, mostramos los de la carrera O los que aún son NULL
+                $q->where(function ($sub) use ($carreraId) {
+                    $sub->where('carrera_id', $carreraId)
+                        ->orWhereNull('carrera_id');
+                });
             }
             $q->with('docente');
         }]);
@@ -139,10 +148,16 @@ class AsignaturaController extends Controller
                     // Calcular descripción de grupos para este docente
                     $gruposDocente = $a->grupos->where('docente_id', $d->id);
                     $desc = $gruposDocente->map(fn($g) => $g->nombre . ' (' . $g->tipo . ')')->implode(', ');
+                    
+                    // IMPORTANTE: Tomar el carrera_id del primer grupo (aislado) o NULL
+                    $carreraId = $gruposDocente->first()?->carrera_id;
+
                     return [
                         'id' => $d->id,
                         'nombre' => $d->nombre_completo,
-                        'descripcion_grupos' => $desc
+                        'descripcion_grupos' => $desc,
+                        'carrera_id' => $carreraId,
+                        'sede_id' => $gruposDocente->first()?->sede_id // ADDED
                     ];
                 })->values()
             ];
@@ -211,7 +226,11 @@ class AsignaturaController extends Controller
 
             if ($reqSedeId) {
                 // Try to find a career matching the requested sede
-                $mainCarrera = $local->carreras->first(function ($c) use ($reqSedeId) {
+                $mainCarrera = $local->carreras->first(function ($c) use ($reqSedeId, $request) {
+                    // Si viene carrera_id, priorizar esa exacta
+                    if ($request->filled('carrera_id')) {
+                        return $c->id == $request->carrera_id;
+                    }
                     return $c->sede_id == $reqSedeId || ($c->pivot && $c->pivot->sede_id == $reqSedeId);
                 });
             }
@@ -297,17 +316,59 @@ class AsignaturaController extends Controller
 
 
             // Horarios desde la estructura normalizada (grupos + horarios)
-            $response['horarios_data'] = $local->grupos()
+            $gruposQuery = $local->grupos();
+
+            // FILTER: Si se proporciona carrera_id, intentar buscar correspondencia exacta
+            $reqCarreraId = $request->input('carrera_id') ?: ($mainCarrera->id ?? null);
+            
+            if ($reqCarreraId && $reqCarreraId > 0) {
+                // Verificamos si hay grupos ya aislados para esta carrera
+                $hasIsolatedGroups = $local->grupos()->where('carrera_id', $reqCarreraId)->exists();
+                
+                if ($hasIsolatedGroups) {
+                    // Si ya existen grupos aislados, mostrar SOLO esos (aislamiento total)
+                    $gruposQuery->where('carrera_id', $reqCarreraId);
+                } else {
+                    // Si no hay aislados, mostramos los NULL (Legacy) para no dejar la vista vacía
+                    $gruposQuery->whereNull('carrera_id');
+                }
+            }
+
+            // FILTER: Si se proporciona sede_id, filtrar por sede (CRITICAL FOR MULTI-SEDE)
+            if ($reqSedeId && $reqSedeId > 0) {
+                 // Verificamos si hay grupos ya aislados para esta sede
+                 $hasIsolatedSedeGroups = $local->grupos()->where('sede_id', $reqSedeId)->exists();
+
+                 if ($hasIsolatedSedeGroups) {
+                     $gruposQuery->where('sede_id', $reqSedeId);
+                 } else {
+                     // Fallback inteligente: si NO hay grupos para esta sede,
+                     // pero la sede es 1 (Cochabamba), mostrar los que tengan sede_id NULL o 1.
+                     // Esto es para compatibilidad con datos legacy que no tienen sede_id seteado.
+                     if ($reqSedeId == 1) {
+                         $gruposQuery->where(function($q) {
+                             $q->where('sede_id', 1)->orWhereNull('sede_id');
+                         });
+                     }
+                 }
+            }
+
+            $response['horarios_data'] = $gruposQuery
                 ->with(['docente:id,nombre_completo', 'horarios.aula:id,nombre'])
                 ->get()
                 ->map(function ($grupo) {
                     return [
                         'id' => $grupo->id,
+                        'asignatura_id' => $grupo->asignatura_id,
+                        'carrera_id' => $grupo->carrera_id,
+                        'sede_id' => $grupo->sede_id,
                         'grupo' => $grupo->nombre,
                         'tipo' => $grupo->tipo,
                         'docente_nombre' => $grupo->docente?->nombre_completo,
                         'horarios' => $grupo->horarios->map(function ($h) {
                             return [
+                                'id' => $h->id,
+                                'id_horario_api' => $h->id_horario_api,
                                 'dia' => $h->dia,
                                 'hora_inicio' => $h->hora_inicio,
                                 'hora_fin' => $h->hora_fin,
