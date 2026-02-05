@@ -627,25 +627,38 @@ class DocumentParserService
                 continue;
             }
 
-            // 3. Detect Tema - REGEX REFINADO V2
-            // Soporta: 
-            // - TEMA 1
-            // - TEMA N° 1
-            // - TEMA N. 1
-            // - TEMA N.º 1 (N + dot + degree)
-            // - TEMA N.º 4. (trailing dot)
-            if (preg_match('/^TEMA\s*(?:N(?:[\.º°]|\s)*)?(\d+)\s*[:\.\-\)\s]*\s*(.*)/ui', $line, $matches)) {
+            // 3. Detect Tema - REGEX REFINADO V3
+            // Soporta bullets y division titulo/contenido
+            if (preg_match('/^[\•\-\*]?\s*TEMA\s*(?:N(?:[\.º°]|\s)*)?(\d+)\s*[:\.\-\)\s]*\s*(.*)/ui', $line, $matches)) {
                 if ($currentTema && $currentUnidad) {
                     $this->finalizeTema($currentTema);
                     $currentUnidad['temas'][] = $currentTema;
                 }
+                
+                $fullTitleLine = trim($matches[2]);
+                $realTitle = $fullTitleLine;
+                $initialContent = '';
+
+                // Intentar separar Titulo de Contenido si están en la misma línea
+                // Heurística: Buscar el primer punto seguido de espacio o fin de linea.
+                // Ej: "CONCEPTOS. Concepto y objeto..." -> Titulo: CONCEPTOS, Contenido: Concepto y objeto...
+                $dotPos = strpos($fullTitleLine, '.');
+                if ($dotPos !== false) {
+                    // Validar si vale la pena cortar (que no sea "N." o "Dr." muy corto)
+                    $possibleTitle = substr($fullTitleLine, 0, $dotPos);
+                    if (strlen($possibleTitle) > 3) {
+                         $realTitle = trim($possibleTitle);
+                         $initialContent = trim(substr($fullTitleLine, $dotPos + 1));
+                    }
+                }
+
                 $currentTema = [
                     'numero_global' => intval($matches[1]),
-                    'titulo' => trim($matches[2]),
-                    'contenido' => '',
+                    'titulo' => $realTitle,
+                    'contenido' => $initialContent,
                     'contenido_items' => []
                 ];
-                Log::info("MATCH TEMA: " . $matches[1] . " - " . $matches[2]);
+                Log::info("MATCH TEMA: " . $matches[1] . " - Title: $realTitle");
                 continue;
             }
 
@@ -715,8 +728,8 @@ class DocumentParserService
     private function parseThemes(string $unitText): array
     {
         $temas = [];
-        // Regex Mejorado V2 consistente
-        $themeRegex = '/TEMA\s*(?:N(?:[\.º°]|\s)*)?(\d+)\s*[:\.\-\)\s]*\s*([^\n\r]+)/ui';
+        // Regex Mejorado V3 consistente
+        $themeRegex = '/[\•\-\*]?\s*TEMA\s*(?:N(?:[\.º°]|\s)*)?(\d+)\s*[:\.\-\)\s]*\s*([^\n\r]+)/ui';
 
         preg_match_all($themeRegex, $unitText, $matches, PREG_OFFSET_CAPTURE);
 
@@ -726,7 +739,7 @@ class DocumentParserService
 
         foreach ($matches[0] as $index => $match) {
             $themeVal   = $matches[1][$index][0];
-            $themeTitle = trim($matches[2][$index][0]);
+            $fullTitleLine = trim($matches[2][$index][0]);
 
             $startPos = $match[1] + strlen($match[0]);
             $endPos = isset($matches[0][$index + 1])
@@ -735,11 +748,25 @@ class DocumentParserService
 
             $content = substr($unitText, $startPos, $endPos - $startPos);
             $content = trim($content);
+
+            // Logic to split title/content on same line?
+            // parseThemes is fallback mostly. Let's apply similar splitting.
+            $realTitle = $fullTitleLine;
+            $dotPos = strpos($fullTitleLine, '.');
+            if ($dotPos !== false) {
+                 $possibleTitle = substr($fullTitleLine, 0, $dotPos);
+                 if (strlen($possibleTitle) > 3) {
+                      $realTitle = trim($possibleTitle);
+                      $extraContent = trim(substr($fullTitleLine, $dotPos + 1));
+                      $content = $extraContent . "\n" . $content;
+                 }
+            }
+
             $items = $this->parseContentToItems($content);
 
             $temas[] = [
                 'numero_global' => intval($themeVal),
-                'titulo' => $themeTitle,
+                'titulo' => $realTitle,
                 'contenido' => $content,
                 'contenido_items' => $items
             ];
