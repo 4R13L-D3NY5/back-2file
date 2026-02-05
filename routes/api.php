@@ -186,6 +186,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/auditoria-semanal', [\App\Http\Controllers\ReporteController::class, 'getAuditoriaSemanal']);
     Route::get('/reportes/director', [\App\Http\Controllers\ReporteController::class, 'index']);
     Route::get('/reportes/director/weekly', [\App\Http\Controllers\ReporteController::class, 'generateWeeklyReport']);
+    
+    // Dirección Académica Dashboard
+    Route::get('/direccion/stats', [\App\Http\Controllers\ReporteController::class, 'direccionStats']);
     Route::get('/seguimiento-semanal/check-status', [\App\Http\Controllers\SeguimientoSemanalController::class, 'checkStatus']);
     Route::post('/seguimiento-semanal/bulk-generate', [\App\Http\Controllers\SeguimientoSemanalController::class, 'bulkGenerate']);
     Route::apiResource('seguimiento-semanal', \App\Http\Controllers\SeguimientoSemanalController::class);
