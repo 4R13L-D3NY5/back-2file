@@ -51,6 +51,7 @@ class MateriaComunController extends Controller
                 'nombre' => $asignatura->nombre,
                 'carrera_nombre' => $asignatura->carreras->pluck('nombre')->join(', '),
                 'comun_token' => $asignatura->comun_token,
+                'comun_tipo' => $asignatura->comun_tipo,
                 'vinculadas' => $hermanas->map(function ($h) {
                     return [
                         'id' => $h->id,
@@ -58,7 +59,8 @@ class MateriaComunController extends Controller
                         'nombre' => $h->nombre,
                         // Fix for duplicate name detection
                         'carrera_nombre' => $h->carreras->pluck('nombre')->join(', ') ?: 'Sin Carrera',
-                        'comun_token' => $h->comun_token
+                        'comun_token' => $h->comun_token,
+                        'comun_tipo' => $h->comun_tipo
                     ];
                 })
             ];
@@ -109,11 +111,13 @@ class MateriaComunController extends Controller
         $request->validate([
             'asignatura_id' => 'required|exists:asignaturas,id',
             'target_asignatura_id' => 'required|exists:asignaturas,id',
+            'tipo' => 'nullable|string|in:fusionada,espejo'
         ]);
 
         $user = $request->user();
         $source = Asignatura::findOrFail($request->asignatura_id);
         $target = Asignatura::findOrFail($request->target_asignatura_id);
+        $tipo = $request->input('tipo', 'fusionada');
 
         // Validar permisos (Basicamente que source sea de una carrera del director)
         // Por brevedad omitimos check exhaustivo, asumimos que el frontend manda id correcto del director.
@@ -123,16 +127,20 @@ class MateriaComunController extends Controller
             // Caso 1: Ninguno tiene grupo -> Crear nuevo
             $token = (string) Str::uuid();
             $source->comun_token = $token;
+            $source->comun_tipo = $tipo;
             $target->comun_token = $token;
+            $target->comun_tipo = $tipo;
             $source->save();
             $target->save();
         } elseif ($source->comun_token && !$target->comun_token) {
             // Caso 2: Source tiene grupo, Target no -> Target se une a Source
             $target->comun_token = $source->comun_token;
+            $target->comun_tipo = $source->comun_tipo;
             $target->save();
         } elseif (!$source->comun_token && $target->comun_token) {
             // Caso 3: Target tiene grupo, Source no -> Source se une a Target
             $source->comun_token = $target->comun_token;
+            $source->comun_tipo = $target->comun_tipo;
             $source->save();
         } else {
             // Caso 4: Ambos tienen grupo -> FUSIONAR (Merge)
@@ -142,7 +150,10 @@ class MateriaComunController extends Controller
 
             if ($tokenSource !== $tokenTarget) {
                 Asignatura::where('comun_token', $tokenTarget)
-                    ->update(['comun_token' => $tokenSource]);
+                    ->update([
+                        'comun_token' => $tokenSource,
+                        'comun_tipo' => $source->comun_tipo
+                    ]);
             }
         }
 

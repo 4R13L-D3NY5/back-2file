@@ -131,6 +131,8 @@ class GrupoController extends Controller
                 'sede_nombre' => 'Sede ' . $sedeId, // Placeholder
                 'semestre' => $semestre,
                 'gestion' => $request->gestion,
+                'comun_token' => $materia->comun_token,
+                'comun_tipo' => $materia->comun_tipo,
                 'grupos' => $gruposList
             ];
         });

@@ -37,7 +37,9 @@ class PlanningSyncService
         // Cache Role ID to avoid query in loop
         $docenteRoleId = Rol::where('codigo', 'DOCENTE')->value('id') ?? 6;
 
-        return DB::transaction(function () use ($items, &$stats, $docenteRoleId) {
+        $processedGroups = [];
+
+        return DB::transaction(function () use ($items, &$stats, $docenteRoleId, &$processedGroups) {
             foreach ($items as $rawItem) {
                 try {
                     $dto = AcademicDataDTO::fromArray($rawItem);
@@ -215,78 +217,64 @@ class PlanningSyncService
                     $turno = ($hora < 12) ? 'MAÑANA' : (($hora < 18) ? 'TARDE' : 'NOCHE');
                     $tipo = isset($dto->tipoClase) ? strtoupper($dto->tipoClase) : 'TEORICO';
 
-                    // IMPROVED: Use idHorario as primary lookup key for precise sync
-                    $existingGrupo = null;
-
-                    if ($dto->idHorario) {
-                        // SAFETY FIRST: Wrap in try-catch to prevent crash if column missing
-                        try {
-                            $existingGrupo = Grupo::where('id_horario_api', $dto->idHorario)->first();
-                        } catch (\Exception $e) {
-                            // Silent fallback to legacy
-                            // Log::warning("Sync idHorario failed: " . $e->getMessage());
-                            $existingGrupo = null;
-                        }
-                    }
-
-                    // Fallback: legacy lookup for data without idHorario
-                    if (!$existingGrupo) {
-                        $existingGrupo = Grupo::where([
+                    // 7. GRUPO: Identificación puramente LOGICA
+                    // Un grupo es el mismo si tiene la misma gestión, asignatura, carrera, nombre, tipo y sede
+                    $grupo = Grupo::updateOrCreate(
+                        [
                             'gestion' => $dto->gestion,
                             'asignatura_id' => $asignatura->id,
+                            'carrera_id' => $carrera->id,
                             'nombre' => $dto->grupo,
                             'tipo' => $tipo,
                             'sede_id' => $sede->id
-                        ])->first();
-                    }
-
-                    if ($existingGrupo) {
-                        // UPDATE PATH: Now updates docente_id since we have a reliable identifier
-                        $grupo = $existingGrupo;
-                        $updateData = [
-                            'sede_id' => $sede->id,
-                            'turno' => $turno,
-                            'estado' => 'ACTIVO',
-                            // MASSIVE FIX: Always update docente to what API says
-                            'docente_id' => $docente->id
-                        ];
-
-                        // If found by idHorario, we trust the API data completely
-                        if ($dto->idHorario && $existingGrupo->id_horario_api === $dto->idHorario) {
-                            $updateData['asignatura_id'] = $asignatura->id;
-                            $updateData['nombre'] = $dto->grupo;
-                            $updateData['tipo'] = $tipo;
-                        }
-
-                        $grupo->update($updateData);
-                    } else {
-                        // CREATE PATH: Full trust on first sync
-                        $grupo = Grupo::create([
-                            // 'id_horario_api' => $dto->idHorario, // DISABLED FOR SAFETY
-                            'gestion' => $dto->gestion,
-                            'asignatura_id' => $asignatura->id,
-                            'nombre' => $dto->grupo,
-                            'tipo' => $tipo,
-                            'docente_id' => $docente->id,
-                            'sede_id' => $sede->id,
-                            'turno' => $turno,
-                            'estado' => 'ACTIVO'
-                        ]);
-                    }
-                    $stats['grupos']++;
-
-                    // 8. Horario
-                    Horario::updateOrCreate(
-                        [
-                            'grupo_id' => $grupo->id,
-                            'dia' => $dto->dia,
-                            'hora_inicio' => $dto->horaInicio,
-                            'hora_fin' => $dto->horaFin,
                         ],
                         [
-                            'aula_id' => $aula->id
+                            'docente_id' => $docente->id,
+                            'estado' => 'ACTIVO'
                         ]
                     );
+
+                    $stats['grupos']++;
+
+                    // CLEANUP: Si es la primera vez que vemos este grupo en este lote, 
+                    // borramos horarios que NO tengan id_horario_api (legacy) 
+                    // o preparamos para refrescar sesiones.
+                    if (!in_array($grupo->id, $processedGroups)) {
+                        // Opcional: Podríamos marcar para borrar los que no vengan en este lote
+                        // Por ahora, para asegurar limpieza tras el cambio estructural:
+                        $grupo->horarios()->whereNull('id_horario_api')->delete();
+                        $processedGroups[] = $grupo->id;
+                    }
+
+                    // 8. HORARIO (SESIÓN): Identificación por ID único de API
+                    // Esto permite que el Grupo "A" tenga N sesiones sin duplicar el grupo.
+                    if ($dto->idHorario) {
+                        Horario::updateOrCreate(
+                            [
+                                'id_horario_api' => $dto->idHorario,
+                            ],
+                            [
+                                'grupo_id' => $grupo->id,
+                                'aula_id' => $aula->id,
+                                'dia' => strtoupper($dto->dia),
+                                'hora_inicio' => $dto->horaInicio,
+                                'hora_fin' => $dto->horaFin,
+                            ]
+                        );
+                    } else {
+                        // Fallback para APIs sin ID (vínculo por contenido)
+                        Horario::updateOrCreate(
+                            [
+                                'grupo_id' => $grupo->id,
+                                'dia' => strtoupper($dto->dia),
+                                'hora_inicio' => $dto->horaInicio,
+                            ],
+                            [
+                                'aula_id' => $aula->id,
+                                'hora_fin' => $dto->horaFin,
+                            ]
+                        );
+                    }
                     $stats['horarios']++;
                 } catch (\Exception $e) {
                     Log::error("Planning Sync Error: " . $e->getMessage());

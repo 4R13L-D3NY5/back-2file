@@ -43,6 +43,7 @@ class Asignatura extends Model
         'reglamento_normativa',
         'organizacion_calendario',
         'comun_token',
+        'comun_tipo',
         'docente_formacion',
         'docente_telefono',
         'docente_email'

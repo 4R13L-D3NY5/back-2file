@@ -11,6 +11,7 @@ class Horario extends Model
     use HasFactory, SoftDeletes;
 
     protected $fillable = [
+        'id_horario_api',
         'grupo_id',
         'aula_id',
         'dia',
