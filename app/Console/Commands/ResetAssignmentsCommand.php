@@ -53,8 +53,7 @@ class ResetAssignmentsCommand extends Command
 
         // Llamamos al comando de sync existente
         $exitCode = Artisan::call('academic:sync', [
-            'gestion' => $gestion,
-            '--force' => true
+            'gestion' => $gestion
         ], $this->output);
 
         if ($exitCode === 0) {
