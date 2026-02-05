@@ -97,6 +97,7 @@ class AuthController extends Controller
             'email' => 'required|email|unique:users,email,' . $user->id,
             'ci' => 'nullable|string|max:20',
             'telefono' => 'nullable|string|max:20',
+            'formacion' => 'nullable|string|max:255',
         ]);
 
         // Actualizar Usuario
@@ -109,6 +110,7 @@ class AuthController extends Controller
                 'ci' => $user->ci,
                 'email' => $user->email,
                 'celular' => $user->telefono, // Mapear teléfono a celular en docente
+                'formacion' => $request->formacion ?? $user->docente->formacion, // Persistir formacion
             ]);
         }
 
@@ -189,6 +191,7 @@ class AuthController extends Controller
             'docente.asignaturas.unidades.temas', // Load deep relations for progress calc
             'docente.asignaturas.carreras',
             'docente.sede',
+            'docente.grupos.sede', // Load sede for groups
             'docente.grupos.horarios',
             'docente.grupos.asignatura',
             'director.sede',

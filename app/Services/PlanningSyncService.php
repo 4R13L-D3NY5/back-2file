@@ -93,21 +93,29 @@ class PlanningSyncService
                     $codigoFinal = $dto->siglaP;
 
                     // 1. Try to find precise match (Code + Name similarity)
-                    // We check if the BASE code exists first
+                    // We check if the BASE code exists first to detect collisions
                     $asignaturaBase = Asignatura::where('codigo', $dto->siglaP)->first();
 
                     if ($asignaturaBase) {
                         // Calculate similarity between stored name and incoming name
-                        // normalize: uppercase, ASCII only could be better but fuzzy match is okay
+                        // This detects if "OPT-101" is "Acoustics" or "First Aid"
                         similar_text(strtoupper($asignaturaBase->nombre), strtoupper($dto->materia), $percent);
 
-                        // If names are very different (< 50% similar), assign a suffixed code
+                        // If names are very different (< 50% similar), it's a COLLISION.
+                        // We must scope this subject to its specific Career/Sede to avoid mixing content.
                         if ($percent < 50) {
                             $sedeSuffix = strtoupper(substr($dto->nombreSede, 0, 3)); // CBA, LPZ, SCZ
-                            // Force suffix if NOT already suffixed
-                            if (!str_contains($codigoFinal, '-' . $sedeSuffix)) {
-                                $codigoFinal = $dto->siglaP . '-' . $sedeSuffix;
-                            }
+                            // Use Career suffix as well for finding the right owner
+                            $carreraSuffix = strtoupper(explode('-', $dto->carrera)[0] ?? 'GEN'); // CARSON -> CAR
+
+                            // Construct Scoped Code: CODE-SEDE-CARRERA (e.g. OPT-101-CBA-SON)
+                            // This ensures absolute uniqueness for this specific context
+                            $scopedCode = $dto->siglaP . '-' . $sedeSuffix . '-' . $dto->carrera;
+
+                            $codigoFinal = $scopedCode;
+
+                            // IMPORTANT: If this scoped subject doesn't exist, we create it.
+                            // If it DOES exist (from a previous sync), we update it.
                         }
                     }
 
@@ -158,13 +166,14 @@ class PlanningSyncService
 
                     $docenteNombre = $dto->docente ?: 'Docente ' . $dto->ci;
 
-                    $docente = Docente::withTrashed()->updateOrCreate(
-                        ['ci' => $dto->ci],
-                        [
-                            'nombre_completo' => $docenteNombre,
-                            'sede_id' => $sede->id, // Asignación explícita de Sede
-                        ]
-                    );
+                    $docente = Docente::withTrashed()->firstOrNew(['ci' => $dto->ci]);
+
+                    $docente->nombre_completo = $docenteNombre;
+                    // Only set Sede if it's new or has no sede assignment
+                    if (!$docente->exists || !$docente->sede_id) {
+                        $docente->sede_id = $sede->id;
+                    }
+                    $docente->save();
 
                     if ($docente->trashed()) {
                         $docente->restore();

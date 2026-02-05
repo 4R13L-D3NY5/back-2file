@@ -138,8 +138,7 @@ class ReporteController extends Controller
                     'avanceTemas' => $avanceTemas,
                     'asistencia' => $asistenciaPromedio,
                     'pac' => $hasPlanning,
-                    'planClase' => $avanceTemas > 0,
-                    'syllabus' => $hasPlanning,
+                    'planClase' => $grupo->cronogramas->filter(fn($c) => !empty($c->contenido_conceptual) || !empty($c->contenido_procedimental))->count() > 0,
                     'estado' => $estado,
                     'clasesImpartidas' => $temasAvanzados,
                     'temasCompletados' => $temasAvanzados,
@@ -351,5 +350,127 @@ class ReporteController extends Controller
         }
 
         return response()->json($reports);
+    }
+
+    /**
+     * Estadísticas para Dashboard de Dirección Académica
+     * Retorna métricas consolidadas de la sede
+     */
+    public function direccionStats(Request $request)
+    {
+        $sedeId = $request->sede_id;
+
+        if (!$sedeId) {
+            return response()->json(['error' => 'sede_id es requerido'], 400);
+        }
+
+        // 1. Obtener carreras de la sede con conteo de asignaturas
+        $carreras = DB::table('carreras')
+            ->join('asignatura_carrera', function ($join) use ($sedeId) {
+                $join->on('carreras.id', '=', 'asignatura_carrera.carrera_id')
+                    ->where('asignatura_carrera.sede_id', '=', $sedeId);
+            })
+            ->select('carreras.id', 'carreras.nombre')
+            ->distinct()
+            ->get();
+
+        $carrerasConProgreso = [];
+        $totalAsignaturas = 0;
+        $docentesIds = collect();
+        $asignaturasCompletas = 0;
+        $asignaturasEnProgreso = 0;
+        $asignaturasAtrasadas = 0;
+        $totalProgresoSum = 0;
+        $totalProgresoCount = 0;
+
+        $colors = ['#7C3AED', '#14B8A6', '#F97316', '#3B82F6', '#22C55E', '#EF4444', '#8B5CF6', '#EC4899'];
+
+        foreach ($carreras as $index => $carrera) {
+            // Asignaturas de esta carrera en esta sede
+            $asignaturas = Asignatura::whereHas('carreras', function ($q) use ($carrera, $sedeId) {
+                $q->where('carreras.id', $carrera->id)
+                    ->where('asignatura_carrera.sede_id', $sedeId);
+            })
+                ->withCount('temas')
+                ->with(['grupos' => function ($q) use ($sedeId) {
+                    $q->where('sede_id', $sedeId)->with('cronogramas', 'docente');
+                }])
+                ->get();
+
+            $carreraAsignaturas = $asignaturas->count();
+            $totalAsignaturas += $carreraAsignaturas;
+
+            // Calcular progreso de la carrera
+            $carreraProgresoSum = 0;
+            $carreraProgresoCount = 0;
+            $carreraDocentes = 0;
+
+            foreach ($asignaturas as $asignatura) {
+                $temasTotales = $asignatura->temas_count;
+
+                foreach ($asignatura->grupos as $grupo) {
+                    if ($grupo->docente) {
+                        $docentesIds->push($grupo->docente_id);
+                        $carreraDocentes++;
+                    }
+
+                    $temasAvanzados = $grupo->cronogramas->count();
+                    $progreso = $temasTotales > 0 ? min(100, round(($temasAvanzados / $temasTotales) * 100)) : 0;
+
+                    $carreraProgresoSum += $progreso;
+                    $carreraProgresoCount++;
+                    $totalProgresoSum += $progreso;
+                    $totalProgresoCount++;
+
+                    // Clasificar estado
+                    if ($progreso >= 80) {
+                        $asignaturasCompletas++;
+                    } else if ($progreso >= 30) {
+                        $asignaturasEnProgreso++;
+                    } else {
+                        $asignaturasAtrasadas++;
+                    }
+                }
+            }
+
+            $carreraProgreso = $carreraProgresoCount > 0 ? round($carreraProgresoSum / $carreraProgresoCount) : 0;
+
+            $carrerasConProgreso[] = [
+                'id' => $carrera->id,
+                'nombre' => $carrera->nombre,
+                'asignaturas' => $carreraAsignaturas,
+                'docentes' => $carreraDocentes,
+                'progreso' => $carreraProgreso,
+                'color' => $colors[$index % count($colors)]
+            ];
+        }
+
+        // Ordenar por progreso descendente
+        usort($carrerasConProgreso, fn($a, $b) => $b['progreso'] - $a['progreso']);
+
+        // Conteo de directores de carrera en la sede
+        $directoresCarrera = DB::table('directors')
+            ->join('users', 'directors.user_id', '=', 'users.id')
+            ->where('users.sede_id', $sedeId)
+            ->count();
+
+        // Progreso general
+        $progresoGeneral = $totalProgresoCount > 0 ? round($totalProgresoSum / $totalProgresoCount) : 0;
+
+        return response()->json([
+            'stats' => [
+                'totalCarreras' => count($carrerasConProgreso),
+                'totalAsignaturas' => $totalAsignaturas,
+                'docentesActivos' => $docentesIds->unique()->count(),
+                'progresoGeneral' => $progresoGeneral
+            ],
+            'kpis' => [
+                'asignaturasCompletas' => $asignaturasCompletas,
+                'asignaturasEnProgreso' => $asignaturasEnProgreso,
+                'asignaturasAtrasadas' => $asignaturasAtrasadas,
+                'directoresCarrera' => $directoresCarrera
+            ],
+            'carreras' => $carrerasConProgreso
+        ]);
     }
 }

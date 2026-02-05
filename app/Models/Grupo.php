@@ -50,4 +50,9 @@ class Grupo extends Model
     {
         return $this->hasMany(Cronograma::class);
     }
+
+    public function sede(): BelongsTo
+    {
+        return $this->belongsTo(Sede::class);
+    }
 }

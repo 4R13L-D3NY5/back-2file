@@ -112,6 +112,20 @@ class AsignaturaController extends Controller
 
             $docentes = $a->grupos->map(fn($g) => $g->docente)->filter()->unique('id');
 
+            // Calcular progreso de documentación (basado en campos completados)
+            $campos = [
+                !empty($a->proposito_general),
+                !empty($a->justificacion),
+                !empty($a->metodologia_general),
+                !empty($a->sistema_evaluacion),
+                !empty($a->contenido_minimo),
+                !empty($a->competencia_asignatura),
+                $a->unidades()->count() > 0, // Tiene unidades
+                $a->unidades()->whereHas('temas')->count() > 0, // Tiene temas
+            ];
+            $camposCompletados = count(array_filter($campos));
+            $progreso = round(($camposCompletados / count($campos)) * 100);
+
             return [
                 'id' => $a->id,
                 'codigo' => $a->codigo,
@@ -129,6 +143,7 @@ class AsignaturaController extends Controller
                 'docentes' => $docentes->pluck('nombre_completo')->values(),
                 'docente_nombre' => $docentes->isEmpty() ? null : $docentes->pluck('nombre_completo')->implode(', '), // Fix for card display
                 'grupos_count' => $a->grupos->count(),
+                'progreso_documentacion' => $progreso,
                 'docentes_data' => $docentes->map(function ($d) use ($a) { // Para el diálogo de selección
                     // Calcular descripción de grupos para este docente
                     $gruposDocente = $a->grupos->where('docente_id', $d->id);

@@ -15,7 +15,7 @@ class Docente extends Model
         'nombre_completo',
         'ci',
         'celular',
-        'celular',
+        'formacion',
         'user_id',
         'email',
         'foto',
