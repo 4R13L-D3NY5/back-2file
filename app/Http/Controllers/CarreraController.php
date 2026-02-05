@@ -26,6 +26,29 @@ class CarreraController extends Controller
         }
 
         $carreras = $query->with('sedes:id')->get()->map(function ($carrera) {
+            // Calcular progreso de documentación
+            // Basado en porcentaje de temas completados vs total de temas
+            $progreso = 0;
+            try {
+                $totalTemas = \DB::table('temas')
+                    ->join('cronogramas', 'temas.cronograma_id', '=', 'cronogramas.id')
+                    ->join('asignatura_carrera', 'cronogramas.asignatura_id', '=', 'asignatura_carrera.asignatura_id')
+                    ->where('asignatura_carrera.carrera_id', $carrera->id)
+                    ->count();
+                
+                $temasCompletados = \DB::table('temas')
+                    ->join('cronogramas', 'temas.cronograma_id', '=', 'cronogramas.id')
+                    ->join('asignatura_carrera', 'cronogramas.asignatura_id', '=', 'asignatura_carrera.asignatura_id')
+                    ->where('asignatura_carrera.carrera_id', $carrera->id)
+                    ->whereNotNull('temas.fecha_real')
+                    ->count();
+                
+                $progreso = $totalTemas > 0 ? round(($temasCompletados / $totalTemas) * 100) : 0;
+            } catch (\Exception $e) {
+                // Si hay error en el cálculo, retornar 0
+                $progreso = 0;
+            }
+
             return [
                 'id' => $carrera->id,
                 'nombre' => $carrera->nombre,
@@ -38,6 +61,7 @@ class CarreraController extends Controller
                 // Stats
                 'asignaturas_count' => $carrera->asignaturas_count,
                 'docentes_count' => $carrera->docentes()->count(), // Execute Builder count
+                'progreso_documentacion' => $progreso,
             ];
         });
 
