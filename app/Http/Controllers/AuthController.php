@@ -191,6 +191,7 @@ class AuthController extends Controller
             'docente.asignaturas.unidades.temas', // Load deep relations for progress calc
             'docente.asignaturas.carreras',
             'docente.sede',
+            'docente.grupos.sede', // Load sede for groups
             'docente.grupos.horarios',
             'docente.grupos.asignatura',
             'director.sede',
