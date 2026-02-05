@@ -9,47 +9,60 @@ use App\Models\Grupo;
 
 class ResetAssignmentsCommand extends Command
 {
-    protected $signature = 'academic:reset-assignments {gestion=1-2026} {--force : Force execution without confirmation}';
-    protected $description = 'Wipes all teacher assignments for a gestion and re-runs synchronization to clean bad data.';
+    /**
+     * The name and signature of the console command.
+     *
+     * @var string
+     */
+    protected $signature = 'academic:reset-assignments {gestion : La gestión a resetear (ej. 1-2026)} {--force : Forzar ejecución sin preguntar}';
 
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
+    protected $description = 'Resetea TODAS las asignaciones de docentes para una gestión y re-sincroniza desde cero.';
+
+    /**
+     * Execute the console command.
+     */
     public function handle()
     {
         $gestion = $this->argument('gestion');
+        $force = $this->option('force');
 
-        $this->alert("ATENCIÓN: MODO DE CORRECCIÓN MASIVA");
-        $this->warn("Esta acción va a:");
-        $this->line("1. ELIMINAR la asignación de docentes de TODOS los grupos de la gestión $gestion.");
-        $this->line("2. Ejecutar la sincronización desde cero para volver a asignar los docentes correctos.");
-        $this->line("Esto corregirá problemas de 'materias fantasma' o asignaciones de la sincronización anterior.");
+        $this->alert("⚠️  ATENCIÓN: ESTA ACCIÓN ES DESTRUCTIVA PARA LAS ASIGNACIONES ⚠️");
+        $this->warn("Se eliminará la asignación de docentes de TODOS los grupos de la gestión: {$gestion}");
+        $this->warn("Los grupos, horarios y estudiantes SE MANTIENEN. Solo se 'desconecta' al profesor.");
 
-        if (!$this->option('force') && !$this->confirm('¿Está seguro de continuar?')) {
-            $this->info("Operación cancelada.");
-            return;
+        if (!$force && !$this->confirm('¿Estás seguro de continuar?')) {
+            $this->info('Operación cancelada.');
+            return 1;
         }
 
-        // Paso 1: Limpiar asignaciones
-        $this->info("Paso 1: Limpiando asignaciones de docentes para $gestion...");
-        $affected = DB::table('grupos')
-            ->where('gestion', $gestion)
-            ->whereNotNull('docente_id')
+        $this->info("1. Iniciando limpieza de asignaciones para {$gestion}...");
+
+        // Paso 1: Update masivo a NULL
+        $affected = Grupo::where('gestion', $gestion)
             ->update(['docente_id' => null]);
 
-        $this->info("✓ Se desasignaron docentes de $affected grupos.");
+        $this->info("✅ Se han desvinculado {$affected} grupos.");
 
-        // Paso 2: Re-sincronizar
-        $this->info("Paso 2: Ejecutando sincronización desde API...");
+        // Paso 2: Re-sincronización
+        $this->info("2. Ejecutando Sincronización Maestra (academic:sync)...");
 
-        // Ejecutar academic:sync
+        // Llamamos al comando de sync existente
         $exitCode = Artisan::call('academic:sync', [
             'gestion' => $gestion,
-            '--all' => true
-        ], $this->getOutput());
+            '--force' => true
+        ], $this->output);
 
         if ($exitCode === 0) {
-            $this->info("\n✓ PROCESO COMPLETADO EXITOSAMENTE.");
-            $this->line("Ahora los docentes solo tienen las materias que figuran AL DÍA DE HOY en el sistema oficial.");
+            $this->info("🚀 ¡Proceso completado con éxito! Las asignaciones han sido regeneradas.");
+            return 0;
         } else {
-            $this->error("\n❌ Hubo un error durante la sincronización.");
+            $this->error("❌ Hubo un error durante la re-sincronización. Revisa los logs.");
+            return 1;
         }
     }
 }
