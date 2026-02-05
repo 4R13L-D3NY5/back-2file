@@ -10,19 +10,31 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Services\DocumentParserService;
+use App\Services\PlanClaseParserService;
+use App\Services\CronogramaParserService;
 
 class AsignaturaController extends Controller
 {
     protected $universityService;
+    protected $parser; // Added
+    protected $planClaseParser; // Added
+    protected $cronogramaParser; // Added
     protected $syncService;
     protected MateriasComunesSyncService $materiasComunesSyncService;
 
     public function __construct(
         UniversityService $universityService,
+        DocumentParserService $parser, // Added
+        PlanClaseParserService $planClaseParser, // Added
+        CronogramaParserService $cronogramaParser, // Added
         \App\Services\AsignaturaSyncService $syncService,
         MateriasComunesSyncService $materiasComunesSyncService
     ) {
         $this->universityService = $universityService;
+        $this->parser = $parser; // Added
+        $this->planClaseParser = $planClaseParser; // Added
+        $this->cronogramaParser = $cronogramaParser; // Added
         $this->syncService = $syncService;
         $this->materiasComunesSyncService = $materiasComunesSyncService;
     }
@@ -1214,6 +1226,29 @@ class AsignaturaController extends Controller
             } catch (\Exception $e) {
                 \Illuminate\Support\Facades\Log::warning("Error guardando bibliografia '$line': " . $e->getMessage());
             }
+        }
+    }
+
+    public function importCronograma(Request $request, $id)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls'
+        ]);
+
+        $file = $request->file('file');
+        
+        // Find SEMANAS
+        $cellLocation = $this->cronogramaParser->findSemanasCell($file);
+
+        if ($cellLocation) {
+            return response()->json([
+                'message' => 'Ubicación detectada correctamente.',
+                'cell_location' => $cellLocation
+            ]);
+        } else {
+            return response()->json([
+                'error' => 'No se encontró el texto "SEMANAS" en la columna B del archivo.'
+            ], 422);
         }
     }
 }
