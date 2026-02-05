@@ -680,6 +680,163 @@ class AsignaturaController extends Controller
     }
 
     /**
+     * Importar Plan de Clase (Unidades y Temas detallados) desde Excel
+     */
+    public function importPlanClase(Request $request, $id, \App\Services\PlanClaseParserService $parser)
+    {
+        $asignatura = Asignatura::findOrFail($id);
+
+        if (!$request->hasFile('file')) {
+            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+        }
+
+        try {
+            $data = $parser->parse($request->file('file'));
+            $stats = ['updated' => 0, 'skipped' => 0];
+
+            if (!empty($data['unidades'])) {
+                // --- GLOBAL SEQUENTIAL MAPPING STRATEGY ---
+                // Problem: Excel might group all themes under "Unidad 1", while DB splits them 
+                // into separate Units (T1->U1, T2->U2...). Or DB has 'orden=1' everywhere.
+                // Solution: Flatten both lists and map by index (1st Excel Theme = 1st DB Theme).
+
+                // 1. Flatten Parsed Themes
+                $allParsedTemas = [];
+                foreach ($data['unidades'] as $uData) {
+                    if (!empty($uData['temas'])) {
+                        foreach ($uData['temas'] as $tema) {
+                            $allParsedTemas[] = $tema;
+                        }
+                    }
+                }
+                
+                // Sort parsed by 'orden' just in case parser was jumbled (it shouldn't be)
+                usort($allParsedTemas, fn($a, $b) => $a['orden'] <=> $b['orden']);
+
+                // 2. Fetch ALL DB Themes for this Subject (Ordered by Creation/ID)
+                // Assuming "Programa Analitico" created them in order.
+                $allDbTemas = \App\Models\Tema::whereIn('unidad_id', $asignatura->unidades->pluck('id'))
+                                            ->orderBy('id')
+                                            ->get();
+
+                Log::info("Import: Parsed " . count($allParsedTemas) . " themes. Found " . $allDbTemas->count() . " themes in DB.");
+
+                // 3. Map and Update
+                foreach ($allParsedTemas as $index => $temaData) {
+                    $foundTema = $allDbTemas->get($index);
+
+                    if ($foundTema) {
+                        // AUTO-FIX: Ensure 'orden' matches sequence (1-based)
+                        if ($foundTema->orden != ($index + 1)) {
+                             $foundTema->update(['orden' => $index + 1]);
+                        }
+
+                        $updateData = [
+                            'resultado_aprendizaje' => $temaData['logros'] ?? $foundTema->resultado_aprendizaje,
+                        ];
+                        
+                        // Merge contenidos
+                        if (!empty($temaData['contenidos']['conceptual'])) $updateData['contenido_conceptual'] = $temaData['contenidos']['conceptual'];
+                        if (!empty($temaData['contenidos']['procedimental'])) $updateData['contenido_procedimental'] = $temaData['contenidos']['procedimental'];
+                        if (!empty($temaData['contenidos']['actitudinal'])) $updateData['contenido_actitudinal'] = $temaData['contenidos']['actitudinal'];
+                        
+                        // Append general content stuff to items
+                        if (!empty($temaData['contenido_items'])) {
+                            $currentItems = $foundTema->contenido_items ?? [];
+                            // Evitar duplicados simples
+                            $newItems = array_diff($temaData['contenido_items'], $currentItems);
+                            $updateData['contenido_items'] = array_merge($currentItems, $newItems);
+                        }
+
+                        $foundTema->update($updateData);
+
+                        // Save Logros Esperados and Indicadores (Multiple per Theme)
+                        // User Logic: Each line in Logros corresponds to line in Indicadores (by index)
+                        if (!empty($temaData['logros_esperados_list'])) {
+                             // WIPE OLD DATA TO PREVENT DUPLICATES
+                             foreach ($foundTema->logros as $oldLogro) {
+                                  $oldLogro->indicadores()->delete();
+                                  $oldLogro->delete();
+                             }
+                             // Refresh relationship
+                             $foundTema->load('logros');
+
+                             foreach ($temaData['logros_esperados_list'] as $idx => $logroDesc) {
+                                 // Create Logro (Fresh)
+                                 $logro = \App\Models\LogroEsperado::create([
+                                     'tema_id' => $foundTema->id,
+                                     'descripcion' => $logroDesc,
+                                     'periodo' => '1',
+                                     'tipo_logro' => 'SABER HACER'
+                                 ]);
+
+                                 // Find corresponding Indicador
+                                 $indDesc = $temaData['indicadores_list'][$idx] ?? null;
+                                 
+                                 if (!empty($indDesc) && $logro) {
+                                      \App\Models\Indicador::create([
+                                          'logro_esperado_id' => $logro->id,
+                                          'descripcion' => $indDesc
+                                      ]);
+                                 }
+                             }
+                        }
+
+                        // SAVE NEW FIELDS (Contenidos, Estrategias, Evaluacion, Secuencia)
+
+                        // 1. Update Tema Contenidos
+                        $temaUpdate = [];
+                        if (!empty($temaData['contenido_conceptual'])) $temaUpdate['contenido_conceptual'] = $temaData['contenido_conceptual'];
+                        if (!empty($temaData['contenido_actitudinal'])) $temaUpdate['contenido_actitudinal'] = $temaData['contenido_actitudinal'];
+                        // Procedimental is empty array as requested
+                        if (array_key_exists('contenido_procedimental', $temaData)) $temaUpdate['contenido_procedimental'] = $temaData['contenido_procedimental'];
+                        
+                        // Apply updates if any
+                        if (!empty($temaUpdate)) {
+                            $foundTema->update($temaUpdate);
+                        }
+
+                        // 2. Save Planificacion Personal (Strategy, Eval, Seq)
+                        // Ensure we have logged in user or default owner
+                        $userId = \Illuminate\Support\Facades\Auth::id() ?? 1; // Fallback to 1 if CLI
+
+                        \App\Models\PlanificacionPersonal::updateOrCreate(
+                            [
+                                'tema_id' => $foundTema->id,
+                                'user_id' => $userId
+                            ],
+                            [
+                                'estrategias_metodologicas' => $temaData['estrategias_metodologicas'] ?? '',
+                                'estrategias_aprendizaje' => $temaData['estrategias_aprendizaje'] ?? '',
+                                'estrategias_recursos' => $temaData['estrategias_recursos'] ?? [],
+                                
+                                'evaluacion_formativa' => $temaData['evaluacion_formativa'] ?? [],
+                                'evaluacion_sumativa' => $temaData['evaluacion_sumativa'] ?? [],
+                                
+                                'secuencia_didactica' => $temaData['secuencia_didactica'] ?? []
+                            ]
+                        );
+
+                        $stats['updated']++;
+                    } else {
+                        $stats['skipped']++;
+                        \Illuminate\Support\Facades\Log::warning("Import: No matching DB theme for Excel Theme #{$temaData['orden']} (Index $index)");
+                    }
+                }
+            } else {
+                return response()->json(['error' => 'No se detectaron unidades o temas en el archivo.'], 422);
+            }
+
+            return response()->json(['message' => 'Plan de Clase procesado. Se actualizaron ' . $stats['updated'] . ' temas.', 'data' => $data, 'stats' => $stats]);
+
+        } catch (\Exception $e) {
+             \Illuminate\Support\Facades\Log::error("Import Plan Clase Error: " . $e->getMessage());
+             return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
+        }
+    }
+
+
+    /**
      * Importar datos desde Excel con precisión basada en la estructura PAC 2026
      */
     public function importExcel(Request $request, $id)

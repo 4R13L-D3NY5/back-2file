@@ -38,6 +38,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/asignaturas/{id}/docentes', [AsignaturaController::class, 'assignDocentes']);
     Route::post('/asignaturas/{id}/import-word', [AsignaturaController::class, 'importWord']);
     Route::post('/asignaturas/{id}/import-excel', [AsignaturaController::class, 'importExcel']);
+    Route::post('/asignaturas/{id}/import-plan-clase', [AsignaturaController::class, 'importPlanClase']);
 
     // Docentes
     Route::post('/docentes/sync', [App\Http\Controllers\DocenteController::class, 'sync']);
