@@ -11,11 +11,10 @@ class Docente extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = [
         'nombre_completo',
         'ci',
         'celular',
-        'celular',
+        'formacion',
         'user_id',
         'email',
         'foto',
