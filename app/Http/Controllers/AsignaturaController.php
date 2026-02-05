@@ -147,21 +147,24 @@ class AsignaturaController extends Controller
                 'docentes_data' => $docentes->map(function ($d) use ($a) { // Para el diálogo de selección
                     // Calcular descripción de grupos para este docente
                     $gruposDocente = $a->grupos->where('docente_id', $d->id);
-                    $desc = $gruposDocente->map(fn($g) => $g->nombre . ' (' . $g->tipo . ')')->implode(', ');
-                    
+                    $desc = $gruposDocente->map(fn($g) => ($g->nombre ?? 'S/N') . ' (' . ($g->tipo ?? 'TEO') . ')')->implode(', ');
+
                     // IMPORTANTE: Tomar el carrera_id del primer grupo (aislado) o NULL
-                    $carreraId = $gruposDocente->first()?->carrera_id;
+                    // Use optional chaining carefully. If db column missing, Model returns null usually.
+                    $firstGroup = $gruposDocente->first();
+                    $carreraId = $firstGroup->carrera_id ?? null;
+                    $sedeId = $firstGroup->sede_id ?? null;
 
                     return [
                         'id' => $d->id,
                         'nombre' => $d->nombre_completo,
                         'descripcion_grupos' => $desc,
                         'carrera_id' => $carreraId,
-                        'sede_id' => $gruposDocente->first()?->sede_id // ADDED
+                        'sede_id' => $sedeId
                     ];
                 })->values()
             ];
-        }));
+        })); // END MAP
     }
 
     /**
@@ -320,11 +323,11 @@ class AsignaturaController extends Controller
 
             // FILTER: Si se proporciona carrera_id, intentar buscar correspondencia exacta
             $reqCarreraId = $request->input('carrera_id') ?: ($mainCarrera->id ?? null);
-            
+
             if ($reqCarreraId && $reqCarreraId > 0) {
                 // Verificamos si hay grupos ya aislados para esta carrera
                 $hasIsolatedGroups = $local->grupos()->where('carrera_id', $reqCarreraId)->exists();
-                
+
                 if ($hasIsolatedGroups) {
                     // Si ya existen grupos aislados, mostrar SOLO esos (aislamiento total)
                     $gruposQuery->where('carrera_id', $reqCarreraId);
@@ -336,21 +339,21 @@ class AsignaturaController extends Controller
 
             // FILTER: Si se proporciona sede_id, filtrar por sede (CRITICAL FOR MULTI-SEDE)
             if ($reqSedeId && $reqSedeId > 0) {
-                 // Verificamos si hay grupos ya aislados para esta sede
-                 $hasIsolatedSedeGroups = $local->grupos()->where('sede_id', $reqSedeId)->exists();
+                // Verificamos si hay grupos ya aislados para esta sede
+                $hasIsolatedSedeGroups = $local->grupos()->where('sede_id', $reqSedeId)->exists();
 
-                 if ($hasIsolatedSedeGroups) {
-                     $gruposQuery->where('sede_id', $reqSedeId);
-                 } else {
-                     // Fallback inteligente: si NO hay grupos para esta sede,
-                     // pero la sede es 1 (Cochabamba), mostrar los que tengan sede_id NULL o 1.
-                     // Esto es para compatibilidad con datos legacy que no tienen sede_id seteado.
-                     if ($reqSedeId == 1) {
-                         $gruposQuery->where(function($q) {
-                             $q->where('sede_id', 1)->orWhereNull('sede_id');
-                         });
-                     }
-                 }
+                if ($hasIsolatedSedeGroups) {
+                    $gruposQuery->where('sede_id', $reqSedeId);
+                } else {
+                    // Fallback inteligente: si NO hay grupos para esta sede,
+                    // pero la sede es 1 (Cochabamba), mostrar los que tengan sede_id NULL o 1.
+                    // Esto es para compatibilidad con datos legacy que no tienen sede_id seteado.
+                    if ($reqSedeId == 1) {
+                        $gruposQuery->where(function ($q) {
+                            $q->where('sede_id', 1)->orWhereNull('sede_id');
+                        });
+                    }
+                }
             }
 
             $response['horarios_data'] = $gruposQuery
@@ -784,7 +787,7 @@ class AsignaturaController extends Controller
 
             if (!empty($data['unidades'])) {
                 // --- GLOBAL SEQUENTIAL MAPPING STRATEGY ---
-                // Problem: Excel might group all themes under "Unidad 1", while DB splits them 
+                // Problem: Excel might group all themes under "Unidad 1", while DB splits them
                 // into separate Units (T1->U1, T2->U2...). Or DB has 'orden=1' everywhere.
                 // Solution: Flatten both lists and map by index (1st Excel Theme = 1st DB Theme).
 
@@ -797,15 +800,15 @@ class AsignaturaController extends Controller
                         }
                     }
                 }
-                
+
                 // Sort parsed by 'orden' just in case parser was jumbled (it shouldn't be)
                 usort($allParsedTemas, fn($a, $b) => $a['orden'] <=> $b['orden']);
 
                 // 2. Fetch ALL DB Themes for this Subject (Ordered by Creation/ID)
                 // Assuming "Programa Analitico" created them in order.
                 $allDbTemas = \App\Models\Tema::whereIn('unidad_id', $asignatura->unidades->pluck('id'))
-                                            ->orderBy('id')
-                                            ->get();
+                    ->orderBy('id')
+                    ->get();
 
                 Log::info("Import: Parsed " . count($allParsedTemas) . " themes. Found " . $allDbTemas->count() . " themes in DB.");
 
@@ -816,18 +819,18 @@ class AsignaturaController extends Controller
                     if ($foundTema) {
                         // AUTO-FIX: Ensure 'orden' matches sequence (1-based)
                         if ($foundTema->orden != ($index + 1)) {
-                             $foundTema->update(['orden' => $index + 1]);
+                            $foundTema->update(['orden' => $index + 1]);
                         }
 
                         $updateData = [
                             'resultado_aprendizaje' => $temaData['logros'] ?? $foundTema->resultado_aprendizaje,
                         ];
-                        
+
                         // Merge contenidos
                         if (!empty($temaData['contenidos']['conceptual'])) $updateData['contenido_conceptual'] = $temaData['contenidos']['conceptual'];
                         if (!empty($temaData['contenidos']['procedimental'])) $updateData['contenido_procedimental'] = $temaData['contenidos']['procedimental'];
                         if (!empty($temaData['contenidos']['actitudinal'])) $updateData['contenido_actitudinal'] = $temaData['contenidos']['actitudinal'];
-                        
+
                         // Append general content stuff to items
                         if (!empty($temaData['contenido_items'])) {
                             $currentItems = $foundTema->contenido_items ?? [];
@@ -841,33 +844,33 @@ class AsignaturaController extends Controller
                         // Save Logros Esperados and Indicadores (Multiple per Theme)
                         // User Logic: Each line in Logros corresponds to line in Indicadores (by index)
                         if (!empty($temaData['logros_esperados_list'])) {
-                             // WIPE OLD DATA TO PREVENT DUPLICATES
-                             foreach ($foundTema->logros as $oldLogro) {
-                                  $oldLogro->indicadores()->delete();
-                                  $oldLogro->delete();
-                             }
-                             // Refresh relationship
-                             $foundTema->load('logros');
+                            // WIPE OLD DATA TO PREVENT DUPLICATES
+                            foreach ($foundTema->logros as $oldLogro) {
+                                $oldLogro->indicadores()->delete();
+                                $oldLogro->delete();
+                            }
+                            // Refresh relationship
+                            $foundTema->load('logros');
 
-                             foreach ($temaData['logros_esperados_list'] as $idx => $logroDesc) {
-                                 // Create Logro (Fresh)
-                                 $logro = \App\Models\LogroEsperado::create([
-                                     'tema_id' => $foundTema->id,
-                                     'descripcion' => $logroDesc,
-                                     'periodo' => '1',
-                                     'tipo_logro' => 'SABER HACER'
-                                 ]);
+                            foreach ($temaData['logros_esperados_list'] as $idx => $logroDesc) {
+                                // Create Logro (Fresh)
+                                $logro = \App\Models\LogroEsperado::create([
+                                    'tema_id' => $foundTema->id,
+                                    'descripcion' => $logroDesc,
+                                    'periodo' => '1',
+                                    'tipo_logro' => 'SABER HACER'
+                                ]);
 
-                                 // Find corresponding Indicador
-                                 $indDesc = $temaData['indicadores_list'][$idx] ?? null;
-                                 
-                                 if (!empty($indDesc) && $logro) {
-                                      \App\Models\Indicador::create([
-                                          'logro_esperado_id' => $logro->id,
-                                          'descripcion' => $indDesc
-                                      ]);
-                                 }
-                             }
+                                // Find corresponding Indicador
+                                $indDesc = $temaData['indicadores_list'][$idx] ?? null;
+
+                                if (!empty($indDesc) && $logro) {
+                                    \App\Models\Indicador::create([
+                                        'logro_esperado_id' => $logro->id,
+                                        'descripcion' => $indDesc
+                                    ]);
+                                }
+                            }
                         }
 
                         // SAVE NEW FIELDS (Contenidos, Estrategias, Evaluacion, Secuencia)
@@ -878,7 +881,7 @@ class AsignaturaController extends Controller
                         if (!empty($temaData['contenido_actitudinal'])) $temaUpdate['contenido_actitudinal'] = $temaData['contenido_actitudinal'];
                         // Procedimental is empty array as requested
                         if (array_key_exists('contenido_procedimental', $temaData)) $temaUpdate['contenido_procedimental'] = $temaData['contenido_procedimental'];
-                        
+
                         // Apply updates if any
                         if (!empty($temaUpdate)) {
                             $foundTema->update($temaUpdate);
@@ -897,10 +900,10 @@ class AsignaturaController extends Controller
                                 'estrategias_metodologicas' => $temaData['estrategias_metodologicas'] ?? '',
                                 'estrategias_aprendizaje' => $temaData['estrategias_aprendizaje'] ?? '',
                                 'estrategias_recursos' => $temaData['estrategias_recursos'] ?? [],
-                                
+
                                 'evaluacion_formativa' => $temaData['evaluacion_formativa'] ?? [],
                                 'evaluacion_sumativa' => $temaData['evaluacion_sumativa'] ?? [],
-                                
+
                                 'secuencia_didactica' => $temaData['secuencia_didactica'] ?? []
                             ]
                         );
@@ -916,10 +919,9 @@ class AsignaturaController extends Controller
             }
 
             return response()->json(['message' => 'Plan de Clase procesado. Se actualizaron ' . $stats['updated'] . ' temas.', 'data' => $data, 'stats' => $stats]);
-
         } catch (\Exception $e) {
-             \Illuminate\Support\Facades\Log::error("Import Plan Clase Error: " . $e->getMessage());
-             return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
+            \Illuminate\Support\Facades\Log::error("Import Plan Clase Error: " . $e->getMessage());
+            return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
         }
     }
 
@@ -1312,7 +1314,7 @@ class AsignaturaController extends Controller
         ]);
 
         $file = $request->file('file');
-        
+
         // Find SEMANAS
         $cellLocation = $this->cronogramaParser->findSemanasCell($file);
 
