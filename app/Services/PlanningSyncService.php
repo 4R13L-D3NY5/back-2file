@@ -219,9 +219,14 @@ class PlanningSyncService
                     $existingGrupo = null;
 
                     if ($dto->idHorario) {
-                        // Primary lookup: by unique API identifier
-                        // DISABLED FOR STABILITY
-                        //$existingGrupo = Grupo::where('id_horario_api', $dto->idHorario)->first();
+                        // SAFETY FIRST: Wrap in try-catch to prevent crash if column missing
+                        try {
+                            $existingGrupo = Grupo::where('id_horario_api', $dto->idHorario)->first();
+                        } catch (\Exception $e) {
+                            // Silent fallback to legacy
+                            // Log::warning("Sync idHorario failed: " . $e->getMessage());
+                            $existingGrupo = null;
+                        }
                     }
 
                     // Fallback: legacy lookup for data without idHorario
@@ -257,7 +262,7 @@ class PlanningSyncService
                     } else {
                         // CREATE PATH: Full trust on first sync
                         $grupo = Grupo::create([
-                            //'id_horario_api' => $dto->idHorario, // DISABLED
+                            // 'id_horario_api' => $dto->idHorario, // DISABLED FOR SAFETY
                             'gestion' => $dto->gestion,
                             'asignatura_id' => $asignatura->id,
                             'nombre' => $dto->grupo,
