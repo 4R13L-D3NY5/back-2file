@@ -228,6 +228,23 @@ class PlanningSyncService
                     $tipo = isset($dto->tipoClase) ? strtoupper($dto->tipoClase) : 'TEORICO';
 
                     // 7. GRUPO: Identificación puramente LOGICA
+
+                    // MIGRATION FIX: Check for legacy group (null carrera_id) matching other criteria
+                    // This prevents "Duplicate Entry" errors if a unique index exists on (gestion, asignatura, nombre...)
+                    $legacyGrupo = Grupo::where([
+                        'gestion' => $dto->gestion,
+                        'asignatura_id' => $asignatura->id,
+                        'carrera_id' => null, // Legacy has no career
+                        'nombre' => $dto->grupo,
+                        'tipo' => $tipo,
+                        'sede_id' => $sede->id
+                    ])->first();
+
+                    if ($legacyGrupo) {
+                        // "Claim" this group for the current career
+                        $legacyGrupo->update(['carrera_id' => $carrera->id]);
+                    }
+
                     // Un grupo es el mismo si tiene la misma gestión, asignatura, carrera, nombre, tipo y sede
                     $grupo = Grupo::updateOrCreate(
                         [
@@ -246,8 +263,8 @@ class PlanningSyncService
 
                     $stats['grupos']++;
 
-                    // CLEANUP: Si es la primera vez que vemos este grupo en este lote, 
-                    // borramos horarios que NO tengan id_horario_api (legacy) 
+                    // CLEANUP: Si es la primera vez que vemos este grupo en este lote,
+                    // borramos horarios que NO tengan id_horario_api (legacy)
                     // o preparamos para refrescar sesiones.
                     if (!in_array($grupo->id, $processedGroups)) {
                         // Opcional: Podríamos marcar para borrar los que no vengan en este lote
