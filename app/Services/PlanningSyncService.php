@@ -248,7 +248,8 @@ class PlanningSyncService
                             'turno' => $turno,
                             'estado' => 'ACTIVO',
                             // MASSIVE FIX: Always update docente to what API says
-                            'docente_id' => $docente->id
+                            'docente_id' => $docente->id,
+                            'id_horario_api' => $dto->idHorario // BACKFILL or UPDATE
                         ];
 
                         // If found by idHorario, we trust the API data completely
@@ -262,7 +263,7 @@ class PlanningSyncService
                     } else {
                         // CREATE PATH: Full trust on first sync
                         $grupo = Grupo::create([
-                            // 'id_horario_api' => $dto->idHorario, // DISABLED FOR SAFETY
+                            'id_horario_api' => $dto->idHorario, // ENABLED FOR PRECISION
                             'gestion' => $dto->gestion,
                             'asignatura_id' => $asignatura->id,
                             'nombre' => $dto->grupo,
