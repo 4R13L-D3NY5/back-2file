@@ -28,7 +28,7 @@ class UniversitySyncService
      * Sync all data from University API
      * Dynamically reads active Sedes from database
      */
-    public function syncAll(callable $progressCallback = null): array
+    public function syncAll(callable $progressCallback = null, $sedeCode = null): array
     {
         $stats = [
             'careers_synced' => 0,
@@ -37,9 +37,13 @@ class UniversitySyncService
             'errors' => 0,
         ];
 
-        return DB::transaction(function () use (&$stats, $progressCallback) {
-            // Dynamic: Fetch all active Sedes from database
-            $sedes = Sede::where('activo', true)->get();
+        return DB::transaction(function () use (&$stats, $progressCallback, $sedeCode) {
+            // Dynamic: Fetch all active Sedes from database (optionally filtered)
+            $query = Sede::where('activo', true);
+            if ($sedeCode) {
+                $query->where('codigo', $sedeCode);
+            }
+            $sedes = $query->get();
 
             foreach ($sedes as $sede) {
                 // Use the 'codigo' field (lowercase) as the branchCode for the API

@@ -46,12 +46,16 @@ class SyncAcademicData extends Command
         // ---------------------------------------------------------
         // PHASE 1: UNIVERSITY API Sync (Carreras, Asignaturas, Pivot)
         // ---------------------------------------------------------
-        if (!$carreraArg && !$sedeArg) { // Only run full University sync if not filtering
+        // ---------------------------------------------------------
+        // PHASE 1: UNIVERSITY API Sync (Carreras, Asignaturas, Pivot)
+        // ---------------------------------------------------------
+        // Run if Full Sync OR Sede is specified (since we support Sede filtering now)
+        if (!$carreraArg) {
             $this->info("\n[PHASE 1] Syncing structure from University API...");
             try {
                 $uniStats = $universityService->syncAll(function ($msg) {
                     $this->line("  → $msg");
-                });
+                }, $sedeArg); // Pass sedeArg
 
                 $this->info("  ✓ University Sync: {$uniStats['careers_synced']} careers, {$uniStats['courses_synced']} courses enriched.");
 
@@ -62,7 +66,7 @@ class SyncAcademicData extends Command
                 $this->error("  ❌ University Sync Failed: " . $e->getMessage());
             }
         } else {
-            $this->info("\n[PHASE 1] Skipping University Sync (running in filtered mode).");
+            $this->info("\n[PHASE 1] Skipping University Sync (career filter not supported by API).");
         }
 
         // ---------------------------------------------------------
