@@ -140,11 +140,12 @@ class PlanningSyncService
                         ]);
                     } else {
                         // Update semestre if changed (optional but good for consistency)
+                        // Update timestamp but NOT semester (Malla is the source of truth)
                         DB::table('asignatura_carrera')
                             ->where('asignatura_id', $asignatura->id)
                             ->where('carrera_id', $carrera->id)
                             ->where('sede_id', $sede->id)
-                            ->update(['semestre' => $dto->semestre, 'updated_at' => now()]);
+                            ->update(['updated_at' => now()]);
                     }
 
                     // 6. Docente & User
