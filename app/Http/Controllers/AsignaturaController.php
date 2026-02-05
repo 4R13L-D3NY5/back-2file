@@ -311,11 +311,31 @@ class AsignaturaController extends Controller
             $response['carreras'] = $local->carreras; // Pass all careers for potential multi-sede logic
 
             // Explicit sede_id injection. PRIORITY: Pivot > Career > Fallback
-            $response['sede_id'] = $mainCarrera?->pivot?->sede_id ?? $mainCarrera?->sede_id ?? 1;
+            $resolvedSedeId = $mainCarrera?->pivot?->sede_id ?? $mainCarrera?->sede_id ?? 1;
+            $response['sede_id'] = $resolvedSedeId;
 
             // Explicit sede_nombre
-            $response['sede_nombre'] = $mainCarrera?->sede?->nombre
-                ?? ($mainCarrera?->pivot?->sede_id == 1 ? 'Cochabamba' : 'Sede Desconocida');
+            // 1. Try to get name from the loaded Career's Sede relationship IF it matches the resolved ID
+            // 2. OR fetch the specific Sede from DB (if not loaded)
+            // 3. Fallback to hardcoded map
+            $resolvedSedeNombre = 'Sede Desconocida';
+
+            if ($mainCarrera?->sede && $mainCarrera->sede->id == $resolvedSedeId) {
+                $resolvedSedeNombre = $mainCarrera->sede->nombre;
+            } else {
+                // Try to find the name in the eager loaded 'carreras.sede' collection of the subject
+                // (Optimization: Avoid extra DB query)
+                /* $foundSede = $local->carreras->pluck('sede')->firstWhere('id', $resolvedSedeId); */
+                // Actually, simple fallback to DB or Map is safer
+                $sedeDb = \App\Models\Sede::find($resolvedSedeId);
+                if ($sedeDb) {
+                    $resolvedSedeNombre = $sedeDb->nombre;
+                } else {
+                    $mapa = [1 => 'Cochabamba', 2 => 'La Paz', 4 => 'Santa Cruz', 8 => 'El Alto', 10 => 'Cobija', 12 => 'Puerto Quijarro'];
+                    $resolvedSedeNombre = $mapa[$resolvedSedeId] ?? 'Sede Desconocida (' . $resolvedSedeId . ')';
+                }
+            }
+            $response['sede_nombre'] = $resolvedSedeNombre;
 
 
             // Horarios desde la estructura normalizada (grupos + horarios)
