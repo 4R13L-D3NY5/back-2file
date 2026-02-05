@@ -138,6 +138,10 @@ class PlanningSyncService
                         ]);
                     } else {
                         // Update semestre if changed (optional but good for consistency)
+                        if ($dto->siglaP === 'OPT-004') {
+                            Log::info("DEBUG OPT-004 SYNC: Carrera {$carrera->sigla} Sede {$sede->nombre} Sem API: {$dto->semestre}");
+                        }
+
                         DB::table('asignatura_carrera')
                             ->where('asignatura_id', $asignatura->id)
                             ->where('carrera_id', $carrera->id)
