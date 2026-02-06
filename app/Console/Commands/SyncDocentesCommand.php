@@ -41,70 +41,92 @@ class SyncDocentesCommand extends Command
     public function handle()
     {
         $gestion = $this->option('gestion');
-        $sede = $this->option('sede');
+        $sedeOption = $this->option('sede');
         $carreraFiltro = $this->option('carrera');
 
-        $this->info("🔄 Sincronizando docentes desde API externa...");
-        $this->info("   Gestión: {$gestion} | Sede: {$sede}");
+        // Determine Sedes to process
+        // API requires ID (Confirmed by test_sede_api.php: ID 1=807 results, Code CBA=0 results)
+        $sedesToProcess = [];
+
+        if ($sedeOption) {
+            $sedeObj = \App\Models\Sede::find($sedeOption);
+            if ($sedeObj) {
+                $sedesToProcess = [$sedeObj];
+                $this->info("� Procesando Sede: {$sedeObj->nombre} (ID: {$sedeObj->id})");
+            } else {
+                $this->error("❌ Sede ID {$sedeOption} no encontrada.");
+                return 1;
+            }
+        } else {
+            // Fetch all sedes from DB
+            $sedesToProcess = \App\Models\Sede::all();
+            $this->info("🌍 Procesando TODAS las sedes globalmente (" . count($sedesToProcess) . " sedes).");
+        }
 
         // Obtener lista dinámica de carreras
         $carrerasAConsultar = $this->getCarrerasToSync($carreraFiltro);
 
-        $this->info("   📋 Carreras a procesar: " . count($carrerasAConsultar));
+        // $this->info("📋 Carreras a procesar: " . count($carrerasAConsultar));
 
         $docentesUnicos = [];
         $totalRegistros = 0;
 
-        // Obtener docentes de todas las carreras
-        foreach ($carrerasAConsultar as $carrera) {
-            $this->line("   📚 Consultando carrera: {$carrera}...");
+        // Loop through Sedes
+        foreach ($sedesToProcess as $sedeObj) {
+            $this->info("------------------------------------------------");
+            $this->info("🏢 Sede: {$sedeObj->nombre} (ID: {$sedeObj->id})");
 
-            try {
-                $response = Http::timeout(60)->get("{$this->baseUrl}/api/Grupos/listar/", [
-                    'gestion' => $gestion,
-                    'carrera' => $carrera,
-                    'sede' => $sede
-                ]);
+            $sedeId = $sedeObj->id;
 
-                if ($response->successful()) {
-                    $data = $response->json();
-                    $totalRegistros += count($data);
+            // Loop through Careers
+            foreach ($carrerasAConsultar as $carrera) {
+                // $this->line("   📚 Consultando: {$carrera}...");
 
-                    foreach ($data as $item) {
-                        $ci = trim($item['ci']);
+                try {
+                    // USE ID for external API request
+                    $response = Http::timeout(60)->get("{$this->baseUrl}/api/Grupos/listar/", [
+                        'gestion' => $gestion,
+                        'carrera' => $carrera,
+                        'sede' => $sedeId
+                    ]);
 
-                        // Ignorar CIs inválidos
-                        if (empty($ci) || $ci === '0') {
-                            continue;
+                    if ($response->successful()) {
+                        $data = $response->json();
+                        $count = count($data);
+                        $totalRegistros += $count;
+
+                        if ($count > 0) {
+                            $this->line("   ✅ {$carrera}: {$count} registros.");
                         }
 
-                        // Si es un nuevo docente, agregarlo
-                        if (!isset($docentesUnicos[$ci])) {
-                            $docentesUnicos[$ci] = [
-                                'ci' => $ci,
-                                'nombre' => $this->limpiarNombre($item['docente']),
-                                'sede_id' => $item['idSede'],
-                                'carreras' => [$carrera],
-                                'materias' => []
-                            ];
-                        } else {
-                            // Agregar carrera si no está
-                            if (!in_array($carrera, $docentesUnicos[$ci]['carreras'])) {
-                                $docentesUnicos[$ci]['carreras'][] = $carrera;
+                        foreach ($data as $item) {
+                            $ci = trim($item['ci']);
+
+                            if (empty($ci) || $ci === '0') continue;
+
+                            if (!isset($docentesUnicos[$ci])) {
+                                $docentesUnicos[$ci] = [
+                                    'ci' => $ci,
+                                    'nombre' => $this->limpiarNombre($item['docente']),
+                                    'sede_id' => $sedeId, // Map to correct local Sede ID
+                                    'carreras' => [$carrera],
+                                    'materias' => []
+                                ];
+                            } else {
+                                if (!in_array($carrera, $docentesUnicos[$ci]['carreras'])) {
+                                    $docentesUnicos[$ci]['carreras'][] = $carrera;
+                                }
+                            }
+
+                            $materiaKey = $item['siglaP'];
+                            if (!isset($docentesUnicos[$ci]['materias'][$materiaKey])) {
+                                $docentesUnicos[$ci]['materias'][$materiaKey] = $item['materia'];
                             }
                         }
-
-                        // Agregar materia
-                        $materiaKey = $item['siglaP'];
-                        if (!isset($docentesUnicos[$ci]['materias'][$materiaKey])) {
-                            $docentesUnicos[$ci]['materias'][$materiaKey] = $item['materia'];
-                        }
                     }
-                } else {
-                    $this->warn("   ⚠️ Error en carrera {$carrera}: HTTP {$response->status()}");
+                } catch (\Exception $e) {
+                    $this->error("   ❌ Error: {$e->getMessage()}");
                 }
-            } catch (\Exception $e) {
-                $this->error("   ❌ Error en carrera {$carrera}: {$e->getMessage()}");
             }
         }
 
