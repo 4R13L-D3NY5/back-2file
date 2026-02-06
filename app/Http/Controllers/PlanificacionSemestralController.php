@@ -42,6 +42,15 @@ class PlanificacionSemestralController extends Controller
             if ($grupoId) {
                 $q->where('grupo_id', $grupoId);
             }
+
+            // FILTER: Strict 'My Sessions' for Teachers (Rol ID 6 = DOCENTE)
+            // Fixes duplicate sessions in 'Planificación por Unidades' view
+            $currentUser = Auth::user();
+            if ($currentUser && $currentUser->rol_id === 6 && $currentUser->docente) {
+                $q->whereHas('grupo', function ($gq) use ($currentUser) {
+                    $gq->where('docente_id', $currentUser->docente->id);
+                });
+            }
         }])->findOrFail($asignaturaId);
 
         // Resolver Detalles Pedagógicos para cada sesión
