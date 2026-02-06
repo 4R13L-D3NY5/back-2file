@@ -126,6 +126,25 @@ class AsignaturaController extends Controller
             $camposCompletados = count(array_filter($campos));
             $progreso = round(($camposCompletados / count($campos)) * 100);
 
+            // Context resolution: Priority to the Group's Sede (Actual Assignment)
+            // If the subject is here because of a group, show THAT group's location.
+            $firstGroup = $a->grupos->first();
+            $actualSedeId = $firstGroup?->sede_id
+                ?? $context?->pivot?->sede_id
+                ?? $context?->sede_id
+                ?? 1;
+
+            $sedeNombre = 'Sede Desconocida';
+
+            // Try to resolve name from DB or Map
+            if ($firstGroup && $firstGroup->sede_id) {
+                // Optimization: In real app, load 'grupos.sede' relationship.
+                // For now, simple map or fetch. Assuming map is enough for standard IDs
+                $sedeNombre = $sedesMap[$actualSedeId] ?? \App\Models\Sede::find($actualSedeId)?->nombre ?? 'Sede Desconocida';
+            } else {
+                $sedeNombre = $sedesMap[$actualSedeId] ?? 'N/A';
+            }
+
             return [
                 'id' => $a->id,
                 'codigo' => $a->codigo,
@@ -135,10 +154,10 @@ class AsignaturaController extends Controller
                 'semestre' => $context?->pivot?->semestre,
                 'horas_teoricas' => $a->horas_teoricas,
                 'horas_practicas' => $a->horas_practicas,
-                'carrera_id' => $context?->id,
-                'carrera_nombre' => $context?->nombre ?? 'N/A',
-                'sede_id' => $context?->pivot?->sede_id,
-                'sede_nombre' => $sedesMap[$context?->pivot?->sede_id] ?? 'N/A',
+                'carrera_id' => $firstGroup?->carrera_id ?? $context?->id, // ALSO fix Carrera: Use Group's career if possible
+                'carrera_nombre' => $context?->nombre ?? 'N/A', // Keep context name as fallback, or fetch group's career name if relational
+                'sede_id' => $actualSedeId,
+                'sede_nombre' => $sedeNombre,
                 'activa' => $a->deleted_at === null,
                 'docentes' => $docentes->pluck('nombre_completo')->values(),
                 'docente_nombre' => $docentes->isEmpty() ? null : $docentes->pluck('nombre_completo')->implode(', '), // Fix for card display
