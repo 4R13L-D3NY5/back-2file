@@ -417,6 +417,13 @@ class AsignaturaController extends Controller
                 }
             }
 
+            // FILTER: Strict 'My Schedule' for Teachers (Rol ID 6 = DOCENTE)
+            // Fixes issue where teachers saw all groups/sessions for a subject.
+            $currentUser = auth()->user();
+            if ($currentUser && $currentUser->rol_id === 6 && $currentUser->docente) {
+                $gruposQuery->where('docente_id', $currentUser->docente->id);
+            }
+
             $response['horarios_data'] = $gruposQuery
                 ->with(['docente:id,nombre_completo', 'horarios.aula:id,nombre'])
                 ->get()
