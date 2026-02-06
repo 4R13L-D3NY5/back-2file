@@ -1,5 +1,6 @@
 <?php
-$path = base_path('.env');
+// Standalone script - assumes it's in root directory
+$path = __DIR__ . '/.env';
 if (file_exists($path)) {
     $content = file_get_contents($path);
     // Replace DB_PASSWORD line safely
@@ -11,5 +12,5 @@ if (file_exists($path)) {
     file_put_contents($path, $newContent);
     echo "Successfully updated DB_PASSWORD in .env\n";
 } else {
-    echo ".env file not found!\n";
+    echo ".env file not found at $path\n";
 }
