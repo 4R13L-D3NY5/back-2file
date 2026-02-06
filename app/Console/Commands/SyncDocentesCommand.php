@@ -223,8 +223,8 @@ class SyncDocentesCommand extends Command
                             $gestion = $asignacion['gestion'];
                             $carreraSigla = $asignacion['carrera_sigla'];
 
-                            // Find Asignatura by Code
-                            $asignatura = \App\Models\Asignatura::where('codigo', $sigla)->first();
+                            // Find Asignatura by Smart Logic
+                            $asignatura = $this->findAsignaturaMatch($sigla, $sedeId, $carreraSigla);
 
                             if ($asignatura) {
                                 // Find or CREATE Grupo
@@ -286,6 +286,51 @@ class SyncDocentesCommand extends Command
         }
 
         return 0;
+    }
+
+    /**
+     * Busca la asignatura correcta considerando variantes de Sede/Carrera
+     */
+    protected function findAsignaturaMatch($codigoBase, $sedeId, $carreraSigla)
+    {
+        $codigoBase = mb_strtoupper(trim($codigoBase));
+        $carreraSigla = mb_strtoupper(trim($carreraSigla));
+
+        // Mapa manual de Sede ID a Sufijo (Basado en observaciones DB)
+        // 8 (Puerto Quijarro) -> PTO (Code) -> PUE (Data Suffix)
+        $sedeSuffixMap = [
+            1 => 'CBA',
+            4 => 'EAL',
+            5 => 'IVI',
+            6 => 'LPZ',
+            8 => 'PUE', // SPECIAL CASE: Puerto uses PUE not PTO
+            9 => 'STC',
+            12 => 'GUA'
+        ];
+
+        $sedeSuffix = $sedeSuffixMap[$sedeId] ?? '';
+
+        // Prioridad de Búsqueda:
+        // 1. CODIGO-SEDE-CARRERA (Ej: ENF-114-PUE-CARENL)
+        // 2. CODIGO-SEDE (Ej: ENF-114-PUE)
+        // 3. CODIGO (Ej: ENF-114)
+
+        $candidates = [];
+
+        if ($sedeSuffix) {
+            $candidates[] = "{$codigoBase}-{$sedeSuffix}-{$carreraSigla}";
+            $candidates[] = "{$codigoBase}-{$sedeSuffix}";
+        }
+        $candidates[] = $codigoBase;
+
+        foreach ($candidates as $code) {
+            $asignatura = \App\Models\Asignatura::where('codigo', $code)->first();
+            if ($asignatura) {
+                return $asignatura;
+            }
+        }
+
+        return null;
     }
 
     /**
