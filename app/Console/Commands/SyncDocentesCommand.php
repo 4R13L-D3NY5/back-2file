@@ -14,10 +14,10 @@ class SyncDocentesCommand extends Command
 {
     protected $signature = 'sync:docentes
                             {--gestion=1-2026 : Gestión académica}
-                            {--sede=1 : ID de sede}
+                            {--sede= : ID de sede (Opcional, si se omite procesa TODAS)}
                             {--carrera= : Carrera específica (opcional, por defecto todas)}';
 
-    protected $description = 'Sincroniza docentes desde la API externa de UNITEPC a la base de datos local';
+    protected $description = 'Sincroniza docentes desde la API externa de UNITEPC a la base de datos local (Multi-Sede)';
 
     protected string $baseUrl = 'http://181.188.185.211:9098';
 
