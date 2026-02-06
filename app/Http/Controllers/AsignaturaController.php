@@ -341,23 +341,33 @@ class AsignaturaController extends Controller
             $response['carrera'] = $mainCarrera; // Pass full object (with sede loaded)
             $response['carreras'] = $local->carreras; // Pass all careers for potential multi-sede logic
 
-            // Explicit sede_id injection. PRIORITY: Pivot > Career > Fallback
-            $resolvedSedeId = $mainCarrera?->pivot?->sede_id ?? $mainCarrera?->sede_id ?? 1;
+            // USER-SPECIFIC CONTEXT (GLOBAL FIX):
+            // Check if authenticated user is a teacher and has a specific group for this subject.
+            // If so, prioritize THAT group's Sede/Context over the generic subject context.
+            $currentUser = auth()->user();
+            $mySpecifiedGroup = null;
+            if ($currentUser && $currentUser->docente) {
+                // Find first group assigned to this teacher
+                $mySpecifiedGroup = $local->grupos->where('docente_id', $currentUser->docente->id)->first();
+            }
+
+            // Explicit sede_id injection. PRIORITY: User's Group > Pivot > Career > Fallback
+            $resolvedSedeId = $mySpecifiedGroup?->sede_id
+                ?? $mainCarrera?->pivot?->sede_id
+                ?? $mainCarrera?->sede_id
+                ?? 1;
+
             $response['sede_id'] = $resolvedSedeId;
 
             // Explicit sede_nombre
-            // 1. Try to get name from the loaded Career's Sede relationship IF it matches the resolved ID
-            // 2. OR fetch the specific Sede from DB (if not loaded)
-            // 3. Fallback to hardcoded map
             $resolvedSedeNombre = 'Sede Desconocida';
 
-            if ($mainCarrera?->sede && $mainCarrera->sede->id == $resolvedSedeId) {
+            if ($mySpecifiedGroup && $mySpecifiedGroup->sede_id) {
+                // Optimization: Try to find name in cached map or loaded relation
+                $resolvedSedeNombre = \App\Models\Sede::find($resolvedSedeId)?->nombre ?? 'Sede Desconocida';
+            } elseif ($mainCarrera?->sede && $mainCarrera->sede->id == $resolvedSedeId) {
                 $resolvedSedeNombre = $mainCarrera->sede->nombre;
             } else {
-                // Try to find the name in the eager loaded 'carreras.sede' collection of the subject
-                // (Optimization: Avoid extra DB query)
-                /* $foundSede = $local->carreras->pluck('sede')->firstWhere('id', $resolvedSedeId); */
-                // Actually, simple fallback to DB or Map is safer
                 $sedeDb = \App\Models\Sede::find($resolvedSedeId);
                 if ($sedeDb) {
                     $resolvedSedeNombre = $sedeDb->nombre;
