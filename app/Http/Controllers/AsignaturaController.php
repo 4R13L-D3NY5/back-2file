@@ -128,7 +128,19 @@ class AsignaturaController extends Controller
 
             // Context resolution: Priority to the Group's Sede (Actual Assignment)
             // If the subject is here because of a group, show THAT group's location.
-            $firstGroup = $a->grupos->first();
+
+            // USER-SPECIFIC CONTEXT: If user is a teacher, prioritize THEIR group
+            $user = auth()->user();
+            $myGroup = null;
+
+            if ($user && $user->docente) {
+                // Find group for THIS teacher
+                $myGroup = $a->grupos->where('docente_id', $user->docente->id)->first();
+            }
+
+            // Fallback: If no specific group for user (e.g. Admin or not assigned), use first group or context
+            $firstGroup = $myGroup ?? $a->grupos->first();
+
             $actualSedeId = $firstGroup?->sede_id
                 ?? $context?->pivot?->sede_id
                 ?? $context?->sede_id
