@@ -52,7 +52,7 @@ class SyncDocentesCommand extends Command
             $sedeObj = \App\Models\Sede::find($sedeOption);
             if ($sedeObj) {
                 $sedesToProcess = [$sedeObj];
-                $this->info("� Procesando Sede: {$sedeObj->nombre} (ID: {$sedeObj->id})");
+                $this->info("📍 Procesando Sede: {$sedeObj->nombre} (ID: {$sedeObj->id})");
             } else {
                 $this->error("❌ Sede ID {$sedeOption} no encontrada.");
                 return 1;
@@ -110,7 +110,7 @@ class SyncDocentesCommand extends Command
                                     'nombre' => $this->limpiarNombre($item['docente']),
                                     'sede_id' => $sedeId, // Map to correct local Sede ID
                                     'carreras' => [$carrera],
-                                    'materias' => []
+                                    'asignaciones' => []
                                 ];
                             } else {
                                 if (!in_array($carrera, $docentesUnicos[$ci]['carreras'])) {
@@ -118,9 +118,18 @@ class SyncDocentesCommand extends Command
                                 }
                             }
 
-                            $materiaKey = $item['siglaP'];
-                            if (!isset($docentesUnicos[$ci]['materias'][$materiaKey])) {
-                                $docentesUnicos[$ci]['materias'][$materiaKey] = $item['materia'];
+                            // Capture Assignment Details
+                            // We need to link this teacher to: Sede + Asignatura (Sigla) + Grupo (Nombre)
+                            $asignacion = [
+                                'sede_id' => $sedeId,
+                                'sigla' => trim($item['siglaP']), // e.g. SON-115
+                                'grupo' => trim($item['grupo']),   // e.g. 1
+                                'gestion' => $gestion
+                            ];
+
+                            // Avoid duplicates in memory
+                            if (!in_array($asignacion, $docentesUnicos[$ci]['asignaciones'])) {
+                                $docentesUnicos[$ci]['asignaciones'][] = $asignacion;
                             }
                         }
                     }
@@ -151,14 +160,16 @@ class SyncDocentesCommand extends Command
         $creados = 0;
         $actualizados = 0;
         $errores = 0;
+        $asignacionesRealizadas = 0;
 
         $bar = $this->output->createProgressBar(count($docentesUnicos));
         $bar->start();
 
         foreach ($docentesUnicos as $ci => $docenteData) {
             try {
-                // Buscar usuario existente
+                // 1. Sync User / Docente
                 $user = User::where('ci', $ci)->orWhere('username', $ci)->first();
+                $docente = null;
 
                 if ($user) {
                     // Actualizar nombre si cambió
@@ -168,6 +179,7 @@ class SyncDocentesCommand extends Command
                         'apellido' => $nombreParts['apellido'],
                     ]);
                     $actualizados++;
+                    $docente = $user->docente; // Retrieve existing docente relation
                 } else {
                     // Crear nuevo usuario
                     $nombreParts = $this->parsearNombre($docenteData['nombre']);
@@ -184,8 +196,13 @@ class SyncDocentesCommand extends Command
                         'password_change_required' => false,
                     ]);
 
-                    // Crear registro de docente
-                    Docente::updateOrCreate(
+                    $creados++;
+                }
+
+                // Ensure Docente property allows access to ID
+                // If user exists but has no docente record, create it
+                if ($user) {
+                    $docente = Docente::updateOrCreate(
                         ['user_id' => $user->id],
                         [
                             'nombre_completo' => $docenteData['nombre'],
@@ -193,8 +210,43 @@ class SyncDocentesCommand extends Command
                             'estado' => true,
                         ]
                     );
+                }
 
-                    $creados++;
+                // 2. Sync Assignments (Assign Groups)
+                if ($docente) {
+                    foreach ($docenteData['asignaciones'] as $asignacion) {
+                        try {
+                            $sigla = $asignacion['sigla'];
+                            $grupoNombre = $asignacion['grupo'];
+                            $sedeId = $asignacion['sede_id'];
+                            $gestion = $asignacion['gestion'];
+
+                            // Find Asignatura by Kode
+                            $asignatura = \App\Models\Asignatura::where('codigo', $sigla)->first();
+
+                            if ($asignatura) {
+                                // Find Grupo
+                                // Match: Sede + Asignatura + Nombre (Group Number) + Gestion
+                                $grupo = \App\Models\Grupo::where('sede_id', $sedeId)
+                                    ->where('asignatura_id', $asignatura->id)
+                                    ->where('nombre', $grupoNombre)
+                                    ->where('gestion', $gestion)
+                                    ->first();
+
+                                if ($grupo) {
+                                    // Assign Docente if not already assigned or different
+                                    if ($grupo->docente_id !== $docente->id) {
+                                        $grupo->docente_id = $docente->id;
+                                        $grupo->save();
+                                        $asignacionesRealizadas++;
+                                    }
+                                }
+                            }
+                        } catch (\Exception $e) {
+                            // Log silent error for individual assignment to avoid stopping process
+                            // Log::warning("Could not assign group {$asignacion['sigla']}-{$asignacion['grupo']} to {$ci}");
+                        }
+                    }
                 }
             } catch (\Exception $e) {
                 $errores++;
@@ -211,6 +263,7 @@ class SyncDocentesCommand extends Command
         $this->info("✅ Sincronización completada:");
         $this->line("   - Docentes creados: {$creados}");
         $this->line("   - Docentes actualizados: {$actualizados}");
+        $this->line("   - Asignaciones de Grupo (Materia): {$asignacionesRealizadas}");
 
         if ($errores > 0) {
             $this->warn("   - Errores: {$errores} (ver logs para detalles)");
