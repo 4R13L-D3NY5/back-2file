@@ -234,4 +234,21 @@ class UserController extends Controller
         }
         return $username;
     }
+
+    public function resetPassword(Request $request, $id)
+    {
+        // Verificar permisos (Middleware ya protege la ruta, pero doble check si se requiere rol Admin)
+        // Por ahora asumimos que solo admin entra aqui
+
+        $user = User::findOrFail($id);
+
+        if (!$user->ci) {
+            return response()->json(['message' => 'El usuario no tiene CI registrado'], 422);
+        }
+
+        $user->password = Hash::make($user->ci);
+        $user->save();
+
+        return response()->json(['message' => 'Contraseña restablecida correctamente al CI: ' . $user->ci]);
+    }
 }

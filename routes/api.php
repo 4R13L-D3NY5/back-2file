@@ -145,6 +145,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Roles & Users
     Route::apiResource('roles', \App\Http\Controllers\RolController::class);
     Route::apiResource('usuarios', \App\Http\Controllers\UserController::class);
+    Route::post('/usuarios/{id}/reset-password', [\App\Http\Controllers\UserController::class, 'resetPassword']);
     Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
     Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
     Route::get('/my-subjects', [\App\Http\Controllers\DocenteController::class, 'mySubjects']);
@@ -186,7 +187,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/auditoria-semanal', [\App\Http\Controllers\ReporteController::class, 'getAuditoriaSemanal']);
     Route::get('/reportes/director', [\App\Http\Controllers\ReporteController::class, 'index']);
     Route::get('/reportes/director/weekly', [\App\Http\Controllers\ReporteController::class, 'generateWeeklyReport']);
-    
+
     // Dirección Académica Dashboard
     Route::get('/direccion/stats', [\App\Http\Controllers\ReporteController::class, 'direccionStats']);
     Route::get('/seguimiento-semanal/check-status', [\App\Http\Controllers\SeguimientoSemanalController::class, 'checkStatus']);
