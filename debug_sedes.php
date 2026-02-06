@@ -8,8 +8,8 @@ $kernel->bootstrap();
 
 use App\Models\Sede;
 
-$sedes = Sede::all(['id', 'nombre']);
+$sedes = Sede::all(['id', 'nombre', 'codigo']);
 echo "Listado de Sedes:\n";
 foreach ($sedes as $sede) {
-    echo "ID: {$sede->id} | Nombre: {$sede->nombre}\n";
+    echo "ID: {$sede->id} | Nombre: {$sede->nombre} | Codigo: {$sede->codigo}\n";
 }
