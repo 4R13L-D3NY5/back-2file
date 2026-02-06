@@ -37,7 +37,8 @@ class SyncDocentesCommand extends Command
         'caradm',
         'carcont',
         'carcivil',
-        'carind'
+        'carind',
+        'carson'
     ];
 
     public function handle()
