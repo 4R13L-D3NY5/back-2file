@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Models\User;
 use App\Models\Docente;
 use App\Models\Rol;
+use App\Models\Horario;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Hash;
@@ -17,7 +18,7 @@ class SyncDocentesCommand extends Command
                             {--sede= : ID de sede (Opcional, si se omite procesa TODAS)}
                             {--carrera= : Carrera específica (opcional, por defecto todas)}';
 
-    protected $description = 'Sincroniza docentes desde la API externa de UNITEPC a la base de datos local (Multi-Sede)';
+    protected $description = 'Sincroniza asignaciones de docentes usando ID EXACTO de API (Requiere sync previo de horarios)';
 
     protected string $baseUrl = 'http://181.188.185.211:9098';
 
@@ -28,7 +29,6 @@ class SyncDocentesCommand extends Command
         }
 
         // Fetch dynamic list from Database (using 'sigla' column)
-        // Ensure we normalize to lowercase as expected by the API
         return \App\Models\Carrera::whereNotNull('sigla')
             ->where('sigla', '!=', '')
             ->pluck('sigla')
@@ -44,46 +44,38 @@ class SyncDocentesCommand extends Command
         $sedeOption = $this->option('sede');
         $carreraFiltro = $this->option('carrera');
 
+        $this->info("🚀 Iniciando Sincronización Estricta por ID (Gestion: $gestion)");
+        $this->info("⚠️  Este comando asume que la estructura (Grupos/Horarios) ya fue sincronizada por el servicio 'University/Planning'.");
+
         // Determine Sedes to process
-        // API requires ID (Confirmed by test_sede_api.php: ID 1=807 results, Code CBA=0 results)
         $sedesToProcess = [];
 
         if ($sedeOption) {
             $sedeObj = \App\Models\Sede::find($sedeOption);
             if ($sedeObj) {
                 $sedesToProcess = [$sedeObj];
-                $this->info("📍 Procesando Sede: {$sedeObj->nombre} (ID: {$sedeObj->id})");
             } else {
                 $this->error("❌ Sede ID {$sedeOption} no encontrada.");
                 return 1;
             }
         } else {
-            // Fetch all sedes from DB
             $sedesToProcess = \App\Models\Sede::all();
-            $this->info("🌍 Procesando TODAS las sedes globalmente (" . count($sedesToProcess) . " sedes).");
         }
 
-        // Obtener lista dinámica de carreras
         $carrerasAConsultar = $this->getCarrerasToSync($carreraFiltro);
 
-        // $this->info("📋 Carreras a procesar: " . count($carrerasAConsultar));
-
-        $docentesUnicos = [];
+        $docentesUnicos = []; // Key: CI
+        $idHorarioMap = [];   // Key: ID_HORARIO => CI_DOCENTE (Direct Link)
         $totalRegistros = 0;
 
-        // Loop through Sedes
-        foreach ($sedesToProcess as $sedeObj) {
-            $this->info("------------------------------------------------");
-            $this->info("🏢 Sede: {$sedeObj->nombre} (ID: {$sedeObj->id})");
+        // --- FASE 1: RECOLECCIÓN DE DATOS (API) ---
 
+        foreach ($sedesToProcess as $sedeObj) {
+            $this->info("🏢 Procesando Sede: {$sedeObj->nombre}");
             $sedeId = $sedeObj->id;
 
-            // Loop through Careers
             foreach ($carrerasAConsultar as $carrera) {
-                // $this->line("   📚 Consultando: {$carrera}...");
-
                 try {
-                    // USE ID for external API request
                     $response = Http::timeout(60)->get("{$this->baseUrl}/api/Grupos/listar/", [
                         'gestion' => $gestion,
                         'carrera' => $carrera,
@@ -95,295 +87,162 @@ class SyncDocentesCommand extends Command
                         $count = count($data);
                         $totalRegistros += $count;
 
-                        if ($count > 0) {
-                            $this->line("   ✅ {$carrera}: {$count} registros.");
-                        }
+                        // if ($count > 0) $this->line("   ✅ {$carrera}: {$count} registros.");
 
                         foreach ($data as $item) {
                             $ci = trim($item['ci']);
+                            $idHorario = $item['idHorario'] ?? null;
 
-                            if (empty($ci) || $ci === '0') continue;
+                            // Skip invalid data
+                            if (empty($ci) || $ci === '0' || empty($item['docente'])) continue;
+                            if (!$idHorario) continue; // Cannot link without ID
 
+                            // 1. Prepare Docente Data
                             if (!isset($docentesUnicos[$ci])) {
                                 $docentesUnicos[$ci] = [
                                     'ci' => $ci,
                                     'nombre' => $this->limpiarNombre($item['docente']),
-                                    'sede_id' => $sedeId, // Map to correct local Sede ID
-                                    'carreras' => [$carrera],
-                                    'asignaciones' => []
+                                    'sede_id' => $sedeId,
                                 ];
-                            } else {
-                                if (!in_array($carrera, $docentesUnicos[$ci]['carreras'])) {
-                                    $docentesUnicos[$ci]['carreras'][] = $carrera;
-                                }
                             }
 
-                            // Capture Assignment Details
-                            // We need to link this teacher to: Sede + Asignatura (Sigla) + Grupo (Nombre)
-                            $asignacion = [
-                                'sede_id' => $sedeId,
-                                'sigla' => trim($item['siglaP']), // e.g. SON-115
-                                'grupo' => trim($item['grupo']),   // e.g. 1
-                                'gestion' => $gestion,
-                                'carrera_sigla' => $carrera // Needed to link Group to Carrera
-                            ];
-
-                            // Avoid duplicates in memory
-                            if (!in_array($asignacion, $docentesUnicos[$ci]['asignaciones'])) {
-                                $docentesUnicos[$ci]['asignaciones'][] = $asignacion;
-                            }
+                            // 2. Map ID -> Docente
+                            // One ID = One Docente Assignment for that session
+                            $idHorarioMap[$idHorario] = $ci;
                         }
                     }
                 } catch (\Exception $e) {
-                    $this->error("   ❌ Error: {$e->getMessage()}");
+                    $this->error("   ❌ Error en {$carrera}: {$e->getMessage()}");
                 }
             }
         }
 
         $this->newLine();
-        $this->info("📊 Registros procesados: {$totalRegistros}");
-        $this->info("👨‍🏫 Docentes únicos encontrados: " . count($docentesUnicos));
-        $this->newLine();
+        $this->info("📊 Total Registros API: {$totalRegistros}");
+        $this->info("🔗 Asignaciones (ID Horario) encontradas: " . count($idHorarioMap));
+        $this->info("👨‍🏫 Docentes únicos: " . count($docentesUnicos));
 
-        if (empty($docentesUnicos)) {
-            $this->warn("⚠️ No se encontraron docentes para sincronizar.");
+        if (empty($idHorarioMap)) {
+            $this->warn("⚠️ No hay asignaciones para procesar.");
             return 0;
         }
 
-        // Obtener rol DOCENTE
-        $rolDocente = Rol::where('nombre', 'DOCENTE')->first();
-        if (!$rolDocente) {
-            $this->error("❌ No se encontró el rol DOCENTE en la base de datos.");
-            return 1;
-        }
+        // --- FASE 2: PERSISTENCIA (DOCENTES) ---
+        $this->info("💾 Sincronizando Docentes...");
 
-        // Crear o actualizar docentes
-        $creados = 0;
-        $actualizados = 0;
-        $errores = 0;
-        $asignacionesRealizadas = 0;
-        $gruposCreados = 0;
+        $rolDocente = Rol::where('nombre', 'DOCENTE')->firstOrFail();
+        $docenteModels = []; // Cache: CI => DocenteModel
 
-        $bar = $this->output->createProgressBar(count($docentesUnicos));
-        $bar->start();
+        $barDocentes = $this->output->createProgressBar(count($docentesUnicos));
+        $barDocentes->start();
 
-        foreach ($docentesUnicos as $ci => $docenteData) {
-            try {
-                // 1. Sync User / Docente
-                $user = User::where('ci', $ci)->orWhere('username', $ci)->first();
-                $docente = null;
+        foreach ($docentesUnicos as $ci => $data) {
+            // Find/Create User
+            $user = User::firstOrCreate(
+                ['username' => $ci],
+                [
+                    'nombre' => $this->parsearNombre($data['nombre'])['nombre'],
+                    'apellido' => $this->parsearNombre($data['nombre'])['apellido'],
+                    'ci' => $ci,
+                    'email' => $this->generarEmail($data['nombre']),
+                    'password' => $ci,
+                    'rol_id' => $rolDocente->id,
+                    'estado' => true
+                ]
+            );
 
-                if ($user) {
-                    // Actualizar nombre si cambió
-                    $nombreParts = $this->parsearNombre($docenteData['nombre']);
-                    $user->update([
-                        'nombre' => $nombreParts['nombre'],
-                        'apellido' => $nombreParts['apellido'],
-                    ]);
-                    $actualizados++;
-                    $docente = $user->docente; // Retrieve existing docente
-                } else {
-                    // Crear nuevo usuario
-                    $nombreParts = $this->parsearNombre($docenteData['nombre']);
-
-                    $user = User::create([
-                        'nombre' => $nombreParts['nombre'],
-                        'apellido' => $nombreParts['apellido'],
-                        'username' => $ci,
-                        'ci' => $ci,
-                        'email' => $this->generarEmail($docenteData['nombre']),
-                        'password' => $ci, // El modelo aplica hash automáticamente
-                        'rol_id' => $rolDocente->id,
-                        'estado' => true,
-                        'password_change_required' => false,
-                    ]);
-
-                    $creados++;
-                }
-
-                // Ensure Docente property allows access to ID
-                if ($user) {
-                    $docente = Docente::updateOrCreate(
-                        ['user_id' => $user->id],
-                        [
-                            'nombre_completo' => $docenteData['nombre'],
-                            'sede_id' => $docenteData['sede_id'] ?? 1,
-                            'estado' => true,
-                        ]
-                    );
-                }
-
-                // 2. Sync Assignments (Assign Groups AND Create if Missing)
-                if ($docente) {
-                    foreach ($docenteData['asignaciones'] as $asignacion) {
-                        try {
-                            $sigla = $asignacion['sigla'];
-                            $grupoNombre = $asignacion['grupo'];
-                            $sedeId = $asignacion['sede_id'];
-                            $gestion = $asignacion['gestion'];
-                            $carreraSigla = $asignacion['carrera_sigla'];
-
-                            // Find Asignatura by Smart Logic
-                            $asignatura = $this->findAsignaturaMatch($sigla, $sedeId, $carreraSigla);
-
-                            if ($asignatura) {
-                                // Find or CREATE Grupo
-                                // This ensures that if the semester (gestion) is new, we create the groups on the fly.
-
-                                // Resolve Carrera ID
-                                $carreraId = null;
-                                $carreraModel = \App\Models\Carrera::where('sigla', $carreraSigla)->first();
-                                if ($carreraModel) {
-                                    $carreraId = $carreraModel->id;
-                                }
-
-                                $grupo = \App\Models\Grupo::updateOrCreate(
-                                    [
-                                        'sede_id' => $sedeId,
-                                        'asignatura_id' => $asignatura->id,
-                                        'nombre' => $grupoNombre,
-                                        'gestion' => $gestion
-                                    ],
-                                    [
-                                        'docente_id' => $docente->id,
-                                        'carrera_id' => $carreraId, // Associate with career
-                                        'estado' => true,
-                                        'tipo' => 'Regular' // Default type
-                                    ]
-                                );
-
-                                if ($grupo->wasRecentlyCreated) {
-                                    $gruposCreados++;
-                                }
-                                $asignacionesRealizadas++;
-                            }
-                        } catch (\Exception $e) {
-                            // Log silent error for individual assignment
-                            // Log::warning("Could not assign group {$asignacion['sigla']}-{$asignacion['grupo']} to {$ci}");
-                        }
-                    }
-                }
-            } catch (\Exception $e) {
-                $errores++;
-                Log::error("Error sincronizando docente CI {$ci}: " . $e->getMessage());
+            // Update Name if needed
+            if ($user->wasRecentlyCreated) {
+                // Already set
+            } else {
+                $names = $this->parsearNombre($data['nombre']);
+                $user->update([
+                    'nombre' => $names['nombre'],
+                    'apellido' => $names['apellido']
+                ]);
             }
 
-            $bar->advance();
-        }
+            // Find/Create Docente
+            $docente = Docente::updateOrCreate(
+                ['user_id' => $user->id],
+                [
+                    'nombre_completo' => $data['nombre'],
+                    'sede_id' => $data['sede_id'],
+                    'estado' => true
+                ]
+            );
 
-        $bar->finish();
+            $docenteModels[$ci] = $docente;
+            $barDocentes->advance();
+        }
+        $barDocentes->finish();
         $this->newLine(2);
 
-        // Resumen
-        $this->info("✅ Sincronización completada:");
-        $this->line("   - Docentes creados: {$creados}");
-        $this->line("   - Docentes actualizados: {$actualizados}");
-        $this->line("   - Grupos Creados: {$gruposCreados}");
-        $this->line("   - Asignaciones de Grupo (Materia): {$asignacionesRealizadas}");
+        // --- FASE 3: VINCULACIÓN (HORARIOS -> GRUPOS -> DOCENTE) ---
+        $this->info("🔗 Vinculando Docentes a Grupos (Por ID Horario)...");
 
-        if ($errores > 0) {
-            $this->warn("   - Errores: {$errores} (ver logs para detalles)");
+        $asignadosCount = 0;
+        $missingIds = 0;
+
+        // Optimize Query: fetch all relevant horarios at once?
+        // Or chunking. Given ~10k records, chunking or simple loop is fine.
+        // To be safe and show progress: Loop.
+
+        $barLinks = $this->output->createProgressBar(count($idHorarioMap));
+        $barLinks->start();
+
+        foreach ($idHorarioMap as $idHorarioAPI => $ciDocente) {
+            $docente = $docenteModels[$ciDocente] ?? null;
+
+            if ($docente) {
+                // Here is the CORE CHANGE: Match strict ID
+                $horario = Horario::where('id_horario_api', $idHorarioAPI)->first();
+
+                if ($horario) {
+                    $grupo = $horario->grupo;
+                    if ($grupo) {
+                        // UPDATE THE GROUP TEACHER
+                        $grupo->docente_id = $docente->id;
+                        $grupo->save(); // This implicitly updates "assignment"
+                        $asignadosCount++;
+                    }
+                } else {
+                    $missingIds++;
+                    // This means "University Sync" missed this session or hasn't run.
+                    // We DO NOT CREATE. We respect the structure.
+                }
+            }
+            $barLinks->advance();
+        }
+        $barLinks->finish();
+        $this->newLine(2);
+
+        $this->info("✅ FINALIZADO:");
+        $this->line("   - Asignaciones Exitosas: {$asignadosCount}");
+        if ($missingIds > 0) {
+            $this->warn("   - IDs de Horario no encontrados en DB (Sync University pendiente?): {$missingIds}");
         }
 
         return 0;
     }
 
-    /**
-     * Busca la asignatura correcta considerando variantes de Sede/Carrera
-     */
-    protected function findAsignaturaMatch($codigoBase, $sedeId, $carreraSigla)
-    {
-        $codigoBase = mb_strtoupper(trim($codigoBase));
-        $carreraSigla = mb_strtoupper(trim($carreraSigla));
-
-        // Mapa manual de Sede ID a Sufijo (Basado en observaciones DB)
-        // 8 (Puerto Quijarro) -> PTO (Code) -> PUE (Data Suffix)
-        $sedeSuffixMap = [
-            1 => 'CBA',
-            4 => 'EAL',
-            5 => 'IVI',
-            6 => 'LPZ',
-            8 => 'PUE', // SPECIAL CASE: Puerto uses PUE not PTO
-            9 => 'STC',
-            12 => 'GUA'
-        ];
-
-        $sedeSuffix = $sedeSuffixMap[$sedeId] ?? '';
-
-        // Prioridad de Búsqueda:
-        // 1. CODIGO-SEDE-CARRERA (Ej: ENF-114-PUE-CARENL)
-        // 2. CODIGO-SEDE (Ej: ENF-114-PUE)
-        // 3. CODIGO (Ej: ENF-114)
-
-        $candidates = [];
-
-        if ($sedeSuffix) {
-            $candidates[] = "{$codigoBase}-{$sedeSuffix}-{$carreraSigla}";
-            $candidates[] = "{$codigoBase}-{$sedeSuffix}";
-        }
-        $candidates[] = $codigoBase;
-
-        foreach ($candidates as $code) {
-            $asignatura = \App\Models\Asignatura::where('codigo', $code)->first();
-            if ($asignatura) {
-                return $asignatura;
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Limpiar nombre de títulos académicos
-     */
+    // --- HELPERS (Same as before) ---
     protected function limpiarNombre(string $nombre): string
     {
-        $prefijos = [
-            'Lic.',
-            'Ing.',
-            'Dr.',
-            'Dra.',
-            'Msc.',
-            'PhD.',
-            'Arq.',
-            'Abg.',
-            'LIC.',
-            'ING.',
-            'DR.',
-            'DRA.',
-            'MSC.',
-            'PHD.',
-            'ARQ.',
-            'ABG.',
-            'Lic ',
-            'Ing ',
-            'Dr ',
-            'Dra ',
-            'Msc ',
-            'PhD ',
-            'Arq ',
-            'Abg '
-        ];
-
+        $prefijos = ['Lic.', 'Ing.', 'Dr.', 'Dra.', 'Msc.', 'PhD.', 'Arq.', 'Abg.', 'Lic ', 'Ing ', 'Dr ', 'Dra ', 'Msc ', 'PhD ', 'Arq ', 'Abg '];
         $nombreLimpio = trim($nombre);
         foreach ($prefijos as $prefijo) {
-            if (str_starts_with($nombreLimpio, $prefijo)) {
+            if (stripos($nombreLimpio, $prefijo) === 0) {
                 $nombreLimpio = trim(substr($nombreLimpio, strlen($prefijo)));
             }
         }
-
         return $nombreLimpio;
     }
 
-    /**
-     * Parsear nombre completo en nombre y apellido
-     */
     protected function parsearNombre(string $nombreCompleto): array
     {
         $parts = explode(' ', trim($nombreCompleto));
-
         if (count($parts) >= 3) {
-            // Asumimos: NOMBRE APELLIDO1 APELLIDO2 o NOMBRE1 NOMBRE2 APELLIDO
             $nombre = $parts[0];
             $apellido = implode(' ', array_slice($parts, 1));
         } elseif (count($parts) == 2) {
@@ -391,33 +250,23 @@ class SyncDocentesCommand extends Command
             $apellido = $parts[1];
         } else {
             $nombre = $nombreCompleto;
-            $apellido = '';
+            $apellido = 'Unknown';
         }
-
-        return [
-            'nombre' => $nombre,
-            'apellido' => $apellido
-        ];
+        return ['nombre' => $nombre, 'apellido' => $apellido];
     }
 
-    /**
-     * Generar email único basado en nombre
-     */
     protected function generarEmail(string $nombre): string
     {
         $base = strtolower(trim($nombre));
         $base = str_replace(' ', '.', $base);
         $base = preg_replace('/[^a-z0-9.]/', '', $base);
-
-        // Verificar si ya existe
         $email = "{$base}@unitepc.edu.bo";
-        $contador = 1;
 
-        while (User::where('email', $email)->exists()) {
-            $email = "{$base}{$contador}@unitepc.edu.bo";
-            $contador++;
+        // Simple check to avoid query in loop if possible,
+        // but for safety in this command we keep it simple.
+        if (User::where('email', $email)->exists()) {
+            $email = "{$base}" . rand(1, 99) . "@unitepc.edu.bo";
         }
-
         return $email;
     }
 }
