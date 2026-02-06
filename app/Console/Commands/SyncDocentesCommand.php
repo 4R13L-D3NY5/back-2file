@@ -21,25 +21,22 @@ class SyncDocentesCommand extends Command
 
     protected string $baseUrl = 'http://181.188.185.211:9098';
 
-    protected array $carreras = [
-        'carmed',
-        'carsis',
-        'carelec',
-        'carbio',
-        'carodon',
-        'carfis',
-        'carnut',
-        'carkin',
-        'carfarm',
-        'carlab',
-        'carpsico',
-        'carder',
-        'caradm',
-        'carcont',
-        'carcivil',
-        'carind',
-        'carson'
-    ];
+    protected function getCarrerasToSync(?string $filter = null): array
+    {
+        if ($filter) {
+            return [$filter];
+        }
+
+        // Fetch dynamic list from Database (using 'sigla' column)
+        // Ensure we normalize to lowercase as expected by the API
+        return \App\Models\Carrera::whereNotNull('sigla')
+            ->where('sigla', '!=', '')
+            ->pluck('sigla')
+            ->map(fn($sigla) => strtolower(trim($sigla)))
+            ->unique()
+            ->values()
+            ->toArray();
+    }
 
     public function handle()
     {
@@ -50,8 +47,10 @@ class SyncDocentesCommand extends Command
         $this->info("🔄 Sincronizando docentes desde API externa...");
         $this->info("   Gestión: {$gestion} | Sede: {$sede}");
 
-        // Si se especificó una carrera, solo usar esa
-        $carrerasAConsultar = $carreraFiltro ? [$carreraFiltro] : $this->carreras;
+        // Obtener lista dinámica de carreras
+        $carrerasAConsultar = $this->getCarrerasToSync($carreraFiltro);
+
+        $this->info("   📋 Carreras a procesar: " . count($carrerasAConsultar));
 
         $docentesUnicos = [];
         $totalRegistros = 0;
