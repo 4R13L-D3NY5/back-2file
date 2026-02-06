@@ -8,10 +8,6 @@ $kernel->bootstrap();
 
 use App\Models\Carrera;
 
-echo "Listado de Carreras en Base de Datos:\n";
-echo "ID | Codigo | Nombre\n";
-echo "---|--------|-------\n";
-
-foreach (Carrera::all() as $c) {
-    echo "{$c->id} | {$c->codigo} | {$c->nombre}\n";
-}
+$carreras = Carrera::all(['id', 'nombre', 'codigo']);
+file_put_contents('carreras_dump.json', json_encode($carreras, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+echo "Dumped " . $carreras->count() . " careers to carreras_dump.json\n";
