@@ -124,7 +124,8 @@ class SyncDocentesCommand extends Command
                                 'sede_id' => $sedeId,
                                 'sigla' => trim($item['siglaP']), // e.g. SON-115
                                 'grupo' => trim($item['grupo']),   // e.g. 1
-                                'gestion' => $gestion
+                                'gestion' => $gestion,
+                                'carrera_sigla' => $carrera // Needed to link Group to Carrera
                             ];
 
                             // Avoid duplicates in memory
@@ -161,6 +162,7 @@ class SyncDocentesCommand extends Command
         $actualizados = 0;
         $errores = 0;
         $asignacionesRealizadas = 0;
+        $gruposCreados = 0;
 
         $bar = $this->output->createProgressBar(count($docentesUnicos));
         $bar->start();
@@ -179,7 +181,7 @@ class SyncDocentesCommand extends Command
                         'apellido' => $nombreParts['apellido'],
                     ]);
                     $actualizados++;
-                    $docente = $user->docente; // Retrieve existing docente relation
+                    $docente = $user->docente; // Retrieve existing docente
                 } else {
                     // Crear nuevo usuario
                     $nombreParts = $this->parsearNombre($docenteData['nombre']);
@@ -200,7 +202,6 @@ class SyncDocentesCommand extends Command
                 }
 
                 // Ensure Docente property allows access to ID
-                // If user exists but has no docente record, create it
                 if ($user) {
                     $docente = Docente::updateOrCreate(
                         ['user_id' => $user->id],
@@ -212,7 +213,7 @@ class SyncDocentesCommand extends Command
                     );
                 }
 
-                // 2. Sync Assignments (Assign Groups)
+                // 2. Sync Assignments (Assign Groups AND Create if Missing)
                 if ($docente) {
                     foreach ($docenteData['asignaciones'] as $asignacion) {
                         try {
@@ -220,30 +221,44 @@ class SyncDocentesCommand extends Command
                             $grupoNombre = $asignacion['grupo'];
                             $sedeId = $asignacion['sede_id'];
                             $gestion = $asignacion['gestion'];
+                            $carreraSigla = $asignacion['carrera_sigla'];
 
-                            // Find Asignatura by Kode
+                            // Find Asignatura by Code
                             $asignatura = \App\Models\Asignatura::where('codigo', $sigla)->first();
 
                             if ($asignatura) {
-                                // Find Grupo
-                                // Match: Sede + Asignatura + Nombre (Group Number) + Gestion
-                                $grupo = \App\Models\Grupo::where('sede_id', $sedeId)
-                                    ->where('asignatura_id', $asignatura->id)
-                                    ->where('nombre', $grupoNombre)
-                                    ->where('gestion', $gestion)
-                                    ->first();
+                                // Find or CREATE Grupo
+                                // This ensures that if the semester (gestion) is new, we create the groups on the fly.
 
-                                if ($grupo) {
-                                    // Assign Docente if not already assigned or different
-                                    if ($grupo->docente_id !== $docente->id) {
-                                        $grupo->docente_id = $docente->id;
-                                        $grupo->save();
-                                        $asignacionesRealizadas++;
-                                    }
+                                // Resolve Carrera ID
+                                $carreraId = null;
+                                $carreraModel = \App\Models\Carrera::where('sigla', $carreraSigla)->first();
+                                if ($carreraModel) {
+                                    $carreraId = $carreraModel->id;
                                 }
+
+                                $grupo = \App\Models\Grupo::updateOrCreate(
+                                    [
+                                        'sede_id' => $sedeId,
+                                        'asignatura_id' => $asignatura->id,
+                                        'nombre' => $grupoNombre,
+                                        'gestion' => $gestion
+                                    ],
+                                    [
+                                        'docente_id' => $docente->id,
+                                        'carrera_id' => $carreraId, // Associate with career
+                                        'estado' => true,
+                                        'tipo' => 'Regular' // Default type
+                                    ]
+                                );
+
+                                if ($grupo->wasRecentlyCreated) {
+                                    $gruposCreados++;
+                                }
+                                $asignacionesRealizadas++;
                             }
                         } catch (\Exception $e) {
-                            // Log silent error for individual assignment to avoid stopping process
+                            // Log silent error for individual assignment
                             // Log::warning("Could not assign group {$asignacion['sigla']}-{$asignacion['grupo']} to {$ci}");
                         }
                     }
@@ -263,6 +278,7 @@ class SyncDocentesCommand extends Command
         $this->info("✅ Sincronización completada:");
         $this->line("   - Docentes creados: {$creados}");
         $this->line("   - Docentes actualizados: {$actualizados}");
+        $this->line("   - Grupos Creados: {$gruposCreados}");
         $this->line("   - Asignaciones de Grupo (Materia): {$asignacionesRealizadas}");
 
         if ($errores > 0) {
