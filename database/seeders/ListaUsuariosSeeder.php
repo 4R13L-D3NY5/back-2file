@@ -51,7 +51,7 @@ class ListaUsuariosSeeder extends Seeder
             ['email' => 'carlavidal@unitepc.edu.bo', 'sede' => 'COCHABAMBA', 'cargo' => 'DIRECTOR DE CARRERA', 'carrera' => 'FONOAUDIOLOGÍA', 'nombre' => 'CARLA VIDAL AGUILAR', 'ci' => '5314656', 'telefono' => '70425756'],
             ['email' => 'manuelcamacho@unitepc.edu.bo', 'sede' => 'COCHABAMBA', 'cargo' => 'JEFE DE DEPARTAMENTO', 'carrera' => '', 'nombre' => 'MANUEL CAMACHO ARCE', 'ci' => '6420033', 'telefono' => '70347440'],
 
-            // EL ALTO
+            // EL ALTO 
             ['email' => 'acaceres_vrcral@unitepc.edu.bo', 'sede' => 'EL ALTO', 'cargo' => 'VICERRECTOR', 'carrera' => '', 'nombre' => 'Amilcar Bruno Caceres Perez', 'ci' => '3756361', 'telefono' => '71411450'],
             ['email' => 'eddaquispe@unitepc.edu.bo', 'sede' => 'EL ALTO', 'cargo' => 'DIRECTOR DE CARRERA', 'carrera' => 'MEDICINA VETERINARIA Y ZOOTECNIA', 'nombre' => 'EDDA JANNETH QUISPE DE MEDINA', 'ci' => '3217705', 'telefono' => '60151579'],
             ['email' => 'vladimircruz@unitepc.edu.bo', 'sede' => 'EL ALTO', 'cargo' => 'DIRECTOR DE CARRERA', 'carrera' => 'FISIOTERAPIA Y KINESIOLOGÍA', 'nombre' => 'Vladimir Cruz Barrenechea', 'ci' => '10924082', 'telefono' => '60503233'],

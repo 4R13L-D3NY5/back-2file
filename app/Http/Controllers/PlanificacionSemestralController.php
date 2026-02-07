@@ -22,6 +22,18 @@ class PlanificacionSemestralController extends Controller
         // IMPORTANTE: docente_id es el ID de la tabla 'docentes', NO el user_id
         // Debemos convertir docente_id -> user_id para filtrar PlanificacionPersonal
         $targetUserId = Auth::id();
+        
+        // Si hay grupo_id, intentar obtener el usuario del docente de ese grupo
+        if ($grupoId) {
+            $grupo = \App\Models\Grupo::find($grupoId);
+            if ($grupo && $grupo->docente_id) {
+                $docenteGrupo = \App\Models\Docente::find($grupo->docente_id);
+                if ($docenteGrupo && $docenteGrupo->user_id) {
+                    $targetUserId = $docenteGrupo->user_id;
+                }
+            }
+        }
+        
         if ($request->filled('docente_id')) {
             $docente = \App\Models\Docente::find($request->input('docente_id'));
             if ($docente && $docente->user_id) {
@@ -29,7 +41,11 @@ class PlanificacionSemestralController extends Controller
             }
         }
 
-        $asignatura = Asignatura::with(['horarios', 'cronogramas' => function ($q) use ($grupoId, $targetUserId) {
+        $asignatura = Asignatura::with(['horarios' => function ($q) use ($grupoId) {
+            if ($grupoId) {
+                $q->where('grupo_id', $grupoId);
+            }
+        }, 'cronogramas' => function ($q) use ($grupoId, $targetUserId) {
             $q->orderBy('numero_sesion')
                 ->with([
                     'temas',
@@ -98,10 +114,25 @@ class PlanificacionSemestralController extends Controller
                 'gestion_academica'
             ]));
 
-            // 2. Sync Horarios (Delete All and Re-create)
+            // 2. Sync Horarios (Delete All and Re-create but SCOPED by Group)
+            // IMPORTANTE: Solo borrar los horarios del grupo actual para no afectar a otros
+            $grupoId = $request->input('grupo_id');
+            
             if ($request->has('horarios')) {
-                $asignatura->horarios()->delete();
-                $asignatura->horarios()->createMany($request->input('horarios'));
+                if ($grupoId) {
+                    $asignatura->horarios()->where('grupo_id', $grupoId)->delete();
+                } else {
+                    // Fallback peligroso (solo si no se manda grupo, borrar nulls)
+                    $asignatura->horarios()->whereNull('grupo_id')->delete();
+                }
+                
+                // Asignar grupo_id a los nuevos horarios
+                $nuevosHorarios = collect($request->input('horarios'))->map(function($h) use ($grupoId) {
+                    $h['grupo_id'] = $grupoId;
+                    return $h;
+                })->toArray();
+                
+                $asignatura->horarios()->createMany($nuevosHorarios);
             }
         });
 
