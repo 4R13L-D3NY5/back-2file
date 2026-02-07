@@ -175,6 +175,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Materias Comunes
     Route::prefix('materias-comunes')->group(function () {
         Route::get('/', [\App\Http\Controllers\MateriaComunController::class, 'index']);
+        Route::get('/mis-asignaturas', [\App\Http\Controllers\MateriaComunController::class, 'misAsignaturas']);
         Route::get('/candidates', [\App\Http\Controllers\MateriaComunController::class, 'candidates']);
         Route::post('/link', [\App\Http\Controllers\MateriaComunController::class, 'link']);
         Route::post('/unlink/{id}', [\App\Http\Controllers\MateriaComunController::class, 'unlink']);

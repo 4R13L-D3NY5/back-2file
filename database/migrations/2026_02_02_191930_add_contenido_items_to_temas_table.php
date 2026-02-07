@@ -12,14 +12,16 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // Add contenido_items column to temas table
-        Schema::table('temas', function (Blueprint $table) {
-            $table->json('contenido_items')->nullable();
-        });
+        // Add contenido_items column to temas table (only if not exists)
+        if (!Schema::hasColumn('temas', 'contenido_items')) {
+            Schema::table('temas', function (Blueprint $table) {
+                $table->json('contenido_items')->nullable();
+            });
+        }
 
         // Migrar datos existentes: convertir descripcion a contenido_items (si existe)
         if (Schema::hasColumn('temas', 'descripcion')) {
-            DB::table('temas')->whereNotNull('descripcion')->each(function ($tema) {
+            DB::table('temas')->whereNotNull('descripcion')->orderBy('id')->each(function ($tema) {
                 // Dividir por saltos de línea y limpiar
                 $items = array_filter(
                     array_map('trim', explode("\n", $tema->descripcion)),
