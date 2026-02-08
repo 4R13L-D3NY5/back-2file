@@ -188,6 +188,25 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/auditoria-semanal', [\App\Http\Controllers\ReporteController::class, 'getAuditoriaSemanal']);
     Route::get('/reportes/director', [\App\Http\Controllers\ReporteController::class, 'index']);
     Route::get('/reportes/director/weekly', [\App\Http\Controllers\ReporteController::class, 'generateWeeklyReport']);
+    Route::get('/reportes/avance-general', [\App\Http\Controllers\ReporteController::class, 'avanceGeneral']);
+    Route::get('/reportes/matriz-control', [\App\Http\Controllers\ReporteController::class, 'getMatrizControl']);
+    Route::get('/reportes/auditoria-25', [\App\Http\Controllers\ReporteController::class, 'getAuditoria25']);
+
+    // Reportes Nivel 2: Director de Carrera
+    Route::get('/reportes/docentes-sin-avance', [\App\Http\Controllers\ReporteController::class, 'docentesSinAvance']);
+    Route::get('/reportes/docentes-criticos', [\App\Http\Controllers\ReporteController::class, 'docentesCriticos']);
+    Route::get('/reportes/ranking-docentes', [\App\Http\Controllers\ReporteController::class, 'rankingDocentes']);
+    Route::get('/reportes/asignaturas-sin-cronograma', [\App\Http\Controllers\ReporteController::class, 'asignaturasSinCronograma']);
+
+    // Reportes Nivel 3: Dirección Académica
+    Route::get('/reportes/carreras-criticas', [\App\Http\Controllers\ReporteController::class, 'carrerasCriticas']);
+    Route::get('/reportes/ranking-carreras', [\App\Http\Controllers\ReporteController::class, 'rankingCarreras']);
+    Route::get('/reportes/resumen-sede', [\App\Http\Controllers\ReporteController::class, 'resumenEjecutivoSede']);
+
+    // Reportes Nivel 4: Vicerrector
+    Route::get('/reportes/sedes-criticas', [\App\Http\Controllers\ReporteController::class, 'sedesCriticas']);
+    Route::get('/reportes/ranking-sedes', [\App\Http\Controllers\ReporteController::class, 'rankingSedes']);
+    Route::get('/reportes/alertas-rojas', [\App\Http\Controllers\ReporteController::class, 'alertasRojas']);
 
     // Dirección Académica Dashboard
     Route::get('/direccion/stats', [\App\Http\Controllers\ReporteController::class, 'direccionStats']);
