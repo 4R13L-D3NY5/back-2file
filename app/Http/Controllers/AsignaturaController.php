@@ -673,22 +673,19 @@ class AsignaturaController extends Controller
     {
         $asignatura = Asignatura::findOrFail($id);
 
-        // Validación de permisos: Solo Cochabamba (ID 1)
-        // Resolución robusta de Sede (Pivot > Carrera > Legacy Fallback > Default 1)
-        $firstCarrera = $asignatura->carreras->first();
-        $sedeId = $firstCarrera?->pivot?->sede_id ?? $firstCarrera?->sede_id;
+        // SOBERANÍA DE SEDE: Validar basado en el usuario autenticado, NO en los metadatos de la materia
+        // Esto corrige el bug donde materias con metadatos erróneos (ej: ADM-321) bloqueaban a docentes legítimos
+        $userSedeId = auth()->user()->sede_id ?? 1;
 
-        if (!$sedeId && $asignatura->carrera_id) {
-            $c = \App\Models\Carrera::find($asignatura->carrera_id);
-            $sedeId = $c?->sede_id;
+        // Solo permitir importación a usuarios de Sede Central (Cochabamba = ID 1)
+        if ($userSedeId != 1) {
+            return response()->json([
+                'error' => 'La importación solo está permitida para la Sede Central (Cochabamba).'
+            ], 403);
         }
 
-        // Si no se detecta sede (Legacy/Huérfana), asumir Sede 1 para permitir gestión
-        if (!$sedeId) $sedeId = 1;
-
-        if ($sedeId != 1) {
-            return response()->json(['error' => 'La importación solo está permitida para la Sede Central (Cochabamba).'], 403);
-        }
+        // LOG para debugging
+        \Illuminate\Support\Facades\Log::debug('ImportWord: Usuario sede_id=' . $userSedeId . ', Asignatura=' . $asignatura->codigo);
 
         if (!$request->hasFile('file')) {
             return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
