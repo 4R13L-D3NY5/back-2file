@@ -975,7 +975,6 @@ class AsignaturaController extends Controller
                                 'secuencia_didactica' => $temaData['secuencia_didactica'] ?? []
                             ]
                         );
-
                         $stats['updated']++;
                     } else {
                         $stats['skipped']++;
@@ -990,6 +989,107 @@ class AsignaturaController extends Controller
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error("Import Plan Clase Error: " . $e->getMessage());
             return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Importar Cronograma desde Excel
+     */
+    public function importCronograma(Request $request, $id)
+    {
+        $asignatura = Asignatura::findOrFail($id);
+
+        if (!$request->hasFile('file')) {
+            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+        }
+
+        $file = $request->file('file');
+
+        try {
+            // 1. Parsear el archivo (Lógica Refinada para celdas fusionadas)
+            $result = $this->cronogramaParser->parseCronograma($file);
+            $sesiones = $result['sesiones'];
+            $metadata = $result['metadata'];
+            
+            $count = count($sesiones);
+            $startCell = $metadata['start_cell'];
+            $sessionsPerWeek = $metadata['sessions_per_week_mode'] ?? '?';
+
+            // 2. Guardar en Base de Datos (Lógica de Actualización)
+            DB::beginTransaction();
+            try {
+                $grupoId = $request->input('grupo_id');
+
+                $updatedCount = 0;
+                $createdCount = 0;
+
+                foreach ($sesiones as $index => $sesion) {
+                    $numeroSesion = $index + 1;
+
+                    // Helper para convertir texto multilínea a array
+                    $toArray = function ($text) {
+                        if (empty($text)) return [];
+                        return array_values(array_filter(array_map('trim', explode("\n", $text))));
+                    };
+
+                    // Datos a guardar
+                    $dataToSave = [
+                        'semana_academica' => $sesion['semana'],
+                        'fecha' => $sesion['fecha'],
+                        'contenido_conceptual' => $toArray($sesion['contenido_conceptual']),
+                        'contenido_procedimental' => $toArray($sesion['contenido_procedimental']),
+                        'contenido_actitudinal' => $toArray($sesion['contenido_actitudinal']),
+                        'criterios_desempeno' => $toArray($sesion['criterios_desempeno']),
+                        'instrumentos_evaluacion' => $toArray($sesion['instrumentos_evaluacion']),
+                        'observaciones' => $sesion['contenido'], // Backup content
+                        // 'cumplido' => false // No resetear cumplido si ya existía
+                    ];
+
+                    // Buscar sesión existente para actualizar
+                    // Scope: Asignatura + Numero Sesion + Grupo (o NULL)
+                    $query = $asignatura->cronogramas()
+                        ->where('numero_sesion', $numeroSesion);
+
+                    if ($grupoId) {
+                        $query->where('grupo_id', $grupoId);
+                    } else {
+                        $query->whereNull('grupo_id');
+                    }
+
+                    $existingSession = $query->first();
+
+                    if ($existingSession) {
+                        $existingSession->update($dataToSave);
+                        $updatedCount++;
+                    } else {
+                        // Crear nueva si no existe
+                        $createData = array_merge($dataToSave, [
+                            'numero_sesion' => $numeroSesion,
+                            'grupo_id' => $grupoId,
+                            'cumplido' => false
+                        ]);
+                        $asignatura->cronogramas()->create($createData);
+                        $createdCount++;
+                    }
+                }
+                
+                DB::commit();
+
+                return response()->json([
+                    'message' => "Importación completada.\nSesiones actualizadas: $updatedCount\nNuevas sesiones: $createdCount",
+                    'data' => $sesiones
+                ]);
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+                throw $e;
+            }
+
+        } catch (\Exception $e) {
+            Log::error("Error importando cronograma: " . $e->getMessage());
+            return response()->json([
+                'error' => 'Error al procesar el archivo: ' . $e->getMessage()
+            ], 500);
         }
     }
 
@@ -1375,26 +1475,5 @@ class AsignaturaController extends Controller
         }
     }
 
-    public function importCronograma(Request $request, $id)
-    {
-        $request->validate([
-            'file' => 'required|file|mimes:xlsx,xls'
-        ]);
 
-        $file = $request->file('file');
-
-        // Find SEMANAS
-        $cellLocation = $this->cronogramaParser->findSemanasCell($file);
-
-        if ($cellLocation) {
-            return response()->json([
-                'message' => 'Ubicación detectada correctamente.',
-                'cell_location' => $cellLocation
-            ]);
-        } else {
-            return response()->json([
-                'error' => 'No se encontró el texto "SEMANAS" en la columna B del archivo.'
-            ], 422);
-        }
-    }
 }
