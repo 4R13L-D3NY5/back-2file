@@ -1020,6 +1020,23 @@ class AsignaturaController extends Controller
                 $updatedCount = 0;
                 $createdCount = 0;
 
+                // VALIDATION: Check session count mismatch
+                // Count existing sessions for this context (Subject + Group/Null)
+                $queryCount = $asignatura->cronogramas();
+                if ($grupoId) {
+                    $queryCount->where('grupo_id', $grupoId);
+                } else {
+                    $queryCount->whereNull('grupo_id');
+                }
+                $existingCount = $queryCount->count();
+
+                // Validation logic:
+                // 1. If existing > 0 and parsed != existing, BLOCK import.
+                // 2. If existing == 0, allow import (first time population or overwrite empty).
+                if ($existingCount > 0 && $count !== $existingCount) {
+                    throw new \Exception("El archivo contiene $count sesiones, pero el cronograma del sistema tiene $existingCount sesiones generadas. \n\nNo coincide la estructura. Por favor, genere el número correcto de sesiones o limpie el cronograma antes de importar.");
+                }
+
                 foreach ($sesiones as $index => $sesion) {
                     $numeroSesion = $index + 1;
 
