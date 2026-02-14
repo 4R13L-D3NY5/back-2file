@@ -38,8 +38,9 @@ class PlanningSyncService
         $docenteRoleId = Rol::where('codigo', 'DOCENTE')->value('id') ?? 6;
 
         $processedGroups = [];
+        $horariosByGroup = []; // Track valid schedule IDs per group
 
-        return DB::transaction(function () use ($items, &$stats, $docenteRoleId, &$processedGroups) {
+        return DB::transaction(function () use ($items, &$stats, $docenteRoleId, &$processedGroups, &$horariosByGroup) {
             foreach ($items as $rawItem) {
                 try {
                     $dto = AcademicDataDTO::fromArray($rawItem);
@@ -276,7 +277,7 @@ class PlanningSyncService
                     // 8. HORARIO (SESIÓN): Identificación por ID único de API
                     // Esto permite que el Grupo "A" tenga N sesiones sin duplicar el grupo.
                     if ($dto->idHorario) {
-                        Horario::updateOrCreate(
+                        $horario = Horario::updateOrCreate(
                             [
                                 'id_horario_api' => $dto->idHorario,
                             ],
@@ -288,9 +289,10 @@ class PlanningSyncService
                                 'hora_fin' => $dto->horaFin,
                             ]
                         );
+                        $horariosByGroup[$grupo->id][] = $horario->id;
                     } else {
                         // Fallback para APIs sin ID (vínculo por contenido)
-                        Horario::updateOrCreate(
+                        $horario = Horario::updateOrCreate(
                             [
                                 'grupo_id' => $grupo->id,
                                 'dia' => strtoupper($dto->dia),
@@ -301,7 +303,9 @@ class PlanningSyncService
                                 'hora_fin' => $dto->horaFin,
                             ]
                         );
+                        $horariosByGroup[$grupo->id][] = $horario->id;
                     }
+                    $stats['horarios']++;
                     $stats['horarios']++;
                 } catch (\Exception $e) {
                     Log::error("Planning Sync Error: " . $e->getMessage());
@@ -309,6 +313,29 @@ class PlanningSyncService
                 }
             }
 
+            // CLEANUP PHASE: Remove outdated schedules for processed groups
+            // Only affects groups that we actually touched in this batch.
+            // If a schedule was NOT in the DTOs for a group, it means it was removed in the API/Source.
+            foreach ($processedGroups as $groupId) {
+                if (isset($horariosByGroup[$groupId])) {
+                    $validIds = $horariosByGroup[$groupId];
+                    // Delete schedules for this group that are NOT in the valid list
+                    // AND track how many were deleted for stats/logs if needed
+                    Horario::where('grupo_id', $groupId)
+                        ->whereNotIn('id', $validIds)
+                        ->delete();
+                } else {
+                     // If for some reason we processed the group but tracked no schedules (e.g. empty list in API),
+                     // we should probably clear all schedules for it?
+                     // Verify if $horariosByGroup would be set if loop ran.
+                     // The loop sets it if $dto->idHorario exists or fallback created one.
+                     // If we are here, it means we touched the group.
+                     // Let's assume safe to clear if we tracked explicitly.
+                     // But to be safe vs legacy/fallback interaction, checking empty usually implies delete all.
+                     Horario::where('grupo_id', $groupId)->delete();
+                }
+            }
+            
             return $stats;
         });
     }

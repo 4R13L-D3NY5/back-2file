@@ -24,8 +24,7 @@ class ArielCamaraSeeder extends Seeder
 {
     public function run()
     {
-        // 1. Identificar Docente y Usuario correctamente por CI
-        // Esto evita problemas si existen usuarios duplicados o incorrectos
+        // 1. Identificar Docente y Usuario con CI
         $ci = '6522053';
         $docente = Docente::where('ci', $ci)->first();
 
@@ -44,12 +43,12 @@ class ArielCamaraSeeder extends Seeder
         $username = $user->username;
         $this->command->info("Docente encontrado: {$docente->nombre_completo} (ID: {$docente->id}) - Usuario ID: {$user->id}");
 
-        // Obtener Sede y Carrera (solo para vincular asignatura si hiciera falta)
+        // Obtener Sede y Carrera
         $sede = Sede::where('codigo', 'CBA')->first();
         $carrera = Carrera::where('codigo', 'SIS')->first();
 
         // ==========================================
-        // 2. TALLER DE REDES
+        // 2. ASIGNATURA: TALLER DE REDES
         // ==========================================
         $redes = Asignatura::updateOrCreate(
             ['codigo' => 'SIS-325'],
@@ -80,63 +79,23 @@ class ArielCamaraSeeder extends Seeder
             }
         }
 
+        // Limpieza previa
         $this->limpiarAsignatura($redes);
 
-        // Bibliografía Taller de Redes
-        // Definir variables de bibliografía que se usan más adelante
-        $bibCCNA = $redes->bibliografias()->create([
-            'titulo' => 'CCNA Routing and Switching', 
-            'autor' => 'Cisco Press', 
-            'anio' => 2021, 
-            'tipo' => 'BÁSICA'
-        ]);
-        
-        $bibForouzan = $redes->bibliografias()->create([
-             'titulo' => 'Data Communications and Networking', 
-             'autor' => 'Behrouz A. Forouzan', 
-             'anio' => 2013, 
-             'tipo' => 'COMPLEMENTARIA'
-        ]);
+        // ==========================================
+        // 3. BIBLIOGRAFÍA
+        // ==========================================
+        $this->seedBibliografia($redes);
 
-        $bibTCPIP = $redes->bibliografias()->create([
-             'titulo' => 'TCP/IP Illustrated', 
-             'autor' => 'Kevin R. Fall', 
-             'anio' => 2011, 
-             'tipo' => 'COMPLEMENTARIA'
-        ]);
-        
-        // Variables adicionales que podrían usarse más adelante (Tema 2.1 y 2.2)
-        $bibKurose = $redes->bibliografias()->create([
-             'titulo' => 'Computer Networking: A Top-Down Approach', 
-             'autor' => 'James Kurose', 
-             'anio' => 2017, 
-             'tipo' => 'BÁSICA'
-        ]);
+        // ==========================================
+        // 4. UNIDADES Y TEMAS
+        // ==========================================
+        $temasCreados = $this->seedUnidadesYTemas($redes, $user->id);
 
-        $bibCiscoAcademy = $redes->bibliografias()->create([
-             'titulo' => 'Introduction to Networks Companion Guide', 
-             'autor' => 'Cisco Networking Academy', 
-             'anio' => 2014, 
-             'tipo' => 'COMPLEMENTARIA'
-        ]);
-        
-        $bibWarrior = $redes->bibliografias()->create([
-             'titulo' => 'Ethernet Switches', 
-             'autor' => 'Charles E. Spurgeon', 
-             'anio' => 2013, 
-             'tipo' => 'COMPLEMENTARIA'
-        ]);
-
-        // UNIDAD 1
-        $uRedes1 = Unidad::create([
-            'asignatura_id' => $redes->id, 'numero' => 1,
-            'titulo' => 'VLANs y Trunking',
-            'objetivo' => 'Segmentar redes lógicas.',
-            'contenido_minimo' => 'VLANs, 802.1Q',
-            'elemento_competencia' => 'Configura VLANs en switches.'
-        ]);
-
-        // Generar Cronograma Unificado para los grupos complementarios (Teoría + Práctica)
+        // ==========================================
+        // 5. CRONOGRAMA
+        // ==========================================
+        // Obtener grupos y generar cronograma
         $gruposRedes = Grupo::where('asignatura_id', $redes->id)
                             ->where('docente_id', $docente->id)
                             ->with('horarios')
@@ -145,506 +104,640 @@ class ArielCamaraSeeder extends Seeder
         if ($gruposRedes->isEmpty()) {
              $this->command->info("No se encontraron grupos asociados al docente {$username} para TALLER DE REDES.");
         } else {
-            // Identificar el grupo principal (Teórico o el ID 424 explícitamente si preferimos)
-            // Prioridad: ID 424 -> Nombre contiene "1" -> Tipo TEORICO -> El primero
+            // Identificar grupo principal (424 o TEORICO)
             $grupoPrincipal = $gruposRedes->first(function($g) {
                 return $g->id == 424; 
             }) ?? $gruposRedes->first(function($g) {
                 return str_contains($g->nombre, '1') || $g->tipo === 'TEORICO';
             }) ?? $gruposRedes->first();
 
-            $this->command->info("Grupo Principal identificado para Cronograma: ID {$grupoPrincipal->id} ({$grupoPrincipal->nombre})");
+            $this->command->info("Grupo Principal para Cronograma: ID {$grupoPrincipal->id} ({$grupoPrincipal->nombre})");
             
-            // Recargar horarios del grupo principal para el cronograma
             $grupoPrincipal->refresh();
 
-            // Limpiar cronograma de TODOS los grupos relacionados para evitar duplicados o basura
+            // Limpiar cronograma previo
             Cronograma::whereIn('grupo_id', $gruposRedes->pluck('id'))
                         ->where('asignatura_id', $redes->id)
                         ->delete();
-        }
-
-        // TEMA 1.1: Creación de VLANs
-        $tRedes1_1 = Tema::create([
-            'unidad_id' => $uRedes1->id, 
-            'orden' => 1,
-            'titulo' => 'Creación de VLANs',
-            'resultado_aprendizaje' => 'Configura VLANs en Cisco IOS.',
-            'horas_teoricas' => 1, 
-            'horas_practicas' => 3,
-            'contenido_conceptual' => ['Base de datos VLAN', 'Puertos de acceso'],
-            'contenido_procedimental' => ['Comandos vlan database', 'Asignación de puertos'],
-            'contenido_actitudinal' => ['Orden en el cableado estructurado']
-        ]);
-
-        // Secuencia Didáctica para Tema 1.1 (Reconstruida)
-        $tRedes1_1->secuencias()->create([
-            'momento' => 'INTRODUCCION',
-            'descripcion' => 'Revisión de conceptos de broadcast domain.',
-            'duracion_minutos' => 10
-        ]);
-        $tRedes1_1->secuencias()->create([
-            'momento' => 'CONTENIDOS DE LA CLASE',
-            'descripcion' => 'Explicación de segmentación lógica.',
-            'duracion_minutos' => 20
-        ]);
-        $tRedes1_1->secuencias()->create([
-            'momento' => 'CUERPO DE CONTENIDOS',
-            'descripcion' => 'Práctica: Creación de VLANs 10, 20, 30.',
-            'duracion_minutos' => 45
-        ]);
-        $tRedes1_1->secuencias()->create([
-            'momento' => 'CONCLUSION O CIERRE',
-            'descripcion' => 'Verificación de conectividad inter-VLAN. Reflexión sobre errores comunes.',
-            'duracion_minutos' => 15
-        ]);
-
-        // Datos personales Tema 1.1 (Reconstruido)
-        $tRedes1_1_personal = [
-             'estrategias_metodologicas' => 'Clase participativa',
-             'estrategias_aprendizaje' => 'Resolución de problemas',
-             'estrategias_recursos' => ['Packet Tracer', 'Pizarra'],
-             'evaluacion_formativa' => [],
-             'evaluacion_sumativa' => []
-        ];
-
-
-        // Crear planificación personal con las secuencias y datos personales
-        $this->crearPlanificacionPersonal($tRedes1_1, $user->id, $tRedes1_1_personal);
-
-        // Datos personales Tema 1.2
-        $tRedes1_2_personal = [
-            'estrategias_metodologicas' => 'Aprendizaje basado en problemas: resolver falla de comunicación entre switches.',
-            'estrategias_aprendizaje' => 'Trabajo en equipo para diagnosticar y resolver problemas de trunking.',
-            'estrategias_recursos' => [
-                'Packet Tracer',
-                'Switches físicos Cisco',
-                'Cables de consola',
-                'Analizador de tramas Wireshark'
-            ],
-            'evaluacion_formativa' => [
-                'actividades' => [
-                    'Quiz sobre etiquetado 802.1Q',
-                    'Participación en troubleshooting grupal',
-                    'Análisis de capturas Wireshark'
-                ],
-                'instrumentos' => [
-                    'Cuestionario en línea',
-                    'Rúbrica de trabajo colaborativo',
-                    'Lista de verificación de análisis'
-                ],
-                'evidencias' => [
-                    'Resultados de quiz',
-                    'Reporte de troubleshooting',
-                    'Capturas de tráfico analizadas'
-                ]
-            ],
-            'evaluacion_sumativa' => [
-                'actividades' => [
-                    'Laboratorio calificado: Configuración multi-switch',
-                    'Informe técnico de configuración'
-                ],
-                'instrumentos' => [
-                    'Rúbrica de laboratorio (70%)',
-                    'Rúbrica de informe técnico (30%)'
-                ],
-                'evidencias' => [
-                    'Topología funcional en Packet Tracer',
-                    'Informe con diagramas y análisis',
-                    'Video de demostración de conectividad'
-                ]
-            ]
-        ];
-
-        // TEMA 1.2: Enlaces Troncales (Trunking)
-        $tRedes1_2 = Tema::create([
-            'unidad_id' => $uRedes1->id, 
-            'orden' => 2,
-            'titulo' => 'Enlaces Troncales (Trunking) y Protocolo 802.1Q',
-            'resultado_aprendizaje' => 'Implementa enlaces troncales entre switches para transportar múltiples VLANs.',
-            'horas_teoricas' => 2,
-            'horas_practicas' => 4,
-            'contenido_conceptual' => [
-                'Protocolo 802.1Q (Dot1Q)',
-                'Etiquetado de tramas (Frame Tagging)',
-                'VLAN Nativa',
-                'DTP (Dynamic Trunking Protocol)'
-            ],
-            'contenido_procedimental' => [
-                'Configuración de puertos trunk',
-                'Comando switchport mode trunk',
-                'Configuración de VLANs permitidas',
-                'Troubleshooting de enlaces trunk'
-            ],
-            'contenido_actitudinal' => [
-                'Atención al detalle en configuraciones críticas',
-                'Proactividad en la detección de problemas'
-            ]
-        ]);
-
-        // Referencias Bibliográficas para Tema 1.2
-        $tRedes1_2->bibliografias()->attach($bibCCNA->id, ['pagina_desde' => 211, 'pagina_hasta' => 265]);
-        $tRedes1_2->bibliografias()->attach($bibForouzan->id, ['pagina_desde' => 320, 'pagina_hasta' => 355]);
-        $tRedes1_2->bibliografias()->attach($bibTCPIP->id, ['pagina_desde' => 89, 'pagina_hasta' => 112]);
-
-        // Logros e Indicadores para Tema 1.2
-        $logro1_2_1 = $tRedes1_2->logros()->create([
-            'descripcion' => 'Comprende el funcionamiento del protocolo 802.1Q y el etiquetado de tramas',
-            'tipo_logro' => 'SABER'
-        ]);
-        $logro1_2_1->indicadores()->create(['descripcion' => 'Describe el proceso de encapsulación y desencapsulación de tramas 802.1Q']);
-
-        $logro1_2_2 = $tRedes1_2->logros()->create([
-            'descripcion' => 'Configura y verifica enlaces troncales entre switches',
-            'tipo_logro' => 'HACER'
-        ]);
-        $logro1_2_2->indicadores()->create(['descripcion' => 'Establece enlaces trunk funcionales y verifica con show interfaces trunk']);
-
-        $logro1_2_3 = $tRedes1_2->logros()->create([
-            'descripcion' => 'Diagnostica y resuelve problemas de trunking de manera sistemática',
-            'tipo_logro' => 'DECIDIR'
-        ]);
-        $logro1_2_3->indicadores()->create(['descripcion' => 'Aplica metodología de troubleshooting para identificar y corregir errores']);
-
-        // Secuencia Didáctica para Tema 1.2
-        $tRedes1_2->secuencias()->create([
-            'momento' => 'INTRODUCCION',
-            'descripcion' => 'Planteamiento de problema: ¿Cómo comunicar VLANs entre múltiples switches?',
-            'duracion_minutos' => 10
-        ]);
-        $tRedes1_2->secuencias()->create([
-            'momento' => 'RESULTADOS DE APRENDIZAJE/LOGROS',
-            'descripcion' => 'Presentación de competencias a desarrollar y criterios de evaluación.',
-            'duracion_minutos' => 10
-        ]);
-        $tRedes1_2->secuencias()->create([
-            'momento' => 'CONTENIDOS DE LA CLASE',
-            'descripcion' => 'Explicación teórica de 802.1Q con diagramas. Análisis de captura Wireshark.',
-            'duracion_minutos' => 25
-        ]);
-        $tRedes1_2->secuencias()->create([
-            'momento' => 'CUERPO DE CONTENIDOS',
-            'descripcion' => 'Laboratorio: Configuración de topología con 3 switches y 4 VLANs.',
-            'duracion_minutos' => 70
-        ]);
-        $tRedes1_2->secuencias()->create([
-            'momento' => 'CONCLUSION O CIERRE',
-            'descripcion' => 'Verificación de conectividad end-to-end. Discusión de errores comunes.',
-            'duracion_minutos' => 15
-        ]);
-
-        // Crear planificación personal con las secuencias y datos personales
-        $this->crearPlanificacionPersonal($tRedes1_2, $user->id, $tRedes1_2_personal);
-
-        // ========== UNIDAD 2: Enrutamiento Inter-VLAN ==========
-        $uRedes2 = Unidad::create([
-            'asignatura_id' => $redes->id, 
-            'numero' => 2,
-            'titulo' => 'Enrutamiento Inter-VLAN',
-            'objetivo' => 'Implementar comunicación entre VLANs utilizando routers y switches de capa 3.',
-            'contenido_minimo' => 'Router-on-a-Stick, Subinterfaces, SVI, Switch Multicapa, ip routing',
-            'elemento_competencia' => 'Implementa enrutamiento entre VLANs para permitir comunicación controlada entre segmentos.'
-        ]);
-
-        // Datos personales Tema 2.1
-        $tRedes2_1_personal = [
-            'estrategias_metodologicas' => 'Demostración guiada seguida de práctica supervisada.',
-            'estrategias_aprendizaje' => 'Estudiantes diseñan esquema de direccionamiento antes de configurar.',
-            'estrategias_recursos' => [
-                'Packet Tracer',
-                'Router Cisco 2911',
-                'Switch Cisco 2960',
-                'Calculadora de subredes'
-            ],
-            'evaluacion_formativa' => [
-                'actividades' => [
-                    'Revisión de esquema de direccionamiento IP',
-                    'Verificación de configuración con comandos show',
-                    'Pruebas de conectividad progresivas'
-                ],
-                'instrumentos' => [
-                    'Lista de cotejo de direccionamiento',
-                    'Rúbrica de configuración',
-                    'Registro de pruebas'
-                ],
-                'evidencias' => [
-                    'Diagrama de direccionamiento IP',
-                    'Capturas de comandos show',
-                    'Resultados de ping entre VLANs'
-                ]
-            ],
-            'evaluacion_sumativa' => [
-                'actividades' => [
-                    'Examen práctico: Implementar Router-on-a-Stick completo'
-                ],
-                'instrumentos' => [
-                    'Rúbrica de examen práctico (100%)'
-                ],
-                'evidencias' => [
-                    'Archivo .pkt con solución completa',
-                    'Documento de configuración',
-                    'Video de demostración funcional'
-                ]
-            ]
-        ];
-
-        // TEMA 2.1: Router-on-a-Stick
-        $tRedes2_1 = Tema::create([
-            'unidad_id' => $uRedes2->id, 
-            'orden' => 1,
-            'titulo' => 'Router-on-a-Stick',
-            'resultado_aprendizaje' => 'Configura enrutamiento inter-VLAN utilizando subinterfaces en un router.',
-            'horas_teoricas' => 2,
-            'horas_practicas' => 4,
-            'contenido_conceptual' => [
-                'Concepto de Router-on-a-Stick',
-                'Subinterfaces lógicas',
-                'Encapsulamiento dot1Q en subinterfaces',
-                'Gateway predeterminado por VLAN'
-            ],
-            'contenido_procedimental' => [
-                'Creación de subinterfaces',
-                'Comando encapsulation dot1q',
-                'Asignación de direcciones IP por VLAN',
-                'Configuración de default gateway en hosts'
-            ],
-            'contenido_actitudinal' => [
-                'Precisión en el direccionamiento IP',
-                'Metodología en la configuración paso a paso'
-            ]
-        ]);
-
-        // Referencias Bibliográficas para Tema 2.1
-        $tRedes2_1->bibliografias()->attach($bibCCNA->id, ['pagina_desde' => 380, 'pagina_hasta' => 425]);
-        $tRedes2_1->bibliografias()->attach($bibKurose->id, ['pagina_desde' => 290, 'pagina_hasta' => 315]);
-        $tRedes2_1->bibliografias()->attach($bibCiscoAcademy->id, ['pagina_desde' => 156, 'pagina_hasta' => 189]);
-
-        // Logros e Indicadores para Tema 2.1
-        $logro2_1_1 = $tRedes2_1->logros()->create([
-            'descripcion' => 'Explica el funcionamiento del modelo Router-on-a-Stick',
-            'tipo_logro' => 'SABER'
-        ]);
-        $logro2_1_1->indicadores()->create(['descripcion' => 'Describe el flujo de tráfico entre VLANs a través de subinterfaces']);
-
-        $logro2_1_2 = $tRedes2_1->logros()->create([
-            'descripcion' => 'Implementa enrutamiento inter-VLAN con subinterfaces',
-            'tipo_logro' => 'HACER'
-        ]);
-        $logro2_1_2->indicadores()->create(['descripcion' => 'Configura subinterfaces y logra comunicación entre VLANs']);
-
-        $logro2_1_3 = $tRedes2_1->logros()->create([
-            'descripcion' => 'Planifica esquemas de direccionamiento IP de manera eficiente',
-            'tipo_logro' => 'DECIDIR'
-        ]);
-        $logro2_1_3->indicadores()->create(['descripcion' => 'Diseña plan de direccionamiento optimizado para múltiples VLANs']);
-
-        // Secuencia Didáctica para Tema 2.1
-        $tRedes2_1->secuencias()->create([
-            'momento' => 'INTRODUCCION',
-            'descripcion' => 'Problema: VLANs configuradas pero sin comunicación entre ellas. ¿Cómo solucionarlo?',
-            'duracion_minutos' => 10
-        ]);
-        $tRedes2_1->secuencias()->create([
-            'momento' => 'RESULTADOS DE APRENDIZAJE/LOGROS',
-            'descripcion' => 'Explicación de objetivos y presentación de rúbrica de evaluación.',
-            'duracion_minutos' => 10
-        ]);
-        $tRedes2_1->secuencias()->create([
-            'momento' => 'CONTENIDOS DE LA CLASE',
-            'descripcion' => 'Explicación teórica de subinterfaces y encapsulamiento. Diagrama en pizarra.',
-            'duracion_minutos' => 25
-        ]);
-        $tRedes2_1->secuencias()->create([
-            'momento' => 'CUERPO DE CONTENIDOS',
-            'descripcion' => 'Laboratorio: Configuración de Router-on-a-Stick para 3 VLANs.',
-            'duracion_minutos' => 65
-        ]);
-        $tRedes2_1->secuencias()->create([
-            'momento' => 'CONCLUSION O CIERRE',
-            'descripcion' => 'Pruebas de ping entre VLANs. Análisis de tabla de enrutamiento.',
-            'duracion_minutos' => 20
-        ]);
-
-        // Crear planificación personal con las secuencias y datos personales
-        $this->crearPlanificacionPersonal($tRedes2_1, $user->id, $tRedes2_1_personal);
-
-        // Datos personales Tema 2.2
-        $tRedes2_2_personal = [
-            'estrategias_metodologicas' => 'Comparación práctica entre Router-on-a-Stick y Switch L3.',
-            'estrategias_aprendizaje' => 'Estudiantes evalúan ventajas y desventajas de cada método.',
-            'estrategias_recursos' => [
-                'Packet Tracer',
-                'Switch Cisco 3560 (Multicapa)',
-                'Herramienta de medición de latencia'
-            ],
-            'evaluacion_formativa' => [
-                'actividades' => [
-                    'Debate técnico: Router-on-a-Stick vs Switch L3',
-                    'Medición de rendimiento comparativo',
-                    'Análisis de casos de uso reales'
-                ],
-                'instrumentos' => [
-                    'Rúbrica de debate',
-                    'Hoja de medición de latencia',
-                    'Matriz de análisis comparativo'
-                ],
-                'evidencias' => [
-                    'Presentación de argumentos técnicos',
-                    'Reporte de mediciones',
-                    'Cuadro comparativo documentado'
-                ]
-            ],
-            'evaluacion_sumativa' => [
-                'actividades' => [
-                    'Proyecto final: Diseño e implementación de red empresarial'
-                ],
-                'instrumentos' => [
-                    'Rúbrica de proyecto final (100%)'
-                ],
-                'evidencias' => [
-                    'Diseño de red completo (topología, direccionamiento)',
-                    'Implementación funcional en Packet Tracer',
-                    'Documentación técnica profesional',
-                    'Presentación y defensa del proyecto'
-                ]
-            ]
-        ];
-
-        // TEMA 2.2: Switch Multicapa (Layer 3 Switching)
-        $tRedes2_2 = Tema::create([
-            'unidad_id' => $uRedes2->id, 
-            'orden' => 2,
-            'titulo' => 'Enrutamiento con Switch Multicapa (Layer 3)',
-            'resultado_aprendizaje' => 'Implementa enrutamiento inter-VLAN utilizando switches de capa 3.',
-            'horas_teoricas' => 2,
-            'horas_practicas' => 4,
-            'contenido_conceptual' => [
-                'Switch Multicapa vs Switch Capa 2',
-                'SVI (Switch Virtual Interface)',
-                'Comando ip routing',
-                'Ventajas de rendimiento sobre Router-on-a-Stick'
-            ],
-            'contenido_procedimental' => [
-                'Habilitación de enrutamiento IP',
-                'Creación de interfaces SVI',
-                'Asignación de IPs a VLANs',
-                'Configuración de rutas estáticas'
-            ],
-            'contenido_actitudinal' => [
-                'Criterio para elegir solución tecnológica apropiada',
-                'Eficiencia en el uso de recursos de red'
-            ]
-        ]);
-
-        // Referencias Bibliográficas para Tema 2.2
-        $tRedes2_2->bibliografias()->attach($bibCCNA->id, ['pagina_desde' => 426, 'pagina_hasta' => 478]);
-        $tRedes2_2->bibliografias()->attach($bibWarrior->id, ['pagina_desde' => 145, 'pagina_hasta' => 178]);
-        $tRedes2_2->bibliografias()->attach($bibKurose->id, ['pagina_desde' => 316, 'pagina_hasta' => 342]);
-
-        // Logros e Indicadores para Tema 2.2
-        $logro2_2_1 = $tRedes2_2->logros()->create([
-            'descripcion' => 'Diferencia entre switches de capa 2 y capa 3',
-            'tipo_logro' => 'SABER'
-        ]);
-        $logro2_2_1->indicadores()->create(['descripcion' => 'Compara funcionalidades y casos de uso de switches L2 vs L3']);
-
-        $logro2_2_2 = $tRedes2_2->logros()->create([
-            'descripcion' => 'Configura enrutamiento inter-VLAN en switch multicapa',
-            'tipo_logro' => 'HACER'
-        ]);
-        $logro2_2_2->indicadores()->create(['descripcion' => 'Habilita ip routing y crea SVIs funcionales para cada VLAN']);
-
-        $logro2_2_3 = $tRedes2_2->logros()->create([
-            'descripcion' => 'Evalúa y selecciona la mejor solución de enrutamiento inter-VLAN según el contexto',
-            'tipo_logro' => 'DECIDIR'
-        ]);
-        $logro2_2_3->indicadores()->create(['descripcion' => 'Justifica técnicamente la elección entre Router-on-a-Stick y Switch L3']);
-
-        // Secuencia Didáctica para Tema 2.2
-        $tRedes2_2->secuencias()->create([
-            'momento' => 'INTRODUCCION',
-            'descripcion' => 'Limitaciones de Router-on-a-Stick en redes grandes. Introducción a switches L3.',
-            'duracion_minutos' => 15
-        ]);
-        $tRedes2_2->secuencias()->create([
-            'momento' => 'RESULTADOS DE APRENDIZAJE/LOGROS',
-            'descripcion' => 'Presentación de competencias y criterios de proyecto final.',
-            'duracion_minutos' => 10
-        ]);
-        $tRedes2_2->secuencias()->create([
-            'momento' => 'CONTENIDOS DE LA CLASE',
-            'descripcion' => 'Explicación de SVIs y comando ip routing. Demostración en equipo real.',
-            'duracion_minutos' => 30
-        ]);
-        $tRedes2_2->secuencias()->create([
-            'momento' => 'CUERPO DE CONTENIDOS',
-            'descripcion' => 'Laboratorio: Migración de Router-on-a-Stick a Switch L3.',
-            'duracion_minutos' => 60
-        ]);
-        $tRedes2_2->secuencias()->create([
-            'momento' => 'CONCLUSION O CIERRE',
-            'descripcion' => 'Comparación de rendimiento. Reflexión sobre escalabilidad.',
-            'duracion_minutos' => 15
-        ]);
-
-        // Crear planificación personal con las secuencias y datos personales
-        $this->crearPlanificacionPersonal($tRedes2_2, $user->id, $tRedes2_2_personal);
-
-
-        // Finalmente, Generar el Cronograma después de tener todos los temas creados
-        if (!$gruposRedes->isEmpty()) {
-            $this->command->info("Generando cronograma unificado con temas asociados...");
             
-            // Colección de temas en orden
-            $todosLosTemas = collect([$tRedes1_1, $tRedes1_2, $tRedes2_1, $tRedes2_2]);
-
-            $this->generarCronogramaUnificado($grupoPrincipal, $gruposRedes, $redes, $todosLosTemas);
+            // Generar nuevo cronograma
+            $this->generarCronogramaUnificado($grupoPrincipal, $gruposRedes, $redes, $temasCreados);
         }
     }
 
-    /**
-     * Crea una planificación personal para un tema y usuario
-     * Copia las secuencias de secuencias_temas a planificaciones_personales
-     * Usa la estructura que espera el frontend: id, momento, duracion, actividad
-     * 
-     * @param Tema $tema
-     * @param int|null $userId
-     * @param array $personalData Datos personales (estrategias, evaluaciones)
-     */
+    private function seedBibliografia($asignatura)
+    {
+        $bibliografias = [
+            [
+                'titulo' => 'Fundamentos de Redes',
+                'autor' => 'Harris, R., & Hancock, J.',
+                'anio' => 2021,
+                'tipo' => 'principal',
+                'editorial' => 'Editorial Tecnológica'
+            ],
+            [
+                'titulo' => 'Composición y Funcionamiento Interno de Redes',
+                'autor' => 'Rodríguez, M.',
+                'anio' => 2020,
+                'tipo' => 'principal',
+                'editorial' => 'Editorial Tecnológica',
+            ],
+            [
+                'titulo' => 'Fundamentos de Direccionamiento IP y Subneteo',
+                'autor' => 'Pérez, A.',
+                'anio' => 2020,
+                'tipo' => 'principal',
+                'editorial' => 'Editorial Tecnológica',
+            ],
+            [
+                'titulo' => 'Acceso a la Red (Switching)',
+                'autor' => 'López, E.',
+                'anio' => 2021,
+                'tipo' => 'principal',
+                'editorial' => 'Editorial Tecnológica',
+            ],
+            [
+                'titulo' => 'Conectividad IP (Routing)',
+                'autor' => 'González, R.',
+                'anio' => 2020,
+                'tipo' => 'principal',
+                'editorial' => 'Editorial Tecnológica',
+            ],
+            [
+                'titulo' => 'Redes de Computadoras',
+                'autor' => 'Cysco System', // Sic en el documento
+                'anio' => 2018, // Aproximado
+                'tipo' => 'complementario',
+            ],
+            [
+                'titulo' => 'Manual de Sistema Operativo Suse Linux',
+                'autor' => 'Suse',
+                'anio' => 2019,
+                'tipo' => 'complementario',
+            ],
+            [
+                'titulo' => 'WI-FI: Cómo construir una red inalámbrica',
+                'autor' => 'Carballar, J. A.',
+                'anio' => 2015,
+                'tipo' => 'complementario',
+                'editorial' => 'Alfaomega RA-MA'
+            ],
+        ];
+
+        foreach ($bibliografias as $bib) {
+            $asignatura->bibliografias()->updateOrCreate(
+                ['titulo' => $bib['titulo']],
+                $bib
+            );
+        }
+    }
+
+    private function seedUnidadesYTemas($asignatura, $userId)
+    {
+        $unidadesData = [
+            [
+                'numero' => 1,
+                'titulo' => 'FUNDAMENTOS DE REDES',
+                'objetivo' => 'Analizar componentes fundamentales de red.',
+                'contenido_minimo' => 'Conceptos básicos, SOHO, WiFi, Cableado.',
+                'elemento_competencia' => 'Describe componentes de red.',
+                'temas' => [
+                    [
+                        'orden' => 1,
+                        'titulo' => 'CONCEPTOS BÁSICOS DE REDES',
+                        'resultado_aprendizaje' => 'Analiza y describe los componentes fundamentales de una red de datos, su funcionamiento y roles específicos en entornos Small Office/Home Office (SOHO) y corporativos.',
+                        'horas_teoricas' => 2,
+                        'horas_practicas' => 4,
+                        'contenido_conceptual' => [
+                            'Introducción a los conceptos básicos de redes',
+                            'Funciones y características de los switches',
+                            'Funciones y características de los routers',
+                            'Exploración de Firewalls de Nueva Generación (NGF) e Intrusion Prevention Systems (IPS)',
+                            'Dispositivos finales y endpoints',
+                            'Comprender los Access Points (Puntos de Acceso)',
+                            'Redes Small Office/Home Office (SOHO)',
+                            'Comparación de servicios en sitio y en la nube',
+                            'Principios fundamentales de redes WiFi',
+                            'Conceptos esenciales de cableado',
+                            'Tabla de direcciones MAC'
+                        ],
+                        'contenido_procedimental' => [
+                            'Identifica topologías SOHO', 'Interpreta el direccionamiento físico (MAC)', 'Compara técnicamente servicios en la nube'
+                        ],
+                        'contenido_actitudinal' => [
+                            'Ética en la seguridad de redes', 'Responsabilidad en el diseño de infraestructura'
+                        ],
+                        'logros' => [
+                            ['tipo' => 'SABER', 'desc' => 'Describe las funciones críticas de switches y routers.', 'ind' => 'Diferencia correctamente entre el envío de tramas (L2) y el enrutamiento de paquetes (L3).'],
+                            ['tipo' => 'SABER', 'desc' => 'Identifica componentes de seguridad perimetral como Firewalls de Nueva Generación (NGF) e IPS.', 'ind' => 'Explica cómo un IPS previene intrusiones comparado con un firewall tradicional.'],
+                            ['tipo' => 'SABER', 'desc' => 'Explica el funcionamiento y la importancia de la tabla de direcciones MAC.', 'ind' => 'Realiza el seguimiento manual de cómo un switch aprende direcciones.'],
+                            ['tipo' => 'SABER', 'desc' => 'Compara las características de los servicios on-premise frente a soluciones en la nube.', 'ind' => 'Categoriza beneficios de escalabilidad y disponibilidad para ambos modelos.'],
+                            ['tipo' => 'HACER', 'desc' => 'Aplica principios fundamentales de redes WiFi y conceptos de cableado.', 'ind' => 'Selecciona el estándar 802.11 y el tipo de cable adecuado.']
+                        ],
+                        'personal' => [
+                            'estrategias_metodologicas' => 'Clase magistral interactiva, demostración guiada en simulador.',
+                            'estrategias_aprendizaje' => 'Aprendizaje basado en problemas, elaboración de mapas mentales.',
+                            'estrategias_recursos' => ['Pizarra', 'Computadora con simulador (Packet Tracer)', 'Proyector'],
+                            'evaluacion_formativa' => [
+                                'actividades' => ['Foro de discusión sobre seguridad perimetral'],
+                                'instrumentos' => ['Lista de cotejo'],
+                                'evidencias' => ['Diagrama mental de componentes de red']
+                            ],
+                            'evaluacion_sumativa' => [
+                                'actividades' => ['Examen teórico de conceptos básicos'],
+                                'instrumentos' => ['Prueba objetiva (opción múltiple)'],
+                                'evidencias' => ['Cuestionario resuelto']
+                            ],
+                            'secuencia_didactica' => [
+                                ['momento' => 'INTRODUCCION', 'duracion' => 10, 'actividad' => 'Lluvia de ideas sobre la importancia de las redes en la conectividad diaria.'],
+                                ['momento' => 'RESULTADOS/LOGROS', 'duracion' => 10, 'actividad' => 'Presentación de los objetivos y competencias a adquirir en el tema.'],
+                                ['momento' => 'CONTENIDOS DE LA CLASE', 'duracion' => 10, 'actividad' => 'Resumen de hardware esencial y roles de dispositivos.'],
+                                ['momento' => 'CUERPO DE CONTENIDOS', 'duracion' => 40, 'actividad' => 'Análisis detallado de seguridad perimetral, medios físicos y tablas MAC.'],
+                                ['momento' => 'CONCLUSION O CIERRE', 'duracion' => 10, 'actividad' => 'Resumen de puntos clave y evaluación rápida de comprensión.']
+                            ]
+                        ],
+                        'bibliografia_titulo' => 'Fundamentos de Redes'
+                    ]
+                ]
+            ],
+            [
+                'numero' => 2,
+                'titulo' => 'COMPOSICIÓN Y FUNCIONAMIENTO INTERNO DE REDES',
+                'objetivo' => 'Diseñar topologías WAN y LAN.',
+                'contenido_minimo' => 'Cisco IOS, Topologías jerárquicas, WAN, Spine-Leaf.',
+                'elemento_competencia' => 'Diseña arquitecturas de red escalables.',
+                'temas' => [
+                    [
+                        'orden' => 2,
+                        'titulo' => 'FUNDAMENTOS, TOPOLOGÍAS Y ARQUITECTURAS WAN',
+                        'resultado_aprendizaje' => 'Diseña y evalúa topologías y arquitecturas de red WAN y LAN utilizando modelos jerárquicos y modernos para optimizar el flujo de datos y la escalabilidad.',
+                        'horas_teoricas' => 2, 'horas_practicas' => 4,
+                        'contenido_conceptual' => [
+                            'Introducción a Cisco IOS',
+                            'Secuencia de inicio de equipos',
+                            'Sistema de archivos en equipos',
+                            'Introducción a las Wide Area Networks (WAN)',
+                            'Comparación de topologías de red de 2 niveles y 3 niveles',
+                            'Exploración de la topología Spine and Leaf'
+                        ],
+                        'contenido_procedimental' => [
+                            'Navega por el CLI de Cisco', 'Configura routers inicialmente', 'Analiza la escalabilidad en topologías jerárquicas'
+                        ],
+                        'contenido_actitudinal' => [
+                            'Disciplina en la aplicación de configuraciones', 'Interés por las arquitecturas de centros de datos'
+                        ],
+                        'logros' => [
+                            ['tipo' => 'HACER', 'desc' => 'Navega con fluidez en el entorno de línea de comandos (CLI) de Cisco IOS.', 'ind' => 'Ejecuta comandos de configuración básica y verificación sin errores.'],
+                            ['tipo' => 'SABER', 'desc' => 'Describe la secuencia de inicio y gestión del sistema de archivos.', 'ind' => 'Localiza y gestiona archivos de configuración.'],
+                            ['tipo' => 'DECIDIR', 'desc' => 'Compara topologías de red jerárquicas de 2 y 3 niveles.', 'ind' => 'Justifica la elección de un modelo según tamaño organizacional.'],
+                            ['tipo' => 'SABER', 'desc' => 'Explica beneficios de arquitectura Spine and Leaf.', 'ind' => 'Identifica la reducción de latencia este-oeste.'],
+                            ['tipo' => 'SABER', 'desc' => 'Identifica tecnologías y propósitos principales de redes WAN.', 'ind' => 'Lista diferencias operativas clave entre LAN y WAN.']
+                        ],
+                        'personal' => [
+                            'estrategias_metodologicas' => 'Inducción didáctica, práctica dirigida en laboratorio virtual.',
+                            'estrategias_aprendizaje' => 'Gamificación mediante quizzes rápidos, simulación de escenarios corporativos.',
+                            'estrategias_recursos' => ['Manuales de comandos Cisco', 'Simuladores de red', 'Proyector'],
+                            'evaluacion_formativa' => [
+                                'actividades' => ['Práctica de navegación en consola (CLI)'],
+                                'instrumentos' => ['Guía de observación'],
+                                'evidencias' => ['Captura de pantalla de configuración base realizada']
+                            ],
+                            'evaluacion_sumativa' => [
+                                'actividades' => ['Laboratorio evaluado de topologías jerárquicas'],
+                                'instrumentos' => ['Rúbrica de desempeño'],
+                                'evidencias' => ['Archivo de simulación con topología configurada']
+                            ],
+                            'secuencia_didactica' => [
+                                ['momento' => 'INTRODUCCION', 'duracion' => 10, 'actividad' => 'Contextualización de las redes WAN frente a las redes locales LAN.'],
+                                ['momento' => 'RESULTADOS/LOGROS', 'duracion' => 10, 'actividad' => 'Definición de habilidades de configuración de IOS y jerarquías de red.'],
+                                ['momento' => 'CONTENIDOS DE LA CLASE', 'duracion' => 10, 'actividad' => 'Estructura del sistema de archivos y modelos de diseño de 2 y 3 capas.'],
+                                ['momento' => 'CUERPO DE CONTENIDOS', 'duracion' => 40, 'actividad' => 'Estudio profundo de Spine-Leaf y comandos de gestión inicial de equipos.'],
+                                ['momento' => 'CONCLUSION O CIERRE', 'duracion' => 10, 'actividad' => 'Reflexión grupal sobre la escalabilidad de las arquitecturas estudiadas.']
+                            ]
+                        ],
+                        'bibliografia_titulo' => 'Composición y Funcionamiento Interno de Redes'
+                    ]
+                ]
+            ],
+            [
+                'numero' => 3,
+                'titulo' => 'FUNDAMENTOS DE DIRECCIONAMIENTO IP Y SUBNETEO',
+                'objetivo' => 'Implementar planes de direccionamiento eficientes.',
+                'contenido_minimo' => 'IPv4, IPv6, Subneteo, VLSM.',
+                'elemento_competencia' => 'Aplica técnicas de subneteo.',
+                'temas' => [
+                    [
+                        'orden' => 3,
+                        'titulo' => 'DIRECCIONAMIENTO IP Y SUBNETEO',
+                        'resultado_aprendizaje' => 'Implementa planes de direccionamiento eficientes utilizando IPv4 e IPv6, aplicando técnicas de subredes para optimizar el uso del espacio de direcciones en infraestructuras de red.',
+                        'horas_teoricas' => 2, 'horas_practicas' => 4,
+                        'contenido_conceptual' => [
+                            'Introducción al direccionamiento IPv4',
+                            'Mascara de subred IPv4',
+                            'Conceptos básicos de subredes IPv4',
+                            'Introducción a las direcciones IPv6',
+                            'Tipos de direcciones IPv6',
+                            'Configuración de rutas estáticas IPv6',
+                            'Configuración básica de direcciones IPv6'
+                        ],
+                        'contenido_procedimental' => [
+                            'Calcula subredes en formato binario/decimal', 'Configura parámetros IP', 'Crea planes de direccionamiento eficientes'
+                        ],
+                        'contenido_actitudinal' => [
+                            'Precisión matemática', 'Organización lógica de datos técnicos'
+                        ],
+                        'logros' => [
+                            ['tipo' => 'HACER', 'desc' => 'Calcula subredes IPv4 utilizando máscaras de longitud variable (VLSM).', 'ind' => 'Determina correctamente el rango de host y dirección de red.'],
+                            ['tipo' => 'SABER', 'desc' => 'Identifica y clasifica los diferentes tipos de direcciones IPv6.', 'ind' => 'Asigna direcciones Global Unicast y Link-Local.'],
+                            ['tipo' => 'HACER', 'desc' => 'Configura conectividad básica mediante direccionamiento estático en IPv6.', 'ind' => 'Verifica comunicación mediante comandos ping en IPv6.'],
+                            ['tipo' => 'SABER', 'desc' => 'Explica propósito y funcionamiento de rutas estáticas IPv6.', 'ind' => 'Configura una ruta estática predeterminada.'],
+                            ['tipo' => 'HACER', 'desc' => 'Aplica conceptos de binario y decimal en resolución de problemas.', 'ind' => 'Convierte direcciones IP entre formatos con precisión.']
+                        ],
+                        'personal' => [
+                            'estrategias_metodologicas' => 'Resolución de problemas en pizarra, método expositivo de lógica binaria.',
+                            'estrategias_aprendizaje' => 'Talleres de ejercicios prácticos, autoevaluación de planes de subredes.',
+                            'estrategias_recursos' => ['Hojas de trabajo de subneteo', 'Calculadoras IP', 'Simuladores de red'],
+                            'evaluacion_formativa' => [
+                                'actividades' => ['Ejercicio rápido de cálculo de máscara de red y hosts'],
+                                'instrumentos' => ['Registro académico de participación'],
+                                'evidencias' => ['Hoja de ejercicios de cálculo binario completada']
+                            ],
+                            'evaluacion_sumativa' => [
+                                'actividades' => ['Examen práctico e individual de diseño de subredes IPv4 e IPv6'],
+                                'instrumentos' => ['Escala de calificación por objetivos'],
+                                'evidencias' => ['Plan de direccionamiento técnico entregado']
+                            ],
+                            'secuencia_didactica' => [
+                                ['momento' => 'INTRODUCCION', 'duracion' => 10, 'actividad' => 'El problema del agotamiento de IPv4 y la necesidad del subneteo eficiente.'],
+                                ['momento' => 'RESULTADOS/LOGROS', 'duracion' => 10, 'actividad' => 'Metas en el dominio del cálculo y configuración de redes numéricas.'],
+                                ['momento' => 'CONTENIDOS DE LA CLASE', 'duracion' => 10, 'actividad' => 'Repaso de estructura binaria de la dirección IP.'],
+                                ['momento' => 'CUERPO DE CONTENIDOS', 'duracion' => 40, 'actividad' => 'Algoritmos de subneteo VLSM y configuración base de IPv6.'],
+                                ['momento' => 'CONCLUSION O CIERRE', 'duracion' => 10, 'actividad' => 'Prueba de conectividad entre las subredes calculadas en clase.']
+                            ]
+                        ],
+                        'bibliografia_titulo' => 'Fundamentos de Direccionamiento IP y Subneteo'
+                    ]
+                ]
+            ],
+            [
+                'numero' => 4,
+                'titulo' => 'ACCESO A LA RED (SWITCHING)',
+                'objetivo' => 'Configurar infraestructuras de switching y redundancia.',
+                'contenido_minimo' => 'VLANs, Trunks, STP, EtherChannel.',
+                'elemento_competencia' => 'Administra redes conmutadas.',
+                'temas' => [
+                    [
+                        'orden' => 4,
+                        'titulo' => 'ACCESO A LA RED (SWITCHING)',
+                        'resultado_aprendizaje' => 'Configura y administra infraestructuras de switching aplicando protocolos de capa 2 para garantizar la segmentación, redundancia y alta disponibilidad.',
+                        'horas_teoricas' => 2, 'horas_practicas' => 4,
+                        'contenido_conceptual' => [
+                            'Exploración de switches',
+                            'Creación y configuración de VLANs',
+                            'Configuración de troncales (Trunks)',
+                            'Interfaz de VLAN de nivel 3 (SVIs)',
+                            'Configuración de "Router on a Stick"',
+                            'Conocimiento de Cisco Discovery Protocol (CDP)',
+                            'Protocolo de Descubrimiento de Capa de Enlace (LLDP)',
+                            'Introducción a EtherChannel',
+                            'Introducción a Spanning Tree Protocol (STP)',
+                            'Configuración de Portfast en STP',
+                            'Configuración de SPAN',
+                            'Exploración de StackWise',
+                            'Dynamic Trunking Protocol (DTP)'
+                        ],
+                        'contenido_procedimental' => [
+                            'Crea y asigna VLANs en puertos', 'Configura encapsulación dot1q', 'Realiza troubleshooting de STP y EtherChannel'
+                        ],
+                        'contenido_actitudinal' => [
+                            'Responsabilidad en la gestión de redundancia', 'Rigurosidad en la verificación de troncales'
+                        ],
+                        'logros' => [
+                            ['tipo' => 'HACER', 'desc' => 'Implementa VLANs para segmentar el tráfico de red.', 'ind' => 'Verifica el aislamiento de tráfico entre VLANs.'],
+                            ['tipo' => 'HACER', 'desc' => 'Configura enlaces troncales (Trunks) con 802.1Q.', 'ind' => 'Asegura paso de múltiples etiquetas de VLAN.'],
+                            ['tipo' => 'HACER', 'desc' => 'Establece comunicación inter-VLAN mediante SVIs y Router on a Stick.', 'ind' => 'Logra conectividad total entre segmentos lógicos.'],
+                            ['tipo' => 'HACER', 'desc' => 'Optimiza topología lógica mediante Spanning Tree (STP).', 'ind' => 'Reduce tiempo de convergencia manteniendo red libre de bucles.'],
+                            ['tipo' => 'HACER', 'desc' => 'Agrega ancho de banda y redundancia con EtherChannel.', 'ind' => 'Valida formación de canal lógico sobre enlaces físicos.']
+                        ],
+                        'personal' => [
+                            'estrategias_metodologicas' => 'Demostración de configuración en vivo, resolución de casos de falla de bucles.',
+                            'estrategias_aprendizaje' => 'Laboratorios prácticos individuales, depuración cooperativa de errores.',
+                            'estrategias_recursos' => ['Switches de laboratorio o simuladores', 'Cables de consola', 'Manuales técnicos'],
+                            'evaluacion_formativa' => [
+                                'actividades' => ['Configuración guiada de una red con 3 VLANs y un troncal'],
+                                'instrumentos' => ['Lista de verificación técnica'],
+                                'evidencias' => ['Reporte de estado del switch (show vlan brief, show interface trunk)']
+                            ],
+                            'evaluacion_sumativa' => [
+                                'actividades' => ['Implementación de una topología con redundancia L2 (STP adaptado)'],
+                                'instrumentos' => ['Rúbrica de laboratorio'],
+                                'evidencias' => ['Archivo de configuración funcional y topología física replicada']
+                            ],
+                            'secuencia_didactica' => [
+                                ['momento' => 'INTRODUCCION', 'duracion' => 10, 'actividad' => 'Desafíos de los dominios de broadcast en redes grandes.'],
+                                ['momento' => 'RESULTADOS/LOGROS', 'duracion' => 10, 'actividad' => 'Competencias en segmentación y optimización de Capa 2.'],
+                                ['momento' => 'CONTENIDOS DE LA CLASE', 'duracion' => 10, 'actividad' => 'Conceptos de VLANs y protocolos de redundancia.'],
+                                ['momento' => 'CUERPO DE CONTENIDOS', 'duracion' => 40, 'actividad' => 'Práctica intensiva en configuración de Trunks, SVIs y EtherChannel.'],
+                                ['momento' => 'CONCLUSION O CIERRE', 'duracion' => 10, 'actividad' => 'Verificación de aislamiento y flujo de datos inter-VLAN.']
+                            ]
+                        ],
+                        'bibliografia_titulo' => 'Acceso a la Red (Switching)'
+                    ]
+                ]
+            ],
+            [
+                'numero' => 5,
+                'titulo' => 'CONECTIVIDAD IP (ROUTING)',
+                'objetivo' => 'Implementar protocolos de enrutamiento estático y dinámico.',
+                'contenido_minimo' => 'Routing estático, OSPF, HSRP, OSPFv3.',
+                'elemento_competencia' => 'Configura enrutamiento avanzado.',
+                'temas' => [
+                    [
+                        'orden' => 5,
+                        'titulo' => 'CONECTIVIDAD IP (ROUTING)',
+                        'resultado_aprendizaje' => 'Implementa y gestiona protocolos de enrutamiento estático y dinámico (OSPF) para establecer conectividad óptima y redundante.',
+                        'horas_teoricas' => 2, 'horas_practicas' => 4,
+                        'contenido_conceptual' => [
+                            'Introducción al routing',
+                            'Configuración de rutas estáticas',
+                            'Enrutamiento dinámico',
+                            'Fundamentos de OSPF',
+                            'Configuración básica de OSPF en el área 0',
+                            'Identificación del Router ID en OSPF',
+                            'OSPF en múltiples áreas',
+                            'Métrica en OSPF',
+                            'Tipos de paquetes OSPF',
+                            'Tipos de SLAs en OSPF',
+                            'Introducción a Protocolos de Redundancia en el Primer Salto (HSRP y VRRP)',
+                            'OSPF versión 3'
+                        ],
+                        'contenido_procedimental' => [
+                            'Configura routers Cisco para OSPF', 'Crea rutas estáticas', 'Implementa alta disponibilidad con HSRP'
+                        ],
+                        'contenido_actitudinal' => [
+                            'Compromiso con la eficiencia del enrutamiento', 'Atención al detalle en configuración de protocolos dinámicos'
+                        ],
+                        'logros' => [
+                            ['tipo' => 'HACER', 'desc' => 'Configura rutas estáticas y por defecto.', 'ind' => 'Resuelve problemas de conectividad redirigiendo tráfico.'],
+                            ['tipo' => 'HACER', 'desc' => 'Establece adyacencias de vecinos OSPF en Area 0.', 'ind' => 'Confirma estado Full en tabla de vecindad.'],
+                            ['tipo' => 'SABER', 'desc' => 'Analiza métrica OSPF basada en costo.', 'ind' => 'Modifica manualmente el costo de interfaz para influir en ruta.'],
+                            ['tipo' => 'HACER', 'desc' => 'Configura protocolos de redundancia HSRP o VRRP.', 'ind' => 'Garantiza navegación ante falla física de router principal.'],
+                            ['tipo' => 'HACER', 'desc' => 'Implementa OSPF en entornos IPv6 (OSPFv3).', 'ind' => 'Verifica intercambio de prefijos IPv6.']
+                        ],
+                        'personal' => [
+                            'estrategias_metodologicas' => 'Análisis comparativo de protocolos, modelado de redes WAN en simulador.',
+                            'estrategias_aprendizaje' => 'Resolución de casos de estudio sobre fallas de ruta, ejercicios prácticos de balanceo.',
+                            'estrategias_recursos' => ['Simuladores de red (GNS3, Packet Tracer)', 'Guías de configuración oficial de Cisco'],
+                            'evaluacion_formativa' => [
+                                'actividades' => ['Configuración de adyacencia OSPF entre dos routers'],
+                                'instrumentos' => ['Check-list de comandos de verificación'],
+                                'evidencias' => ['Log de adyacencia establecida con éxito']
+                            ],
+                            'evaluacion_sumativa' => [
+                                'actividades' => ['Escenario integral de enrutamiento dinámico multi-área con redundancia'],
+                                'instrumentos' => ['Examen práctico en laboratorio virtual'],
+                                'evidencias' => ['Topología operativa con convergencia garantizada']
+                            ],
+                            'secuencia_didactica' => [
+                                ['momento' => 'INTRODUCCION', 'duracion' => 10, 'actividad' => 'Por qué necesitamos protocolos dinámicos en redes masivas.'],
+                                ['momento' => 'RESULTADOS/LOGROS', 'duracion' => 10, 'actividad' => 'Definición de objetivos en OSPF y alta disponibilidad (First Hop).'],
+                                ['momento' => 'CONTENIDOS DE LA CLASE', 'duracion' => 10, 'actividad' => 'Funcionamiento de los algoritmos de estado de enlace (Dijkstra).'],
+                                ['momento' => 'CUERPO DE CONTENIDOS', 'duracion' => 40, 'actividad' => 'Configuración práctica de OSPF, Router-IDs y métricas de costo.'],
+                                ['momento' => 'CONCLUSION O CIERRE', 'duracion' => 10, 'actividad' => 'Prueba de caída de enlaces y verificación de convergencia automática.']
+                            ]
+                        ],
+                        'bibliografia_titulo' => 'Conectividad IP (Routing)'
+                    ]
+                ]
+            ],
+            [
+                'numero' => 6,
+                'titulo' => 'SERVICIOS IP',
+                'objetivo' => 'Desplegar servicios de red esenciales (DHCP, NAT, SSH).',
+                'contenido_minimo' => 'DHCP, NAT/PAT, QoS, SSH.',
+                'elemento_competencia' => 'Implementa servicios de red.',
+                'temas' => [
+                    [
+                        'orden' => 6,
+                        'titulo' => 'SERVICIOS IP',
+                        'resultado_aprendizaje' => 'Configura y despliega servicios de red esenciales como DHCP, NAT y SSH para facilitar administración y conectividad.',
+                        'horas_teoricas' => 2, 'horas_practicas' => 4,
+                        'contenido_conceptual' => [
+                            'Configuración de DHCP',
+                            'Introducción a Network Address Translation (NAT) y Port Address Translation (PAT)',
+                            'Configuración de NAT estático',
+                            'Configuración de NAT dinámico',
+                            'Traducción de direcciones de puertos (PAT)',
+                            'Introducción a Calidad de Servicio (QoS)',
+                            'Acceso remoto mediante SSH',
+                            'Laboratorio de configuración de HSRP'
+                        ],
+                        'contenido_procedimental' => [
+                            'Configura NAT Outside/Inside', 'Implementa SSH con llaves RSA', 'Gestiona pools de direcciones DHCP'
+                        ],
+                        'contenido_actitudinal' => [
+                            'Conciencia sobre escasez de IPv4', 'Ética en el acceso remoto'
+                        ],
+                        'logros' => [
+                            ['tipo' => 'HACER', 'desc' => 'Configura servidores y agentes de relé DHCP.', 'ind' => 'Verifica que hosts reciban configuración IP automática.'],
+                            ['tipo' => 'HACER', 'desc' => 'Implementa NAT estático, dinámico y PAT.', 'ind' => 'Logra que múltiples IPs privadas naveguen con una pública.'],
+                            ['tipo' => 'HACER', 'desc' => 'Establece conexiones de administración remota SSH.', 'ind' => 'Deshabilita accesos inseguros (Telnet) y usa cifrado.'],
+                            ['tipo' => 'SABER', 'desc' => 'Explica fundamentos de QoS.', 'ind' => 'Identifica mecanismos de marcado y priorización.'],
+                            ['tipo' => 'HACER', 'desc' => 'Realiza laboratorios integrales de servicios y redundancia.', 'ind' => 'Integra HSRP y NAT en escenario funcional.']
+                        ],
+                        'personal' => [
+                            'estrategias_metodologicas' => 'Demostración de traducción de direcciones, seminario sobre administración remota.',
+                            'estrategias_aprendizaje' => 'Práctica hands-on en laboratorios, investigación sobre modelos QoS.',
+                            'estrategias_recursos' => ['Routers con soporte NAT', 'Clientes SSH', 'Analizadores de paquetes (Wireshark)'],
+                            'evaluacion_formativa' => [
+                                'actividades' => ['Configuración de PAT para salida a Internet simulada'],
+                                'instrumentos' => ['Lista de verificación de conectividad'],
+                                'evidencias' => ['Tabla de traducciones NAT (show ip nat translations)']
+                            ],
+                            'evaluacion_sumativa' => [
+                                'actividades' => ['Laboratorio integral de Servicios IP y Seguridad'],
+                                'instrumentos' => ['Rúbrica de laboratorio práctico'],
+                                'evidencias' => ['Configuración persistente en memoria start-up']
+                            ],
+                            'secuencia_didactica' => [
+                                ['momento' => 'INTRODUCCION', 'duracion' => 10, 'actividad' => 'Cómo coexisten las redes privadas con el IPv4 público global.'],
+                                ['momento' => 'RESULTADOS/LOGROS', 'duracion' => 10, 'actividad' => 'Dominio de la asignación dinámica (DHCP) y traducción de red (NAT).'],
+                                ['momento' => 'CONTENIDOS DE LA CLASE', 'duracion' => 10, 'actividad' => 'Repaso de puertos TCP/UDP para NAT y encriptación en SSH.'],
+                                ['momento' => 'CUERPO DE CONTENIDOS', 'duracion' => 40, 'actividad' => 'Implementación paso a paso de servicios en un router frontera.'],
+                                ['momento' => 'CONCLUSION O CIERRE', 'duracion' => 10, 'actividad' => 'Prueba de acceso SSH externo y verificación de pool DHCP.']
+                            ]
+                        ],
+                        'bibliografia_titulo' => 'Redes de Computadoras' // Aproximación
+                    ]
+                ]
+            ],
+            [
+                'numero' => 7,
+                'titulo' => 'SEGURIDAD',
+                'objetivo' => 'Implementar medidas de seguridad perimetral y de capa 2.',
+                'contenido_minimo' => 'ACLs, Port Security, DHCP Snooping, AAA.',
+                'elemento_competencia' => 'Asegura la red contra amenazas comunes.',
+                'temas' => [
+                    [
+                        'orden' => 7,
+                        'titulo' => 'SEGURIDAD EN REDES',
+                        'resultado_aprendizaje' => 'Implementa medidas de seguridad perimetral y de capa 2 utilizando ACLs, seguridad de puertos y autenticación.',
+                        'horas_teoricas' => 2, 'horas_practicas' => 4,
+                        'contenido_conceptual' => [
+                            'Fundamentos de seguridad en redes',
+                            'Componentes de un programa de seguridad',
+                            'Elementos de políticas de seguridad relacionadas con claves',
+                            'Introducción a Listas de Control de Acceso (ACLs)',
+                            'Listas de Control de Acceso Estándar',
+                            'Listas de Control de Acceso Extendido',
+                            'Autenticación, Autorización y Contabilidad (AAA) con Tacacs y Radius',
+                            'Seguridad de Capa 2 con Port Security',
+                            'Protección de la consola del equipo',
+                            'Seguridad de Capa 2 con DHCP Snooping'
+                        ],
+                        'contenido_procedimental' => [
+                            'Configura ACLs de filtrado', 'Implementa restricciones de Port Security', 'Activa DHCP Snooping en VLANs'
+                        ],
+                        'contenido_actitudinal' => [
+                            'Compromiso con la privacidad de los datos', 'Ética profesional en la gestión de seguridad'
+                        ],
+                        'logros' => [
+                            ['tipo' => 'SABER', 'desc' => 'Explica elementos fundamentales de políticas de seguridad.', 'ind' => 'Describe componentes de programa de seguridad robusto.'],
+                            ['tipo' => 'HACER', 'desc' => 'Configura ACLs estándar y extendidas.', 'ind' => 'Deniega tráfico específico mientras permite el resto.'],
+                            ['tipo' => 'HACER', 'desc' => 'Implementa seguridad de Capa 2 (Port Security).', 'ind' => 'Configura violación de puerto para apagar ante MAC no autorizada.'],
+                            ['tipo' => 'HACER', 'desc' => 'Establece mecanismos contra suplantación (DHCP Snooping).', 'ind' => 'Identifica puertos confiables y no confiables.'],
+                            ['tipo' => 'HACER', 'desc' => 'Aplica autenticación remota AAA (TACACS+/RADIUS).', 'ind' => 'Configura acceso a consola protegido.']
+                        ],
+                        'personal' => [
+                            'estrategias_metodologicas' => 'Análisis de casos de ciberataques, taller de mitigación de amenazas.',
+                            'estrategias_aprendizaje' => 'Simulación de ataques y defensas, redacción de políticas de seguridad.',
+                            'estrategias_recursos' => ['Simuladores de red', 'Guías de hardening Cisco'],
+                            'evaluacion_formativa' => [
+                                'actividades' => ['Aplicación de una ACL estándar en router frontera'],
+                                'instrumentos' => ['Guía de autoevaluación técnica'],
+                                'evidencias' => ['Prueba de conectividad bloqueada por ACL']
+                            ],
+                            'evaluacion_sumativa' => [
+                                'actividades' => ['Proyecto final de seguridad perimetral y de acceso'],
+                                'instrumentos' => ['Rúbrica de evaluación integradora'],
+                                'evidencias' => ['Red protegida contra intrusiones L2 y filtrado L3']
+                            ],
+                            'secuencia_didactica' => [
+                                ['momento' => 'INTRODUCCION', 'duracion' => 10, 'actividad' => 'Panorama actual de amenazas en redes de datos empresariales.'],
+                                ['momento' => 'RESULTADOS/LOGROS', 'duracion' => 10, 'actividad' => 'Definición de objetivos en el aseguramiento de la infraestructura.'],
+                                ['momento' => 'CONTENIDOS DE LA CLASE', 'duracion' => 10, 'actividad' => 'Repaso de tipos de ACLs y seguridad de puerto.'],
+                                ['momento' => 'CUERPO DE CONTENIDOS', 'duracion' => 40, 'actividad' => 'Laboratorio de configuración de AAA, Port Security y ACLs extendidas.'],
+                                ['momento' => 'CONCLUSION O CIERRE', 'duracion' => 10, 'actividad' => 'Reflexión sobre el equilibrio entre seguridad y operatividad.']
+                            ]
+                        ],
+                        'bibliografia_titulo' => 'Fundamentos de Redes'
+                    ]
+                ]
+            ],
+        ];
+
+        $temasCreados = collect();
+
+        foreach ($unidadesData as $uData) {
+            $unidad = Unidad::create([
+                'asignatura_id' => $asignatura->id,
+                'numero' => $uData['numero'],
+                'titulo' => $uData['titulo'],
+                'objetivo' => $uData['objetivo'],
+                'contenido_minimo' => $uData['contenido_minimo'],
+                'elemento_competencia' => $uData['elemento_competencia']
+            ]);
+
+            foreach ($uData['temas'] as $tData) {
+                // Crear Tema
+                $tema = Tema::create([
+                    'unidad_id' => $unidad->id,
+                    'orden' => $tData['orden'],
+                    'titulo' => $tData['titulo'],
+                    'resultado_aprendizaje' => $tData['resultado_aprendizaje'],
+                    'horas_teoricas' => $tData['horas_teoricas'],
+                    'horas_practicas' => $tData['horas_practicas'],
+                    'contenido_conceptual' => $tData['contenido_conceptual'],
+                    'contenido_procedimental' => $tData['contenido_procedimental'],
+                    'contenido_actitudinal' => $tData['contenido_actitudinal'],
+                    'contenido_items' => $tData['contenido_conceptual'] // ADDED: Populate items with conceptual content
+                ]);
+
+                // Crear Logros e Indicadores
+                foreach ($tData['logros'] as $logroData) {
+                    $logro = $tema->logros()->create([
+                        'tipo_logro' => $logroData['tipo'],
+                        'descripcion' => $logroData['desc']
+                    ]);
+                    $logro->indicadores()->create(['descripcion' => $logroData['ind']]);
+                }
+
+                // Asociar Bibliografía
+                if (isset($tData['bibliografia_titulo'])) {
+                    $bib = Bibliografia::where('titulo', 'LIKE', '%' . $tData['bibliografia_titulo'] . '%')->first();
+                    if ($bib) {
+                        $tema->bibliografias()->sync([$bib->id]);
+                    }
+                }
+
+                // Crear Secuencias Didácticas (Para tabla secuencias_temas)
+                if (isset($tData['personal']['secuencia_didactica'])) {
+                    foreach ($tData['personal']['secuencia_didactica'] as $sec) {
+                        $tema->secuencias()->create([
+                            'momento' => $sec['momento'],
+                            'duracion_minutos' => $sec['duracion'],
+                            'descripcion' => $sec['actividad']
+                        ]);
+                    }
+                }
+
+                // Crear Planificación Personal
+                $this->crearPlanificacionPersonal($tema, $userId, $tData['personal']);
+                
+                $temasCreados->push($tema);
+            }
+        }
+        return $temasCreados;
+    }
+
+
     private function crearPlanificacionPersonal($tema, $userId, $personalData = [])
     {
-        if (!$userId || $tema->secuencias->isEmpty()) {
-            return;
+        if (!$userId) return;
+
+        // Transformar secuencias para planificacion personal
+        $secuenciasArray = [];
+        if(isset($personalData['secuencia_didactica'])) {
+             foreach($personalData['secuencia_didactica'] as $idx => $sec) {
+                 $secuenciasArray[] = [
+                    'id' => time() + $idx + rand(0, 1000),
+                    'momento' => $sec['momento'],
+                    'duracion' => (int)$sec['duracion'],
+                    'actividad' => $sec['actividad']
+                 ];
+             }
         }
 
-        // Preparar datos de planificación personal
-        $planificacionData = array_merge($personalData, [
-            'secuencia_didactica' => $tema->secuencias->map(function($sec, $index) {
-                return [
-                    'id' => time() + $index, // ID único basado en timestamp
-                    'momento' => $sec->momento,
-                    'duracion' => (int)$sec->duracion_minutos, // Frontend usa 'duracion' (int)
-                    'actividad' => $sec->descripcion // Frontend usa 'actividad'
-                ];
-            })->toArray()
-        ]);
+        $planificacionData = [
+            'estrategias_metodologicas' => $personalData['estrategias_metodologicas'] ?? null,
+            'estrategias_aprendizaje' => $personalData['estrategias_aprendizaje'] ?? null,
+            'estrategias_recursos' => $personalData['estrategias_recursos'] ?? [],
+            'evaluacion_formativa' => $personalData['evaluacion_formativa'] ?? [],
+            'evaluacion_sumativa' => $personalData['evaluacion_sumativa'] ?? [],
+            'secuencia_didactica' => $secuenciasArray
+        ];
 
-        // Crear o actualizar planificación personal
         PlanificacionPersonal::updateOrCreate(
-            [
-                'tema_id' => $tema->id,
-                'user_id' => $userId
-            ],
+            ['tema_id' => $tema->id, 'user_id' => $userId],
             $planificacionData
         );
     }
 
-    private function generarCronogramaUnificado($grupoPrincipal, $todosLosGrupos, $asignatura, $listaTemas = null)
+    private function generarCronogramaUnificado($grupoPrincipal, $todosLosGrupos, $asignatura, $listaTemas)
     {
-        $fechaInicio = Carbon::create(2026, 2, 9); // 09/02/2026
-        $fechaFin = Carbon::create(2026, 6, 27);   // 27/06/2026 (Para tener exactamente 40 sesiones)
+        $fechaInicio = Carbon::create(2026, 2, 9);
+        $fechaFin = Carbon::create(2026, 6, 27);
         
-        // Fechas de Exámenes
         $examenes = [
             '2026-03-25' => '1er Parcial',
             '2026-05-20' => '2do Parcial',
@@ -652,131 +745,144 @@ class ArielCamaraSeeder extends Seeder
             '2026-07-01' => '2da Instancia'
         ];
 
-        // Obtener horarios COMBINADOS de todos los grupos (Teoría + Práctica)
         $horarios = $todosLosGrupos->pluck('horarios')->flatten();
 
-        // Obtener días de clase como enteros (ISO-8601: 1=Lunes, 7=Domingo)
-        $diasClase = $horarios->map(function($h) {
-            // Normalizar el día (quitar tildes si es necesario o manejar formatos)
-            // En el dump vimos "Miercoles" (sin tilde) y "Lunes".
-            // Ajustamos el mapa para ser robustos.
-            $diaNormalizado = ucfirst(strtolower(str_replace(['é', 'á'], ['e', 'a'], $h->dia))); 
-            // Esto maneja "Miercoles" y "Miércoles" -> "Miercoles" (si el mapa tiene Miercoles)
-            
-            // Mapa robusto local
-            $mapLocal = [
-                'Lunes' => 1, 'Martes' => 2, 'Miercoles' => 3, 'Miércoles' => 3, 
-                'Jueves' => 4, 'Viernes' => 5, 'Sabado' => 6, 'Sábado' => 6, 'Domingo' => 7
-            ];
-            
-            return $mapLocal[$diaNormalizado] ?? $mapLocal[$h->dia] ?? null;
+        // Mapeo preciso de días
+        $mapLocal = [
+            'Lunes' => 1, 'Martes' => 2, 'Miercoles' => 3, 'Miércoles' => 3, 
+            'Jueves' => 4, 'Viernes' => 5, 'Sabado' => 6, 'Sábado' => 6, 'Domingo' => 7
+        ];
+
+        $diasClase = $horarios->map(function($h) use ($mapLocal) {
+            $diaNorm = ucfirst(strtolower(str_replace(['é', 'á'], ['e', 'a'], $h->dia))); 
+            return $mapLocal[$diaNorm] ?? null;
         })->filter()->unique()->values()->toArray();
 
         $fechaActual = $fechaInicio->copy();
         $sesionCount = 1;
+        $maxSesiones = 12; // 6 weeks * 2 sessions
 
-        while ($fechaActual->lte($fechaFin)) {
-            $diaSemana = $fechaActual->dayOfWeekIso; // 1 (Mon) - 7 (Sun)
-            $esDiaClase = in_array($diaSemana, $diasClase);
-            $observaciones = null;
-            $tipoContenido = 'Práctica'; // Default
+        // Balancear temas: Tenemos 7 temas y 12 sesiones.
+        // Aprox 1-2 sesiones por tema.
+        $sesionesPorTema = max(1, floor($maxSesiones / $listaTemas->count()));
 
-            if ($esDiaClase) {
-                // Determinar tipo basado en el día
-                if ($diaSemana === 1) $tipoContenido = 'Teoría'; // Según el user Lunes es Práctico.. espera, revisemos el dump.
-                // Dump: 424 (TEORICO) -> Miercoles. 425 (PRACTICO) -> Lunes.
-                // OK, corregimos lógica:
-                if ($diaSemana === 3) $tipoContenido = 'Teoría'; // Miércoles
-                elseif ($diaSemana === 1) $tipoContenido = 'Práctica'; // Lunes
-                else $tipoContenido = 'Práctica'; // Default
-                
+        while ($fechaActual->lte($fechaFin) && $sesionCount <= $maxSesiones) {
+            $diaSemana = $fechaActual->dayOfWeekIso;
+
+            if (in_array($diaSemana, $diasClase)) {
+                $observaciones = null;
+                $tipoContenido = 'Práctica';
                 $fechaStr = $fechaActual->format('Y-m-d');
+
+                // Lógica de tipo de sesión basada en día (configurable)
+                // Lunes (1) -> Práctica, Miércoles (3) -> Teoría
+                if ($diaSemana === 3) $tipoContenido = 'Teoría';
+                else $tipoContenido = 'Práctica';
                 
-                // Verificar si es fecha de examen
                 if (isset($examenes[$fechaStr])) {
                     $observaciones = "EXAMEN: " . $examenes[$fechaStr];
                     $tipoContenido = 'Evaluación';
                 }
 
-                // Definir contenidos simplificados (menos de 255 caracteres)
+                // Selección de Tema
+                $temaId = null;
                 $conceptual = null;
                 $procedimental = null;
-                $actitudinal = ['Participación activa y ética profesional.'];
-                $criterios = "Analiza componentes, Diseña soluciones";
-                $instrumentos = "Lista de cotejo, Prueba escrita";
-
-                if ($tipoContenido === 'Teoría') {
-                    $conceptual = ['Introducción y desarrollo de conceptos teóricos.'];
-                } elseif ($tipoContenido === 'Práctica') {
-                    $procedimental = ['Desarrollo de prácticas y laboratorios guiados.'];
-                } else { // Evaluación
-                    $conceptual = ['Evaluación teórica de conocimientos.'];
-                    $procedimental = ['Evaluación práctica de habilidades.'];
-                    $criterios = "Evalúa rendimiento, Documenta procesos";
-                    $instrumentos = "Examen escrito, Rúbrica de evaluación";
-                }
-
-                // Asociar Temas (Determinar tema para esta sesión)
-                $temaId = null;
+                $temaActual = null;
+                
                 if ($listaTemas && $listaTemas->isNotEmpty() && $tipoContenido !== 'Evaluación') {
-                    // Distribuir temas: 10 sesiones por tema aprox
-                    // Usamos el número de sesión actual (antes del incremento)
-                    $indexTema = min(floor(($sesionCount - 1) / 10), $listaTemas->count() - 1);
-                    $temaActual = $listaTemas[$indexTema];
+                    $indexTema = min(floor(($sesionCount - 1) / $sesionesPorTema), $listaTemas->count() - 1);
+                    $temaActualObj = $listaTemas[$indexTema];
+                    
+                    // Recargar tema para asegurar relaciones
+                    $temaActual = Tema::with(['logros', 'planificacionPersonal'])->find($temaActualObj->id);
                     $temaId = $temaActual->id;
+                    
+                    if ($tipoContenido === 'Teoría') {
+                        $conceptual = $temaActual->contenido_conceptual;
+                    } else {
+                        $procedimental = $temaActual->contenido_procedimental;
+                    }
                 }
 
-                // Calcular semana académica (basada en la fecha de inicio)
                 $diasDesdeInicio = $fechaInicio->diffInDays($fechaActual);
                 $semanaAcademica = (int)floor($diasDesdeInicio / 7) + 1;
 
+
+                // Recopilar Criterios e Instrumentos del Tema
+                $criteriosDesempeno = [];
+                $instrumentosEvaluacion = [];
+
+                if ($temaActual) {
+                    // Criterios desde Logros
+                    $criteriosDesempeno = $temaActual->logros->map(function($l) {
+                        return $l->descripcion;
+                    })->toArray(); // Guardar como Array
+
+                    // Instrumentos desde Planificación Personal
+                    $planPersonal = PlanificacionPersonal::where('tema_id', $temaActual->id)->where('user_id', $grupoPrincipal->docente->user_id)->first();
+                    if ($planPersonal) {
+                        $instFormativa = $planPersonal->evaluacion_formativa['instrumentos'] ?? [];
+                        $instSumativa = $planPersonal->evaluacion_sumativa['instrumentos'] ?? [];
+                        $todosInstrumentos = array_unique(array_merge($instFormativa, $instSumativa));
+                        $instrumentosEvaluacion = array_values($todosInstrumentos); // Guardar como Array (reindexado)
+                    }
+                    
+                    // NEW: Populate contenido_items_seleccionados
+                    if (!empty($temaActual->contenido_items)) {
+                        $contenidoItemsSeleccionados = [];
+                        foreach ($temaActual->contenido_items as $idx => $item) {
+                             $contenidoItemsSeleccionados[] = "{$temaActual->id}:{$idx}";
+                        }
+                    } elseif (!empty($temaActual->contenido_conceptual) && is_array($temaActual->contenido_conceptual)) {
+                        $contenidoItemsSeleccionados = [];
+                         foreach ($temaActual->contenido_conceptual as $idx => $item) {
+                             $contenidoItemsSeleccionados[] = "{$temaActual->id}:{$idx}";
+                        }
+                    }
+                }
+
                 $cronograma = Cronograma::create([
-                    'grupo_id' => $grupoPrincipal->id, // SIEMPRE al grupo principal (424)
+                    'grupo_id' => $grupoPrincipal->id,
                     'asignatura_id' => $asignatura->id,
                     'fecha' => $fechaActual->toDateString(),
                     'numero_sesion' => $sesionCount++,
                     'semana_academica' => $semanaAcademica,
                     'observaciones' => $observaciones,
-                    'tema_id' => $temaId, // Fallback para el frontend
+                    'tema_id' => $temaId,
                     'contenido_conceptual' => $conceptual, 
                     'contenido_procedimental' => $procedimental,
-                    'contenido_actitudinal' => $actitudinal,
-                    'criterios_desempeno' => $criterios,
-                    'instrumentos_evaluacion' => $instrumentos,
+                    'contenido_actitudinal' => ['Participación activa y ética.'],
+                    'criterios_desempeno' => $criteriosDesempeno,
+                    'instrumentos_evaluacion' => $instrumentosEvaluacion,
+                    'contenido_items_seleccionados' => isset($contenidoItemsSeleccionados) ? $contenidoItemsSeleccionados : [],
                     'cumplido' => false,
-                    'pedagogico' => [
-                        'tipo_sesion' => $tipoContenido
-                    ]
+                    'pedagogico' => ['tipo_sesion' => $tipoContenido]
                 ]);
 
-                // Asociar Temas vía pivot (para el futuro)
                 if ($temaId) {
                     $cronograma->temas()->attach($temaId);
-                    $this->command->info("Sesión {$cronograma->numero_sesion}: Asociado tema '{$temaActual->titulo}' (ID: {$temaId})");
                 }
             }
-
             $fechaActual->addDay();
         }
     }
+
     private function limpiarAsignatura($asignatura) {
-        // Limpiar contenido académico previo (Unidades y Temas) para evitar corrupción de datos
+        // Limpieza profunda para evitar duplicados
         foreach($asignatura->unidades as $u) {
             foreach($u->temas as $t) {
-                // Eliminar planificaciones personales asociadas
                 PlanificacionPersonal::where('tema_id', $t->id)->delete();
-                
-                // Eliminar logros e indicadores
                 foreach($t->logros as $logro) {
                     $logro->indicadores()->delete();
                 }
                 $t->logros()->delete();
-                
-                // Eliminar secuencias
                 $t->secuencias()->delete();
             }
             $u->temas()->delete();
             $u->delete();
         }
+        // Limpieza de bibliografias asociadas pivot
+        $asignatura->bibliografias()->delete();
     }
 }
