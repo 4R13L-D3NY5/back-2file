@@ -11,15 +11,14 @@ class SedeController extends Controller
     public function index()
     {
         $sedes = Sede::query()
-            ->withCount(['carreras'])
             ->orderBy('id')
             ->get()
             ->map(function ($sede) {
-                // Contar docentes reales a través de grupos usando la relación Many-to-Many
-                // Docente -> Grupos -> Asignatura -> Carreras -> Sedes
-                $docentesCount = \App\Models\Docente::whereHas('grupos.asignatura.carreras.sedes', function ($q) use ($sede) {
-                    $q->where('sedes.id', $sede->id);
-                })->count();
+                // Count carreras directly via sede_id column
+                $carrerasCount = \App\Models\Carrera::where('sede_id', $sede->id)->count();
+
+                // Count docentes via sede_id on docentes table
+                $docentesCount = \App\Models\Docente::where('sede_id', $sede->id)->count();
 
                 return [
                     'id' => $sede->id,
@@ -27,7 +26,7 @@ class SedeController extends Controller
                     'codigo' => $sede->codigo,
                     'ciudad' => $sede->ciudad,
                     'activo' => $sede->activo,
-                    'carreras_count' => $sede->carreras_count,
+                    'carreras_count' => $carrerasCount,
                     'docentes_count' => $docentesCount,
                 ];
             });
@@ -36,9 +35,6 @@ class SedeController extends Controller
         $globalStats = [
             'total_sedes' => $sedes->count(),
             'sedes_activas' => $sedes->where('activo', true)->count(),
-            // Distinct carreras across all sedes (approximated by sum if uniqueness is per-sede, or DB query for true distinct)
-            // 'total_carreras' => \App\Models\Carrera::count(), // Total carreras in system
-            // 'total_carreras' => $sedes->sum('carreras_count'), // Total assignments (one carrera can be in multiple sedes)
             'total_carreras' => \App\Models\Carrera::count(),
             'total_docentes' => \App\Models\Docente::count()
         ];
