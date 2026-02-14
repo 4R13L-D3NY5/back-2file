@@ -698,6 +698,7 @@ class ReporteController extends Controller
                 $reports[] = [
                     'id' => $grupo->id . '-' . $startDate->timestamp,
                     'grupo_id' => $grupo->id,
+                    'grupo_nombre' => $grupo->nombre,
                     'asignatura' => $grupo->asignatura->nombre,
                     // Use Carrera name from Group relation if loaded, or fetch simply? 
                     // ReporteController usually runs in context where we know the carrera name from ID?
@@ -723,6 +724,7 @@ class ReporteController extends Controller
                 $reports[] = [
                     'id' => $grupo->id . '-' . $startDate->timestamp,
                     'grupo_id' => $grupo->id,
+                    'grupo_nombre' => $grupo->nombre,
                     'asignatura' => $grupo->asignatura->nombre,
                     'carrera' => $grupo->carrera ? $grupo->carrera->nombre : 'Carrera',
                     'docente' => $grupo->docente->nombre_completo,
@@ -777,6 +779,7 @@ class ReporteController extends Controller
             $reports[] = [
                 'id' => $grupo->id . '-' . $startDate->timestamp,
                 'grupo_id' => $grupo->id,
+                'grupo_nombre' => $grupo->nombre,
                 'asignatura' => $grupo->asignatura->nombre,
                 'carrera' => $grupo->carrera ? $grupo->carrera->nombre : 'Carrera',
                 'docente' => $grupo->docente->nombre_completo,
