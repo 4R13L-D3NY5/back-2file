@@ -1447,6 +1447,153 @@ class AsignaturaController extends Controller
         }
     }
 
+    /**
+     * Endpoint público para obtener todas las materias con sus programas analíticos completos.
+     * GET /api/programas-analiticos?sede_id=1&carrera_id=5&semestre=3
+     */
+    public function programasAnaliticos(Request $request)
+    {
+        // Validar token estático (sin Sanctum)
+        $expectedToken = env('PROGRAMAS_API_TOKEN', 'unitepc-programas-2026');
+        $providedToken = $request->bearerToken() ?? $request->query('token');
+
+        if (!$providedToken || $providedToken !== $expectedToken) {
+            return response()->json(['error' => 'Token inválido o no proporcionado.'], 401);
+        }
+
+        $query = Asignatura::query();
+
+        // Eager load: estructura completa del programa analítico
+        $query->with([
+            'unidades.temas.logros.indicadores',
+            'unidades.temas.secuencias',
+            'unidades.temas.bibliografias',
+            'bibliografias',
+            'carreras.sede',
+        ]);
+
+        // Filtros opcionales
+        if ($request->filled('sede_id') || $request->filled('carrera_id') || $request->filled('semestre')) {
+            $query->whereHas('carreras', function ($q) use ($request) {
+                if ($request->filled('sede_id')) {
+                    $q->where(function ($sub) use ($request) {
+                        $sub->where('asignatura_carrera.sede_id', $request->sede_id)
+                            ->orWhere('carreras.sede_id', $request->sede_id);
+                    });
+                }
+                if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
+                if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
+            });
+        }
+
+        // Búsqueda por nombre o código
+        if ($request->filled('search')) {
+            $term = $request->search;
+            $query->where(function ($q) use ($term) {
+                $q->where('nombre', 'like', "%{$term}%")
+                    ->orWhere('codigo', 'like', "%{$term}%");
+            });
+        }
+
+        $asignaturas = $query->orderBy('nombre')->get();
+
+        return response()->json([
+            'total' => $asignaturas->count(),
+            'data' => $asignaturas->map(function ($a) {
+                $mainCarrera = $a->carreras->first();
+
+                return [
+                    'id' => $a->id,
+                    'codigo' => $a->codigo,
+                    'nombre' => $a->nombre,
+                    'creditos' => $a->creditos,
+                    'semestre' => $mainCarrera?->pivot?->semestre,
+                    'carrera' => $mainCarrera ? [
+                        'id' => $mainCarrera->id,
+                        'nombre' => $mainCarrera->nombre,
+                        'sede' => $mainCarrera->sede?->nombre,
+                    ] : null,
+
+                    // Datos generales del programa
+                    'descripcion' => $a->descripcion,
+                    'justificacion' => $a->justificacion,
+                    'proposito_general' => $a->proposito_general,
+                    'competencia_asignatura' => $a->competencia_asignatura,
+                    'competencia_global_especifica' => $a->competencia_global_especifica,
+                    'elementos_competencia' => $a->elementos_competencia,
+                    'contenido_minimo' => $a->contenido_minimo,
+                    'metodologia_general' => $a->metodologia_general,
+                    'sistema_evaluacion' => $a->sistema_evaluacion,
+                    'requisitos' => $a->requisitos,
+
+                    // Estructura del programa analítico
+                    'unidades' => $a->unidades->map(function ($u) {
+                        return [
+                            'id' => $u->id,
+                            'numero' => $u->numero,
+                            'titulo' => $u->titulo,
+                            'elemento_competencia' => $u->elemento_competencia,
+                            'temas' => $u->temas->map(function ($t) {
+                                return [
+                                    'id' => $t->id,
+                                    'titulo' => $t->titulo,
+                                    'orden' => $t->orden,
+                                    'resultado_aprendizaje' => $t->resultado_aprendizaje,
+                                    'contenido_items' => $t->contenido_items,
+                                    'contenido_conceptual' => $t->contenido_conceptual,
+                                    'contenido_procedimental' => $t->contenido_procedimental,
+                                    'contenido_actitudinal' => $t->contenido_actitudinal,
+                                    'estrategias_metodologicas' => $t->estrategias_metodologicas,
+                                    'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
+                                    'estrategias_recursos' => $t->estrategias_recursos,
+                                    'evaluacion_formativa' => $t->evaluacion_formativa,
+                                    'evaluacion_sumativa' => $t->evaluacion_sumativa,
+                                    'horas_teoricas' => $t->horas_teoricas,
+                                    'horas_practicas' => $t->horas_practicas,
+                                    'logros_esperados' => $t->logros->map(function ($l) {
+                                        return [
+                                            'id' => $l->id,
+                                            'descripcion' => $l->descripcion,
+                                            'tipo_logro' => $l->tipo_logro,
+                                            'indicadores' => $l->indicadores->map(fn($i) => [
+                                                'id' => $i->id,
+                                                'descripcion' => $i->descripcion,
+                                            ]),
+                                        ];
+                                    }),
+                                    'secuencia_didactica' => $t->secuencias->map(fn($s) => [
+                                        'id' => $s->id,
+                                        'momento' => $s->momento,
+                                        'descripcion' => $s->descripcion,
+                                        'duracion_minutos' => $s->duracion_minutos,
+                                    ]),
+                                    'bibliografias' => $t->bibliografias->map(fn($b) => [
+                                        'id' => $b->id,
+                                        'titulo' => $b->titulo,
+                                        'autor' => $b->autor,
+                                    ]),
+                                ];
+                            }),
+                        ];
+                    }),
+
+                    // Bibliografía general de la asignatura
+                    'bibliografias' => $a->bibliografias->map(fn($b) => [
+                        'id' => $b->id,
+                        'titulo' => $b->titulo,
+                        'autor' => $b->autor,
+                        'editorial' => $b->editorial,
+                        'anio' => $b->anio,
+                        'tipo' => $b->tipo,
+                    ]),
+
+                    // Progreso
+                    'progreso' => $a->estadisticas_progreso,
+                ];
+            }),
+        ]);
+    }
+
     private function saveBibliografias(Asignatura $asignatura, array $lines, $tipo)
     {
         foreach ($lines as $line) {

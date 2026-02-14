@@ -17,6 +17,9 @@ use App\Http\Controllers\PlanificacionSemestralController;
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,1')->name('login');
 Route::post('/register', [AuthController::class, 'register']);
 
+// Programas Analíticos (público con token estático)
+Route::get('/programas-analiticos', [AsignaturaController::class, 'programasAnaliticos']);
+
 // Protected Routes
 Route::middleware('auth:sanctum')->group(function () {
     // Auth
@@ -40,6 +43,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/asignaturas/{id}/import-excel', [AsignaturaController::class, 'importExcel']);
     Route::post('/asignaturas/{id}/import-plan-clase', [AsignaturaController::class, 'importPlanClase']);
     Route::post('/asignaturas/{id}/import-cronograma', [AsignaturaController::class, 'importCronograma']);
+
 
     // Docentes
     Route::post('/docentes/sync', [App\Http\Controllers\DocenteController::class, 'sync']);
@@ -187,10 +191,15 @@ Route::middleware('auth:sanctum')->group(function () {
     // Reportes (Nuevo)
     Route::get('/reportes/auditoria-semanal', [\App\Http\Controllers\ReporteController::class, 'getAuditoriaSemanal']);
     Route::get('/reportes/director', [\App\Http\Controllers\ReporteController::class, 'index']);
+    Route::get('/reportes/metrics', [\App\Http\Controllers\ReporteController::class, 'getDashboardMetrics']);
     Route::get('/reportes/director/weekly', [\App\Http\Controllers\ReporteController::class, 'generateWeeklyReport']);
     Route::get('/reportes/avance-general', [\App\Http\Controllers\ReporteController::class, 'avanceGeneral']);
     Route::get('/reportes/matriz-control', [\App\Http\Controllers\ReporteController::class, 'getMatrizControl']);
     Route::get('/reportes/auditoria-25', [\App\Http\Controllers\ReporteController::class, 'getAuditoria25']);
+    
+    // Informe Semanal (Micro-curricular)
+    Route::get('/reportes/semanal/draft', [\App\Http\Controllers\ReporteController::class, 'getWeeklyReportDraft']);
+    Route::post('/reportes/semanal', [\App\Http\Controllers\ReporteController::class, 'storeWeeklyReport']);
 
     // Reportes Nivel 2: Director de Carrera
     Route::get('/reportes/docentes-sin-avance', [\App\Http\Controllers\ReporteController::class, 'docentesSinAvance']);

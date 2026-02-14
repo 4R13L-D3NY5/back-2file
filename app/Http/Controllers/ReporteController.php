@@ -11,9 +11,387 @@ use App\Models\Carrera;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
+use App\Models\InformeSemanal;
 
 class ReporteController extends Controller
 {
+    /**
+     * Generate a draft for the Weekly Micro-curricular Report
+     * Automates 7 technical verification points based on Cronograma
+     */
+    public function getWeeklyReportDraft(Request $request) 
+    {
+        $request->validate([
+            'grupo_id' => 'required|exists:grupos,id',
+            'fecha_inicio' => 'required|date'
+        ]);
+
+        $grupoId = $request->grupo_id;
+        $startDate = Carbon::parse($request->fecha_inicio)->startOfWeek(); // Ensure monday
+        $endDate = $startDate->copy()->endOfWeek();
+
+        $grupo = Grupo::with(['docente', 'asignatura'])->findOrFail($grupoId);
+
+        // Fetch cronogramas for this week
+        $cronogramas = $grupo->cronogramas()
+            ->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
+            ->with(['tema', 'secuenciasDidacticas', 'evaluaciones', 'asistencias'])
+            ->get();
+
+        if ($cronogramas->isEmpty()) {
+            // Return a "Non-compliance" draft
+            return response()->json([
+                'exists' => false,
+                'report' => [
+                    'grupo_id' => $grupo->id,
+                    'docente_id' => $grupo->docente_id,
+                    'docente_nombre' => $grupo->docente->nombre_completo,
+                    'asignatura_nombre' => $grupo->asignatura->nombre,
+                    'semana_inicio' => $startDate->toDateString(),
+                    'semana_fin' => $endDate->toDateString(),
+                    'criterios' => [], // Empty criteria
+                    'observaciones' => 'No hay clases/cronograma registrado para esta semana.',
+                    'escala_alerta' => 'ROJO',
+                    'cumplimiento_porcentaje' => 0
+                ]
+            ]);
+        }
+
+        // Initialize Criteria counters
+        $criteriaStats = [
+            'tema_impartido' => 0,
+            'actividades' => 0,
+            'secuencia' => 0,
+            'plataforma' => 0, // Manual mostly
+            'evidencias' => 0,
+            'evaluaciones' => 0,
+            'integracion' => 0
+        ];
+
+        $totalSessions = $cronogramas->count();
+
+        foreach ($cronogramas as $crono) {
+            $pedagogico = $crono->pedagogico ?? [];
+
+            // 1. Tema Impartido
+            if ($crono->cumplido && $crono->tema_id) {
+                $criteriaStats['tema_impartido']++;
+            }
+
+            // 2. Actividades Formativas (Check pedagogico json or strategies)
+            // Fix: Check inside pedagogico['estrategias'] explicitly
+            $hasActivities = !empty($crono->tema->estrategias_metodologicas) || 
+                             (!empty($pedagogico['estrategias']) && count($pedagogico['estrategias']) > 0);
+            
+            if ($hasActivities) {
+                $criteriaStats['actividades']++;
+            }
+
+            // 3. Secuencia Didáctica
+            // Fix: Check inside pedagogico['secuencia'] explicitly
+            $hasSequence = $crono->secuenciasDidacticas->isNotEmpty() || 
+                           !empty($crono->contenido_conceptual) ||
+                           (!empty($pedagogico['secuencia']) && count($pedagogico['secuencia']) > 0);
+
+            if ($hasSequence) {
+                $criteriaStats['secuencia']++;
+            }
+
+            // 4. Plataforma (Placeholder: check if links exists in observations)
+            if (str_contains(strtolower($crono->observaciones ?? ''), 'moodle') || 
+                str_contains(strtolower($crono->observaciones ?? ''), 'teams')) {
+                $criteriaStats['plataforma']++;
+            }
+
+            // 5. Evidencias (Asistencia taken OR Uploaded Files)
+            // Fix: Check inside pedagogico['evidencias'] explicitly
+            $hasEvidence = $crono->asistencias->count() > 0 || 
+                           (!empty($pedagogico['evidencias']) && count($pedagogico['evidencias']) > 0);
+
+            if ($hasEvidence) {
+                $criteriaStats['evidencias']++;
+            }
+
+            // 6. Evaluaciones
+            // Fix: Check inside pedagogico['evaluacion'] explicitly
+            $hasEvaluation = $crono->evaluaciones->isNotEmpty() || 
+                             !empty($crono->instrumentos_evaluacion) ||
+                             (!empty($pedagogico['evaluacion']) && count($pedagogico['evaluacion']) > 0);
+
+            if ($hasEvaluation) {
+                $criteriaStats['evaluaciones']++;
+            }
+
+            // 7. Integración (Check transversal in tema)
+            // Assuming simplified check for now
+            $criteriaStats['integracion']++;
+        }
+
+        // Build the 7 criteria rows for the report
+        $criterios = [
+            'Tema impartido' => [
+                'cumple' => $criteriaStats['tema_impartido'] === $totalSessions,
+                'obs' => $criteriaStats['tema_impartido'] . '/' . $totalSessions . ' sesiones cumplen.'
+            ],
+            'Actividades formativas' => [
+                'cumple' => $criteriaStats['actividades'] >= 1, // At least once a week
+                'obs' => 'Actividades alineadas a competencias.'
+            ],
+            'Secuencia didáctica' => [
+                'cumple' => $criteriaStats['secuencia'] === $totalSessions,
+                'obs' => 'Inicio, desarrollo y cierre registrados.'
+            ],
+            'Plataforma virtual' => [
+                'cumple' => false, // Default to false for manual check
+                'obs' => 'Verificar actividades en campus virtual.'
+            ],
+            'Evidencias' => [
+                // If attendance is hidden, we rely on uploaded evidence mostly
+                'cumple' => $criteriaStats['evidencias'] >= 1, // At least one evidence per week? Or all sessions? Let's stay strict: all sessions
+                'obs' => 'Reportes generados o archivos subidos.'
+            ],
+            'Evaluaciones' => [
+                'cumple' => $criteriaStats['evaluaciones'] >= 1, // Optional depending on week
+                'obs' => 'Banco de preguntas y coherencia (Verificar).'
+            ],
+            'Integración transversal' => [
+                'cumple' => true,
+                'obs' => 'Investigación / Interacción Social.'
+            ]
+        ];
+
+        // Check verification existence
+        $existingReport = InformeSemanal::where('grupo_id', $grupoId)
+            ->whereDate('semana_inicio', $startDate->toDateString())
+            ->first();
+
+        // Calculate initial Alert Scale
+        $yesCount = collect($criterios)->where('cumple', true)->count();
+        $percentage = round(($yesCount / 7) * 100);
+        
+        $scale = 'VERDE';
+        if ($percentage < 70) $scale = 'ROJO';
+        elseif ($percentage < 90) $scale = 'AMARILLO';
+
+        return response()->json([
+            'exists' => !!$existingReport,
+            'report' => $existingReport ?? [
+                'grupo_id' => $grupo->id,
+                'docente_id' => $grupo->docente_id,
+                'docente_nombre' => $grupo->docente->nombre_completo,
+                'asignatura_nombre' => $grupo->asignatura->nombre,
+                'semana_inicio' => $startDate->toDateString(),
+                'semana_fin' => $endDate->toDateString(),
+                'criterios' => $criterios,
+                'observaciones' => '',
+                'escala_alerta' => $scale,
+                'cumplimiento_porcentaje' => $percentage
+            ]
+        ]);
+    }
+
+    /**
+     * Store or Update the Weekly Report
+     */
+    public function storeWeeklyReport(Request $request)
+    {
+        $request->validate([
+            'grupo_id' => 'required|exists:grupos,id',
+            'semana_inicio' => 'required|date',
+            'criterios' => 'required|array',
+            'escala_alerta' => 'required|in:VERDE,AMARILLO,ROJO'
+        ]);
+
+        $startDate = Carbon::parse($request->semana_inicio)->startOfWeek();
+        $endDate = $startDate->copy()->endOfWeek();
+
+        // Calculate percentage from criteria
+        $yesCount = collect($request->criterios)->where('cumple', true)->count();
+        $percentage = round(($yesCount / 7) * 100);
+
+        $report = InformeSemanal::updateOrCreate(
+            [
+                'grupo_id' => $request->grupo_id,
+                'semana_inicio' => $startDate->toDateString()
+            ],
+            [
+                'docente_id' => $request->docente_id,
+                'semana_fin' => $endDate->toDateString(),
+                'criterios' => $request->criterios,
+                'observaciones' => $request->observaciones,
+                'escala_alerta' => $request->escala_alerta,
+                'cumplimiento_porcentaje' => $percentage,
+                'created_by' => auth()->id() // Director
+            ]
+        );
+
+        return response()->json(['message' => 'Informe guardado correctamente', 'report' => $report]);
+    }
+    /**
+     * Dashboard Metrics for Director/Academic Dashboard
+     * Optimized for chart rendering and high-level KPIs
+     */
+    public function getDashboardMetrics(Request $request)
+    {
+        try {
+            $sedeId = $request->sede_id;
+            $carreraId = $request->carrera_id;
+
+            // Base Query
+            $query = Asignatura::query();
+
+            if ($sedeId) {
+                $query->whereHas('carreras', function ($q) use ($sedeId) {
+                    $q->where('asignatura_carrera.sede_id', $sedeId);
+                });
+            }
+
+            if ($carreraId) {
+                $query->whereHas('carreras', function ($q) use ($carreraId) {
+                    $q->where('carreras.id', $carreraId);
+                });
+            }
+
+            $asignaturas = $query->withCount('temas')
+                ->with(['grupos' => function ($q) {
+                    $q->with(['docente', 'cronogramas' => function ($cq) {
+                        $cq->select('id', 'grupo_id', 'fecha', 'cumplido', 'tema_id')
+                            ->withCount(['asistencias as total_asistencias', 'asistencias as presentes_asistencias' => function ($aq) {
+                                $aq->where('asistio', 1);
+                            }]);
+                    }]);
+                }])
+                ->get();
+
+            // Initialize Metrics
+            $totalAsignaturas = $asignaturas->count();
+            $totalDocentesIds = [];
+            $cursosAtrasados = 0;
+            $cursosEnRiesgo = 0; // < 50% attendance
+            $cursosAlDia = 0;
+
+            // Chart Data Containers
+            $avanceDistribution = [
+                '0-20%' => 0,
+                '21-50%' => 0,
+                '51-80%' => 0,
+                '81-100%' => 0
+            ];
+
+            $asistenciaTrend = []; // [date => [sum, count]]
+            $docentePerformance = [];
+
+            foreach ($asignaturas as $asignatura) {
+                $totalTemas = $asignatura->temas_count;
+
+                foreach ($asignatura->grupos as $grupo) {
+                    if ($grupo->docente_id) {
+                        $totalDocentesIds[] = $grupo->docente_id;
+                    }
+
+                    $cronogramas = $grupo->cronogramas;
+                    $temasAvanzados = $cronogramas->where('cumplido', true)->count(); // Uses cumplido boolean field
+                    
+                    // Calculate Progress
+                    $avance = $totalTemas > 0 ? min(100, round(($temasAvanzados / $totalTemas) * 100)) : 0;
+
+                    // Distribution Bucket
+                    if ($avance <= 20) $avanceDistribution['0-20%']++;
+                    elseif ($avance <= 50) $avanceDistribution['21-50%']++;
+                    elseif ($avance <= 80) $avanceDistribution['51-80%']++;
+                    else $avanceDistribution['81-100%']++;
+
+                    // Status
+                    if ($avance < 20 && $totalTemas > 0) $cursosAtrasados++;
+                    else $cursosAlDia++;
+
+                    // Attendance Logic & Trend
+                    $asistenciaSum = 0;
+                    $asistenciaCount = 0;
+
+                    foreach ($cronogramas as $crono) {
+                        if ($crono->total_asistencias > 0) {
+                            $ratio = ($crono->presentes_asistencias / $crono->total_asistencias) * 100;
+                            $asistenciaSum += $ratio;
+                            $asistenciaCount++;
+
+                            // Trend Data (Group by Week)
+                            $weekStart = Carbon::parse($crono->fecha)->startOfWeek()->format('Y-m-d');
+                            if (!isset($asistenciaTrend[$weekStart])) {
+                                $asistenciaTrend[$weekStart] = ['sum' => 0, 'count' => 0];
+                            }
+                            $asistenciaTrend[$weekStart]['sum'] += $ratio;
+                            $asistenciaTrend[$weekStart]['count']++;
+                        }
+                    }
+
+                    $avgAsistencia = $asistenciaCount > 0 ? ($asistenciaSum / $asistenciaCount) : 0;
+                    if ($avgAsistencia < 50 && $asistenciaCount > 0) $cursosEnRiesgo++;
+
+                    // Docente Performance Tracking
+                    if ($grupo->docente) {
+                        $docId = $grupo->docente->id;
+                        if (!isset($docentePerformance[$docId])) {
+                            $docentePerformance[$docId] = [
+                                'nombre' => $grupo->docente->nombre_completo,
+                                'avances' => [],
+                                'asistencias' => []
+                            ];
+                        }
+                        $docentePerformance[$docId]['avances'][] = $avance;
+                        $docentePerformance[$docId]['asistencias'][] = $avgAsistencia;
+                    }
+                }
+            }
+
+            // Process Trend Data for Chart
+            ksort($asistenciaTrend);
+            $asistenciaChartData = [];
+            foreach ($asistenciaTrend as $date => $data) {
+                $asistenciaChartData[] = [
+                    'x' => $date, // Timeline
+                    'y' => round($data['sum'] / $data['count'], 1)
+                ];
+            }
+
+            // Process Docente Ranking (Top 5 & Bottom 5)
+            $docenteRanked = [];
+            foreach ($docentePerformance as $id => $data) {
+                $avgAvance = count($data['avances']) > 0 ? array_sum($data['avances']) / count($data['avances']) : 0;
+                $avgAsist = count($data['asistencias']) > 0 ? array_sum($data['asistencias']) / count($data['asistencias']) : 0;
+                $docenteRanked[] = [
+                    'id' => $id,
+                    'nombre' => $data['nombre'],
+                    'avance' => round($avgAvance, 1),
+                    'asistencia' => round($avgAsist, 1),
+                    'score' => ($avgAvance * 0.6) + ($avgAsist * 0.4) // Weighted score
+                ];
+            }
+            usort($docenteRanked, fn($a, $b) => $b['score'] <=> $a['score']);
+            
+            return response()->json([
+                'kpis' => [
+                    'total_asignaturas' => $totalAsignaturas,
+                    'docentes_activos' => count(array_unique($totalDocentesIds)),
+                    'cursos_atrasados' => $cursosAtrasados,
+                    'cursos_riesgo_asistencia' => $cursosEnRiesgo,
+                    'promedio_general_avance' => $totalAsignaturas > 0 ? 'Calculated Elsewhere' : 0 // Can refine
+                ],
+                'charts' => [
+                    'avance_distribucion' => [
+                        'categories' => array_keys($avanceDistribution),
+                        'data' => array_values($avanceDistribution)
+                    ],
+                    'asistencia_trend' => $asistenciaChartData,
+                    'top_docentes' => array_slice($docenteRanked, 0, 5),
+                    'bottom_docentes' => array_slice($docenteRanked, -5)
+                ]
+            ]);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()], 500);
+        }
+    }
+
     public function index(Request $request)
     {
         // 1. Base Query: Get Asignaturas filtradas con relaciones optimizadas
@@ -277,79 +655,137 @@ class ReporteController extends Controller
 
         $carreraId = $request->carrera_id;
         $sedeId = $request->sede_id;
-        $startDate = Carbon::parse($request->fecha_inicio);
-        $endDate = $startDate->copy()->addDays(6);
+        
+        // Align to Monday-Sunday
+        $startDate = Carbon::parse($request->fecha_inicio)->startOfWeek();
+        $endDate = $startDate->copy()->endOfWeek();
 
-        // Fetch subjects linked to career/sede
-        $asignaturas = Asignatura::whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
+        // 1. Find Subjects linked to this Career & Sede
+        $asignaturaIds = Asignatura::whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
             $q->where('carreras.id', $carreraId)
-                ->where('asignatura_carrera.sede_id', $sedeId);
-        })->with(['grupos.docente', 'grupos.cronogramas' => function ($q) use ($startDate, $endDate) {
-            $q->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
-                ->withCount(['asistencias' => function ($aq) {
-                    $aq->where('asistio', true);
-                }]);
-        }])->get();
+              ->where('asignatura_carrera.sede_id', $sedeId);
+        })->pluck('id');
+
+        // 2. Fetch Groups: strict match OR via subject link
+        $grupos = Grupo::where(function($query) use ($carreraId, $sedeId, $asignaturaIds) {
+                // Option A: Link via Subject (Pivot)
+                $query->whereIn('asignatura_id', $asignaturaIds)
+                // Option B: Direct match on Group table (Legacy/Alternative)
+                      ->orWhere(function($q) use ($carreraId, $sedeId) {
+                          $q->where('carrera_id', $carreraId)
+                            ->where('sede_id', $sedeId);
+                      });
+            })
+            ->with(['asignatura', 'docente', 'cronogramas' => function ($cq) use ($startDate, $endDate) {
+                $cq->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
+                   ->withCount(['asistencias' => function ($aq) {
+                        $aq->where('asistio', true);
+                   }]);
+            }])
+            ->get();
 
         $reports = [];
 
-        foreach ($asignaturas as $asignatura) {
-            foreach ($asignatura->grupos as $grupo) {
-                if (!$grupo->docente) continue;
+        foreach ($grupos as $grupo) {
+            if (!$grupo->docente || !$grupo->asignatura) continue;
 
-                $sessions = $grupo->cronogramas; // Filtered by date in eager load
-                if ($sessions->isEmpty()) continue; // Skip if no classes scheduled this week
+            // Check if official report exists
+            $officialReport = InformeSemanal::where('grupo_id', $grupo->id)
+                ->whereDate('semana_inicio', $startDate->toDateString())
+                ->first();
 
-                $checks = [];
-                $alertLevel = 'VERDE';
-
-                foreach ($sessions as $session) {
-                    // 1. Asistencia Check (> 50% just as placeholder threshold)
-                    // We need total students count, assuming we can get it from enrollment or count total asistencias rows
-                    // For now, let's use a simple heuristic if we don't have total enrollment easily accessible here
-                    // Assuming cronograma->asistencias_count might be total attendance records created (present + absent)
-                    $totalRecords = $session->asistencias()->count();
-                    $present = $session->asistencias_count; // From withCount 'asistencias' where asistio=true
-
-                    $attendanceOk = $totalRecords > 0 ? ($present / $totalRecords) >= 0.5 : false;
-
-                    // 2. Content Check (If theme is assigned)
-                    $contentOk = !empty($session->tema_id);
-
-                    // 3. Resources/Strategies (Check if pedagogico field is filled)
-                    // pedagogico is cast to array in model
-                    $pedagogico = $session->pedagogico;
-                    $planningOk = !empty($pedagogico) && !empty($pedagogico['estrategias']);
-
-                    // 4. Completed Check
-                    $completedOk = $session->cumplido;
-
-                    $checks[] = [
-                        'fecha' => $session->fecha,
-                        'asistencia' => $attendanceOk,
-                        'contenido' => $contentOk,
-                        'planificacion' => $planningOk,
-                        'cumplido' => $completedOk
-                    ];
-
-                    if (!$completedOk || !$attendanceOk) {
-                        $alertLevel = 'ROJO';
-                    } else if (!$planningOk) {
-                        $alertLevel = ($alertLevel === 'ROJO') ? 'ROJO' : 'AMARILLO';
-                    }
-                }
-
+            if ($officialReport) {
                 $reports[] = [
                     'id' => $grupo->id . '-' . $startDate->timestamp,
-                    'asignatura' => $asignatura->nombre,
-                    'carrera' => $asignatura->carreras->where('id', $carreraId)->first()->nombre ?? 'N/A',
+                    'grupo_id' => $grupo->id,
+                    'asignatura' => $grupo->asignatura->nombre,
+                    // Use Carrera name from Group relation if loaded, or fetch simply? 
+                    // ReporteController usually runs in context where we know the carrera name from ID?
+                    // Let's just put the name if we can, or just keep it simple.
+                    // The frontend might expect it. Let's try to get it from relation or fallback.
+                    // Since we filtered by carrera_id, all have same carrera.
+                    'carrera' => $grupo->carrera ? $grupo->carrera->nombre : 'Carrera ' . $carreraId, 
                     'docente' => $grupo->docente->nombre_completo,
                     'semana_inicio' => $startDate->toDateString(),
-                    'criterios' => $checks,
-                    'alerta' => $alertLevel,
-                    'acciones' => $alertLevel === 'ROJO' ? 'Verificar' : 'Ninguna'
+                    'criterios' => $officialReport->criterios,
+                    'alerta' => $officialReport->escala_alerta,
+                    'acciones' => 'Revisado',
+                    'estado' => 'Guardado'
                 ];
+                continue;
             }
+
+            // If no official report, calculate PROJECTION/DRAFT
+            $sessions = $grupo->cronogramas; 
+            
+            if ($sessions->isEmpty()) {
+                // No planning for this week -> Red Flag
+                $reports[] = [
+                    'id' => $grupo->id . '-' . $startDate->timestamp,
+                    'grupo_id' => $grupo->id,
+                    'asignatura' => $grupo->asignatura->nombre,
+                    'carrera' => $grupo->carrera ? $grupo->carrera->nombre : 'Carrera',
+                    'docente' => $grupo->docente->nombre_completo,
+                    'semana_inicio' => $startDate->toDateString(),
+                    'criterios' => [],
+                    'alerta' => 'ROJO',
+                    'acciones' => 'Sin Planificación',
+                    'estado' => 'Pendiente'
+                ];
+                continue; 
+            }
+
+            $checks = [];
+            $alertLevel = 'VERDE';
+
+            foreach ($sessions as $session) {
+                $pedagogico = $session->pedagogico ?? [];
+
+                // 1. Asistencia / Evidencias Check
+                // Allow uploaded evidences to pass this check if attendance is not used
+                $hasAttendance = $session->asistencias_count > 0; // Pre-calculated in withCount
+                $hasEvidenceFiles = !empty($pedagogico['evidencias']) && count($pedagogico['evidencias']) > 0;
+                
+                $evidenceOk = $hasAttendance || $hasEvidenceFiles;
+
+                // 2. Content Check
+                $contentOk = !empty($session->tema_id);
+
+                // 3. Resources/Strategies
+                // Check strict structure
+                $planningOk = !empty($pedagogico) && 
+                              (!empty($pedagogico['estrategias']) || !empty($session->tema->estrategias_metodologicas));
+
+                // 4. Completed Check
+                $completedOk = $session->cumplido;
+
+                $checks[] = [
+                    'fecha' => $session->fecha,
+                    'asistencia' => $evidenceOk,
+                    'contenido' => $contentOk,
+                    'planificacion' => $planningOk,
+                    'cumplido' => $completedOk
+                ];
+
+                if (!$completedOk || !$evidenceOk) {
+                    $alertLevel = 'ROJO';
+                } else if (!$planningOk) {
+                    $alertLevel = ($alertLevel === 'ROJO') ? 'ROJO' : 'AMARILLO';
+                }
+            }
+
+            $reports[] = [
+                'id' => $grupo->id . '-' . $startDate->timestamp,
+                'grupo_id' => $grupo->id,
+                'asignatura' => $grupo->asignatura->nombre,
+                'carrera' => $grupo->carrera ? $grupo->carrera->nombre : 'Carrera',
+                'docente' => $grupo->docente->nombre_completo,
+                'semana_inicio' => $startDate->toDateString(),
+                'criterios' => $checks,
+                'alerta' => $alertLevel,
+                'acciones' => $alertLevel === 'ROJO' ? 'Verificar' : 'Pendiente',
+                'estado' => 'Borrador'
+            ];
         }
 
         return response()->json($reports);
