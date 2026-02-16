@@ -133,8 +133,8 @@ Route::middleware('auth:sanctum')->group(function () {
         // Copiar de otra asignatura
         Route::post('/{asignaturaId}/copiar', [PlanificacionSemestralController::class, 'copiarPlanificacion']);
 
-        // Seguimiento de Clase (Control de Clase)
-        Route::post('/sesion/{id}/seguimiento', [PlanificacionSemestralController::class, 'updateSeguimiento']);
+        // Seguimiento de Clase (Control de Clase) - uses 'seguimientos' table
+        Route::post('/seguimiento', [PlanificacionSemestralController::class, 'updateSeguimiento']);
     });
 
     // Bibliografía (General)

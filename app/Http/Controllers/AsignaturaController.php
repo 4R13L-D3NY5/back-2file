@@ -699,7 +699,8 @@ class AsignaturaController extends Controller
 
         try {
             // 1. Parsear el archivo usando el parser especializado
-            $parsedData = $this->planClaseParser->parsePlanClase($request->file('file'));
+            // 1. Parsear el archivo usando el parser especializado
+            $parsedData = $this->planClaseParser->parse($request->file('file'));
 
             // 2. Poblar los datos en la Asignatura
             // Mapeo de campos parseados -> Modelo Asignatura
@@ -719,23 +720,36 @@ class AsignaturaController extends Controller
 
             // 3. Estructura de Unidades (Si el Plan de Clase contiene el desglose)
             if (!empty($parsedData['unidades'])) {
-                foreach ($parsedData['unidades'] as $uIndex => $uData) {
-                    $numero = $uData['numero'] ?? ($uIndex + 1);
-                    $titulo = $uData['titulo'] ?? "UNIDAD $numero";
+                foreach ($parsedData['unidades'] as $uNum => $uData) {
+                    $titulo = $uData['titulo'] ?? "UNIDAD $uNum";
 
                     $unidad = $asignatura->unidades()->updateOrCreate(
-                        ['numero' => $numero],
+                        ['numero' => $uNum],
                         ['titulo' => substr($titulo, 0, 250)]
                     );
 
                     // Temas dentro de la unidad
                     if (!empty($uData['temas'])) {
-                        $unidad->temas()->delete(); // Reset temas
-                        foreach ($uData['temas'] as $tIndex => $temaTitulo) {
-                            $unidad->temas()->create([
-                                'titulo' => substr($temaTitulo, 0, 190),
-                                'orden' => $tIndex + 1
-                            ]);
+                        // Opcional: Eliminar temas anteriores de esta unidad para evitar duplicados/basura
+                        // $unidad->temas()->delete(); 
+
+                        foreach ($uData['temas'] as $tNum => $temaData) {
+                            $unidad->temas()->updateOrCreate(
+                                ['orden' => $tNum], // Usamos 'orden' como identificador único dentro de la unidad
+                                [
+                                    'titulo' => substr($temaData['titulo'], 0, 190),
+                                    'contenido_conceptual' => $temaData['contenido_conceptual'] ?? [],
+                                    'contenido_procedimental' => $temaData['contenido_procedimental'] ?? [],
+                                    'contenido_actitudinal' => $temaData['contenido_actitudinal'] ?? [],
+                                    'estrategias_metodologicas' => $temaData['estrategias_metodologicas'] ?? null,
+                                    'estrategias_aprendizaje' => $temaData['estrategias_aprendizaje'] ?? null,
+                                    'estrategias_recursos' => $temaData['estrategias_recursos'] ?? [],
+                                    'evaluacion_formativa' => $temaData['evaluacion_formativa'] ?? [],
+                                    'evaluacion_sumativa' => $temaData['evaluacion_sumativa'] ?? [],
+                                    'secuencia_didactica' => $temaData['secuencia_didactica'] ?? [], /* SI EXISTE COLUMNA EN TABLA */
+                                    'resultado_aprendizaje' => $temaData['logros'] ?? null,
+                                ]
+                            );
                         }
                     }
                 }

@@ -86,4 +86,9 @@ class Cronograma extends Model
     {
         return $this->hasMany(Asistencia::class);
     }
+
+    public function seguimientos(): HasMany
+    {
+        return $this->hasMany(Seguimiento::class);
+    }
 }

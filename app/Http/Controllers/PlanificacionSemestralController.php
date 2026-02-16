@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Asignatura;
 use App\Models\Cronograma;
 use App\Models\Horario;
+use App\Models\Seguimiento;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -55,60 +56,67 @@ class PlanificacionSemestralController extends Controller
             ->orderBy('numero_sesion')
             ->get();
 
-        // 2. Fetch Execution Records for the specific group (if requested)
-        $executionRecords = collect();
+        // 2. Fetch Seguimientos for the specific group (from new seguimientos table)
+        $seguimientosMap = collect();
         if ($grupoId) {
-            $executionRecords = Cronograma::where('asignatura_id', $asignaturaId)
+            $cronogramaIds = $masterCronogramas->pluck('id');
+            $seguimientosMap = Seguimiento::whereIn('cronograma_id', $cronogramaIds)
                 ->where('grupo_id', $grupoId)
                 ->get()
-                ->keyBy('numero_sesion');
+                ->keyBy('cronograma_id');
         }
 
-        // 3. Map Master Records to the result, merging Execution data if it exists
-        $cronogramas = $masterCronogramas->map(function ($master) use ($executionRecords, $grupoId) {
-            $execution = $executionRecords->get($master->numero_sesion);
+        // 3. Map Master Records to the result, merging Seguimiento data if it exists
+        $cronogramas = $masterCronogramas->map(function ($master) use ($seguimientosMap, $grupoId) {
+            $seguimiento = $seguimientosMap->get($master->id);
 
-            if ($execution) {
-                // Merge group-specific fields into the master structure
-                $master->id = $execution->id;
-                $master->grupo_id = $execution->grupo_id;
-                $master->fecha = $execution->fecha;
-                $master->semana_academica = $execution->semana_academica;
-                $master->periodo_examen = $execution->periodo_examen;
-                $master->observaciones = $this->cleanUtf8($execution->observaciones);
-                $master->pedagogico = $this->cleanUtf8($execution->pedagogico);
-                $master->cumplido = $execution->cumplido;
+            // Always keep master ID (cronograma_id) for the frontend
+            $masterData = $master->toArray();
+            $masterData['cronograma_id'] = $master->id; // The real cronograma ID
+            $masterData['seguimiento_id'] = null;
+
+            if ($seguimiento) {
+                // Merge seguimiento data
+                $masterData['seguimiento_id'] = $seguimiento->id;
+                $masterData['grupo_id'] = $seguimiento->grupo_id;
+                $masterData['fecha'] = $seguimiento->fecha;
+                $masterData['observaciones'] = $this->cleanUtf8($seguimiento->observaciones);
+                $masterData['cumplido'] = $seguimiento->cumplido;
+                $masterData['estado_cumplimiento'] = $seguimiento->estado_cumplimiento;
+                // Merge saved pedagogico with defaults
+                $masterData['pedagogico'] = $this->cleanUtf8($seguimiento->pedagogico);
+                $masterData['evidencias'] = $seguimiento->evidencias;
+                $masterData['integracion_transversal'] = $seguimiento->integracion_transversal;
             } else if ($grupoId) {
-                // Return a template session for the group
-                $master->id = null; // Frontend knows it's new for this group
-                $master->grupo_id = $grupoId;
-                $master->fecha = null;
-                $master->cumplido = false;
-                $master->pedagogico = null;
+                $masterData['grupo_id'] = $grupoId;
+                $masterData['fecha'] = null;
+                $masterData['cumplido'] = false;
+                $masterData['pedagogico'] = null;
             }
 
-            // Cleanup master fields just in case
-            $master->contenido_conceptual = $this->cleanUtf8($master->contenido_conceptual);
-            $master->contenido_procedimental = $this->cleanUtf8($master->contenido_procedimental);
-            $master->contenido_actitudinal = $this->cleanUtf8($master->contenido_actitudinal);
-            $master->criterios_desempeno = $this->cleanUtf8($master->criterios_desempeno);
-            $master->instrumentos_evaluacion = $this->cleanUtf8($master->instrumentos_evaluacion);
+            // Cleanup master fields
+            $masterData['contenido_conceptual'] = $this->cleanUtf8($master->contenido_conceptual);
+            $masterData['contenido_procedimental'] = $this->cleanUtf8($master->contenido_procedimental);
+            $masterData['contenido_actitudinal'] = $this->cleanUtf8($master->contenido_actitudinal);
+            $masterData['criterios_desempeno'] = $this->cleanUtf8($master->criterios_desempeno);
+            $masterData['instrumentos_evaluacion'] = $this->cleanUtf8($master->instrumentos_evaluacion);
             
-            // Resolver Detalles Pedagógicos (defaults)
-            $needsResolution = empty($master->pedagogico) ||
-                !isset($master->pedagogico['estrategias']) ||
-                !isset($master->pedagogico['evaluacion']) ||
-                !isset($master->pedagogico['secuencia']);
+            // Resolver Detalles Pedagógicos (defaults) if not saved from seguimiento
+            $pedagogico = $masterData['pedagogico'] ?? [];
+            $needsResolution = empty($pedagogico) ||
+                !isset($pedagogico['estrategias']) ||
+                !isset($pedagogico['evaluacion']) ||
+                !isset($pedagogico['secuencia']);
 
             if ($needsResolution) {
                 $resolved = $this->resolvePedagogicoDefaults($master);
-                $master->pedagogico = array_merge(
-                    $master->pedagogico ?? [],
+                $masterData['pedagogico'] = array_merge(
+                    $pedagogico ?? [],
                     $resolved
                 );
             }
 
-            return $master;
+            return $masterData;
         });
 
         return response()->json([
@@ -206,34 +214,8 @@ class PlanificacionSemestralController extends Controller
                      $master->temas()->sync([$sesionData['tema_id']]);
                 }
 
-                // 2. SAVE EXECUTION DATA (Group specific) - ONLY IF GROUP SELECTED
-                if ($grupoId) {
-                    // Check if we really need an execution record.
-                    // If date, observations, compliance or specific pedagogy is set.
-                    // We DO NOT save content here to avoid duplication, unless explicitly overridden (future feature)
-
-                    $fecha = $this->parseDate($sesionData['fecha'] ?? null);
-
-                    // Only create/update if there is meaningful execution data
-                    // But we must support clearing dates too.
-                    // So we updateOrCreate.
-
-                    Cronograma::updateOrCreate(
-                        [
-                            'asignatura_id' => $asignatura->id,
-                            'grupo_id' => $grupoId,
-                            'numero_sesion' => $numeroSesion,
-                        ],
-                        [
-                            'fecha' => $fecha,
-                            'semana_academica' => $sesionData['semana'] ?? null,
-                            'periodo_examen' => $sesionData['periodoExamen'] ?? null,
-                            'observaciones' => $sesionData['observaciones'] ?? null,
-                            // We might want to save cumulative status here
-                            // 'cumplido' => ...
-                        ]
-                    );
-                }
+                // NOTE: Execution records removed. Follow-up data now stored in 'seguimientos' table.
+                // Dates are calculated on-the-fly in the frontend based on horarios.
             }
         });
 
@@ -352,91 +334,120 @@ class PlanificacionSemestralController extends Controller
     }
 
     /**
-     * Actualiza el seguimiento de una sesión específica de cronograma
+     * Guarda/Actualiza el seguimiento de una sesión en la tabla 'seguimientos'
      */
-    public function updateSeguimiento(Request $request, $id)
+    public function updateSeguimiento(Request $request)
     {
-        $cronograma = Cronograma::findOrFail($id);
+        try {
+            \Log::info('updateSeguimiento (new table)', $request->all());
 
-        // Parse pedagogico JSON
-        $pedagogico = json_decode($request->input('pedagogico', '{}'), true);
-        $integracionTransversal = json_decode($request->input('integracion_transversal', '{}'), true);
+            // Resolve the master cronograma record
+            $cronogramaId = $request->input('cronograma_id');
+            $grupoId = $request->input('grupo_id');
 
-        // Handle evidence file uploads
-        $evidencias = [];
+            if (!$cronogramaId || !$grupoId) {
+                // Fallback: find by asignatura + numero_sesion
+                $asignaturaId = $request->input('asignatura_id');
+                $numeroSesion = $request->input('numero_sesion');
 
-        // Aprendizaje Activo
-        if ($request->hasFile('evidencia_aprendizaje')) {
-            $file = $request->file('evidencia_aprendizaje');
-            $path = $file->store('evidencias/aprendizaje', 'public');
-            $evidencias['aprendizaje_activo'] = $path;
-        }
+                if (!$asignaturaId || !$grupoId || !$numeroSesion) {
+                    return response()->json(['error' => 'Faltan datos: cronograma_id o (asignatura_id + grupo_id + numero_sesion)'], 422);
+                }
 
-        // Evaluación Formativa (can be file or text)
-        if ($request->hasFile('evidencia_evaluacion')) {
-            $file = $request->file('evidencia_evaluacion');
-            $path = $file->store('evidencias/evaluacion', 'public');
-            $evidencias['evaluacion_formativa'] = $path;
-        } elseif ($request->filled('evidencia_evaluacion')) {
-            $evidencias['evaluacion_formativa'] = $request->input('evidencia_evaluacion');
-        }
+                $cronograma = Cronograma::where('asignatura_id', $asignaturaId)
+                    ->whereNull('grupo_id')
+                    ->where('numero_sesion', $numeroSesion)
+                    ->first();
 
-        // Secuencia Didáctica
-        if ($request->hasFile('evidencia_secuencia')) {
-            $file = $request->file('evidencia_secuencia');
-            $path = $file->store('evidencias/secuencia', 'public');
-            $evidencias['secuencia_didactica'] = $path;
-        }
-
-        // Integración Transversal evidences
-        $integracionEvidencias = [];
-
-        if ($request->hasFile('evidencia_investigacion')) {
-            $file = $request->file('evidencia_investigacion');
-            $path = $file->store('evidencias/investigacion', 'public');
-            $integracionEvidencias['investigacion'] = $path;
-        }
-
-        if ($request->hasFile('evidencia_interaccion')) {
-            $file = $request->file('evidencia_interaccion');
-            $path = $file->store('evidencias/interaccion', 'public');
-            $integracionEvidencias['interaccion'] = $path;
-        }
-
-        if ($request->hasFile('evidencia_internalizacion')) {
-            $file = $request->file('evidencia_internalizacion');
-            $path = $file->store('evidencias/internalizacion', 'public');
-            $integracionEvidencias['internalizacion'] = $path;
-        }
-
-        // Merge integración transversal data with evidences
-        foreach ($integracionTransversal as $key => $value) {
-            if (isset($integracionEvidencias[$key])) {
-                $integracionTransversal[$key]['evidencia'] = $integracionEvidencias[$key];
+                if (!$cronograma) {
+                    return response()->json(['error' => "No se encontró la sesión #$numeroSesion del cronograma maestro"], 404);
+                }
+                $cronogramaId = $cronograma->id;
             }
+
+            // Parse pedagogico JSON
+            $pedagogicoInput = $request->input('pedagogico', '{}');
+            $pedagogico = json_decode($pedagogicoInput, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                \Log::error('JSON Decode Error in pedagogico: ' . json_last_error_msg());
+                $pedagogico = [];
+            }
+
+            $integracionInput = $request->input('integracion_transversal', '{}');
+            $integracionTransversal = json_decode($integracionInput, true);
+            if (json_last_error() !== JSON_ERROR_NONE) {
+                \Log::error('JSON Decode Error in integracion_transversal: ' . json_last_error_msg());
+                $integracionTransversal = [];
+            }
+
+            // Handle evidence file uploads
+            $evidencias = [];
+
+            if ($request->hasFile('evidencia_aprendizaje')) {
+                $evidencias['aprendizaje_activo'] = $request->file('evidencia_aprendizaje')->store('evidencias/aprendizaje', 'public');
+            }
+            if ($request->hasFile('evidencia_evaluacion')) {
+                $evidencias['evaluacion_formativa'] = $request->file('evidencia_evaluacion')->store('evidencias/evaluacion', 'public');
+            } elseif ($request->filled('evidencia_evaluacion')) {
+                $evidencias['evaluacion_formativa'] = $request->input('evidencia_evaluacion');
+            }
+            if ($request->hasFile('evidencia_secuencia')) {
+                $evidencias['secuencia_didactica'] = $request->file('evidencia_secuencia')->store('evidencias/secuencia', 'public');
+            }
+
+            // Integración Transversal evidence files
+            $integracionEvidencias = [];
+            foreach (['investigacion', 'interaccion', 'internalizacion'] as $tipo) {
+                if ($request->hasFile("evidencia_$tipo")) {
+                    $integracionEvidencias[$tipo] = $request->file("evidencia_$tipo")->store("evidencias/$tipo", 'public');
+                }
+            }
+            foreach ($integracionTransversal as $key => $value) {
+                if (isset($integracionEvidencias[$key])) {
+                    $integracionTransversal[$key]['evidencia'] = $integracionEvidencias[$key];
+                }
+            }
+
+            // Build pedagogico with estado
+            $isCumplido = filter_var($request->input('tema_cumplido', false), FILTER_VALIDATE_BOOLEAN);
+            $estadoCumplimiento = $request->input('estado_cumplimiento', $isCumplido ? 'TOTAL' : 'NO');
+            $completePedagogico = array_merge((array)$pedagogico, [
+                'estado_cumplimiento' => $estadoCumplimiento
+            ]);
+
+            // Create or update the seguimiento record
+            $seguimiento = Seguimiento::updateOrCreate(
+                [
+                    'cronograma_id' => $cronogramaId,
+                    'grupo_id' => $grupoId,
+                ],
+                [
+                    'user_id' => Auth::id(),
+                    'fecha' => now()->format('Y-m-d'),
+                    'cumplido' => true,
+                    'tema_cumplido' => $isCumplido,
+                    'estado_cumplimiento' => $estadoCumplimiento,
+                    'observaciones' => $request->input('observaciones'),
+                    'pedagogico' => $completePedagogico,
+                    'evidencias' => $evidencias,
+                    'integracion_transversal' => $integracionTransversal,
+                ]
+            );
+
+            \Log::info('Seguimiento saved', ['id' => $seguimiento->id, 'cronograma_id' => $cronogramaId, 'grupo_id' => $grupoId]);
+
+            return response()->json([
+                'message' => 'Seguimiento guardado correctamente',
+                'seguimiento_id' => $seguimiento->id,
+                'pedagogico' => $completePedagogico,
+                'cumplido' => true
+            ]);
+
+        } catch (\Exception $e) {
+            \Log::error('Error in updateSeguimiento: ' . $e->getMessage());
+            \Log::error($e->getTraceAsString());
+            return response()->json(['error' => $e->getMessage()], 500);
         }
-
-        // Build complete pedagogico object
-        // Include tema_cumplido as pedagogical information
-        $completePedagogico = array_merge($pedagogico, [
-            'tema_cumplido' => filter_var($request->input('tema_cumplido', false), FILTER_VALIDATE_BOOLEAN),
-            'evidencias' => $evidencias,
-            'integracionTransversal' => $integracionTransversal
-        ]);
-
-        // Session is marked as completed when teacher saves the follow-up
-        // regardless of whether the planned topic was covered
-        $cronograma->update([
-            'cumplido' => true,  // Always true when saving follow-up
-            'observaciones' => $request->input('observaciones'),
-            'pedagogico' => $completePedagogico
-        ]);
-
-        return response()->json([
-            'message' => 'Seguimiento guardado correctamente',
-            'pedagogico' => $completePedagogico,
-            'cumplido' => true
-        ]);
     }
 
     private function parseDate($dateString)
