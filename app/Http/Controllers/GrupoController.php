@@ -53,16 +53,20 @@ class GrupoController extends Controller
         }
 
         // 3. Eager Loading
-        // Load relationships needed for transformation
         $query->with([
             'carreras' => function ($q) use ($carreraId, $sedeId) {
-                // We need to limit eager load to the relevant career/sede to extract correct 'semestre'
                 if ($carreraId) $q->where('carreras.id', $carreraId);
                 if ($sedeId) $q->where('asignatura_carrera.sede_id', $sedeId);
             },
-            'grupos' => function ($q) use ($gestion) {
-                $q->where('gestion', $gestion)
-                    ->with(['docente', 'horarios.aula.bloque']);
+            'grupos' => function ($q) use ($gestion, $user) {
+                $q->where('gestion', $gestion);
+                
+                // If Docente, only load their own groups for this subject
+                if ($user && $user->rol && $user->rol->codigo === 'DOCENTE' && $user->docente) {
+                    $q->where('docente_id', $user->docente->id);
+                }
+                
+                $q->with(['docente', 'horarios.aula.bloque']);
             }
         ]);
 
@@ -71,33 +75,21 @@ class GrupoController extends Controller
 
         // Transformation
         $transformed = $materias->getCollection()->map(function ($materia) use ($request) {
-            // Determine Context (Carrera/Sede/Semestre)
-            // Use the first matched career (since we filtered by it)
             $pivotContext = $materia->carreras->first();
 
             $carreraNombre = $pivotContext ? $pivotContext->nombre : 'N/A';
             $sedeId = $pivotContext ? $pivotContext->pivot->sede_id : null;
             $semestre = $pivotContext ? $pivotContext->pivot->semestre : null;
 
-            // Resolve Sede Name (Optional optimization: Could eager load Sede in pivot or use a map)
-            // For now, let frontend handle ID->Name or assuming context via filter.
-            // But Page uses "materia.sede_nombre".
-            // Querying Sede name per row is N+1.
-            // Let's assume frontend passes Sede name in filters OR we rely on filtered value.
-            // Better: Load 'sedes' relation on Carrera? No, pivot has ID.
-            // But Asignatura->Carreras (Pivot) -> Sede Relationship?
-            // No easy way to get Sede Name without N+1 or join.
-            // We'll return "Sede ID" and let frontend resolve it (Stores have the list).
-
             $gruposList = [];
             foreach ($materia->grupos as $grupo) {
                 foreach ($grupo->horarios as $horario) {
-                    // Flatten: One item per Schedule Session
                     $gruposList[] = [
-                        'grupo' => $grupo->nombre, // '1' or 'GR-1'
-                        'tipo_clase' => ucwords(strtolower($grupo->tipo ?? 'TEORICO')), // 'Teorico'
-                        'dia' => $horario->dia, // 'LUNES'
-                        'hora_inicio' => substr($horario->hora_inicio, 0, 5), // '07:00'
+                        'grupo_id' => $grupo->id,
+                        'grupo' => $grupo->nombre,
+                        'tipo_clase' => ucwords(strtolower($grupo->tipo ?? 'TEORICO')),
+                        'dia' => $horario->dia,
+                        'hora_inicio' => substr($horario->hora_inicio, 0, 5),
                         'hora_fin' => substr($horario->hora_fin, 0, 5),
                         'docente' => $grupo->docente ? $grupo->docente->nombre_completo : 'Sin Asignar',
                         'aula' => $horario->aula ? $horario->aula->nombre : 'Sin Aula',
@@ -106,9 +98,9 @@ class GrupoController extends Controller
                         'pupitres' => $horario->aula ? $horario->aula->pupitres : 0,
                     ];
                 }
-                // Handle case of group with NO hours (rare but valid)
                 if ($grupo->horarios->isEmpty()) {
                     $gruposList[] = [
+                        'grupo_id' => $grupo->id,
                         'grupo' => $grupo->nombre,
                         'tipo_clase' => ucwords(strtolower($grupo->tipo ?? 'TEORICO')),
                         'dia' => '-',
@@ -128,7 +120,7 @@ class GrupoController extends Controller
                 'codigo' => $materia->codigo,
                 'nombre' => $materia->nombre,
                 'carrera' => $carreraNombre,
-                'sede_nombre' => 'Sede ' . $sedeId, // Placeholder
+                'sede_nombre' => 'Sede ' . $sedeId,
                 'semestre' => $semestre,
                 'gestion' => $request->gestion,
                 'comun_token' => $materia->comun_token,
@@ -137,13 +129,11 @@ class GrupoController extends Controller
             ];
         });
 
-        // Add extra meta for counting (approximation for performance)
         $meta = [
             'current_page' => $materias->currentPage(),
             'last_page' => $materias->lastPage(),
             'total' => $materias->total(),
             'total_materias' => $materias->total(),
-            // 'total_grupos' => $query->withCount('grupos')->get()->sum('grupos_count'), // Expensive? Maybe.
             'carrera' => $request->carrera_id ? 'Carrera ID ' . $request->carrera_id : 'Todas',
             'gestion' => $gestion
         ];

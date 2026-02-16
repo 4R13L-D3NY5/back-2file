@@ -26,7 +26,8 @@ class Cronograma extends Model
         'instrumentos_evaluacion',
         'contenido_items_seleccionados', // Array de items seleccionados "temaId:itemIndex"
         'cumplido',
-        'pedagogico'
+        'pedagogico',
+        'tipo_clase' // Added for master planning
     ];
 
     protected $casts = [
@@ -63,6 +64,8 @@ class Cronograma extends Model
     {
         return $this->belongsToMany(Tema::class, 'cronograma_tema');
     }
+
+
 
     public function secuenciasDidacticas(): HasMany
     {

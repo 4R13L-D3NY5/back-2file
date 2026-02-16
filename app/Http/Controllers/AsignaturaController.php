@@ -752,24 +752,37 @@ class AsignaturaController extends Controller
         }
     }
 
-    private function saveBibliografias($asignatura, $items, $tipo)
+    private function saveBibliografias(Asignatura $asignatura, array $items, $tipo)
     {
         if (empty($items)) return;
 
         foreach ($items as $item) {
-            if (empty($item)) continue;
-            // Verificar duplicados simples
-            $exists = $asignatura->bibliografias()
-                ->where('titulo', $item)
-                ->where('tipo', $tipo)
-                ->exists();
+            try {
+                $item = trim($item);
+                if (empty($item)) continue;
 
-            if (!$exists) {
-                $asignatura->bibliografias()->create([
-                    'titulo' => $item,
-                    'tipo' => $tipo,
-                    'autor' => 'S/A' // Default
-                ]);
+                // Truncado estricto a 180 caracteres
+                $titulo = substr($item, 0, 180);
+                $descripcion = (strlen($item) > 180) ? $item : null;
+
+                // Verificar duplicados simples
+                $exists = $asignatura->bibliografias()
+                    ->where('titulo', $titulo)
+                    ->where('tipo', $tipo)
+                    ->exists();
+
+                if (!$exists) {
+                    $asignatura->bibliografias()->create([
+                        'titulo' => $titulo,
+                        'descripcion' => $descripcion,
+                        'tipo' => $tipo,
+                        'autor' => 'AA.VV.',
+                        'anio' => 'S/F',
+                        'editorial' => 'S/E'
+                    ]);
+                }
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning("Error guardando bibliografia '$item': " . $e->getMessage());
             }
         }
     }
@@ -794,13 +807,14 @@ class AsignaturaController extends Controller
             $parsedData = $this->cronogramaParser->parseCronograma($request->file('file'));
             $sesionesParsed = $parsedData['sesiones'];
 
-            // 2. Obtener cronogramas existentes
-            // Si hay grupo_id filtro por grupo con fallback a null? No, strict filtering.
-            // La generación crea cronogramas con grupo_id.
-            $query = $asignatura->cronogramas()->orderBy('numero_sesion');
-            if ($grupoId) {
-                $query->where('grupo_id', $grupoId);
-            }
+            // 2. Obtener cronogramas existentes (SOLO MASTER PLAN)
+            // La importación siempre debe actualizar el plan maestro.
+            $query = $asignatura->cronogramas()
+                ->whereNull('grupo_id')
+                ->orderBy('numero_sesion');
+            
+            // if ($grupoId) { ... } // IGNORAR GRUPO, SIEMPRE MASTER
+            
             $existingCronogramas = $query->get();
 
             if ($existingCronogramas->isEmpty()) {
@@ -816,8 +830,10 @@ class AsignaturaController extends Controller
 
             foreach ($parsedByWeek as $semana => $parsedItems) {
                 if (isset($existingByWeek[$semana])) {
-                    $existingItems = $existingByWeek[$semana];
+                    $existingItems = $existingByWeek[$semana]->values(); // Reset keys to 0,1,2...
                     
+                    Log::info("Semana $semana matching: Parsed=" . count($parsedItems) . " Existing=" . $existingItems->count());
+
                     // Iterar secuencialmente
                     foreach ($parsedItems as $index => $pItem) {
                         if (isset($existingItems[$index])) {
@@ -837,6 +853,8 @@ class AsignaturaController extends Controller
                             $updatedCount++;
                         }
                     }
+                } else {
+                    Log::warning("Semana $semana not found in existing cronogramas.");
                 }
             }
 
@@ -854,7 +872,7 @@ class AsignaturaController extends Controller
             return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
         }
     }
-<<<<<<< HEAD
+
 
     /**
      * Endpoint público para obtener todas las materias con sus programas analíticos completos.
@@ -1003,32 +1021,8 @@ class AsignaturaController extends Controller
         ]);
     }
 
-    private function saveBibliografias(Asignatura $asignatura, array $lines, $tipo)
-    {
-        foreach ($lines as $line) {
-            try {
-                $line = trim($line);
-                if (empty($line)) continue;
-
-                // Truncado estricto a 180 caracteres
-                $titulo = substr($line, 0, 180);
-                $descripcion = (strlen($line) > 180) ? $line : null;
-
-                $asignatura->bibliografias()->create([
-                    'titulo' => $titulo,
-                    'descripcion' => $descripcion,
-                    'tipo' => $tipo,
-                    'autor' => 'AA.VV.',
-                    'anio' => 'S/F',
-                    'editorial' => 'S/E'
-                ]);
-            } catch (\Exception $e) {
-                \Illuminate\Support\Facades\Log::warning("Error guardando bibliografia '$line': " . $e->getMessage());
-            }
-        }
-    }
 
 
-=======
->>>>>>> c37c01e623f7f78f840b66d231bf4047c634b14c
+
+
 }

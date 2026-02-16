@@ -20,10 +20,8 @@ class PlanificacionSemestralController extends Controller
         $grupoId = $request->input('grupo_id');
 
         // IMPORTANTE: docente_id es el ID de la tabla 'docentes', NO el user_id
-        // Debemos convertir docente_id -> user_id para filtrar PlanificacionPersonal
         $targetUserId = Auth::id();
         
-        // Si hay grupo_id, intentar obtener el usuario del docente de ese grupo
         if ($grupoId) {
             $grupo = \App\Models\Grupo::find($grupoId);
             if ($grupo && $grupo->docente_id) {
@@ -45,47 +43,72 @@ class PlanificacionSemestralController extends Controller
             if ($grupoId) {
                 $q->where('grupo_id', $grupoId);
             }
-        }, 'cronogramas' => function ($q) use ($grupoId, $targetUserId) {
-            $q->orderBy('numero_sesion')
-                ->with([
-                    'temas',
-                    'tema.secuencias',
-                    'tema.planificacionPersonal' => function ($query) use ($targetUserId) {
-                        $query->where('user_id', $targetUserId);
-                    }
-                ]);
-
-            if ($grupoId) {
-                $q->where('grupo_id', $grupoId);
-            }
-
-            // FILTER: Strict 'My Sessions' for Teachers (Rol ID 6 = DOCENTE)
-            // Fixes duplicate sessions in 'Planificación por Unidades' view
-            $currentUser = Auth::user();
-            if ($currentUser && $currentUser->rol_id === 6 && $currentUser->docente) {
-                $q->whereHas('grupo', function ($gq) use ($currentUser) {
-                    $gq->where('docente_id', $currentUser->docente->id);
-                });
-            }
         }])->findOrFail($asignaturaId);
 
-        // Resolver Detalles Pedagógicos para cada sesión
-        $cronogramas = $asignatura->cronogramas->map(function ($cronograma) {
-            // Check if pedagogico is missing required fields (estrategias, evaluacion, secuencia)
-            $needsResolution = empty($cronograma->pedagogico) ||
-                !isset($cronograma->pedagogico['estrategias']) ||
-                !isset($cronograma->pedagogico['evaluacion']) ||
-                !isset($cronograma->pedagogico['secuencia']);
+        // 1. Fetch Master Records (Shared Planning Content)
+        // Master records have group_id = NULL
+        $masterCronogramas = Cronograma::where('asignatura_id', $asignaturaId)
+            ->whereNull('grupo_id')
+            ->with(['temas', 'tema.planificacionPersonal' => function ($query) use ($targetUserId) {
+                $query->where('user_id', $targetUserId);
+            }])
+            ->orderBy('numero_sesion')
+            ->get();
+
+        // 2. Fetch Execution Records for the specific group (if requested)
+        $executionRecords = collect();
+        if ($grupoId) {
+            $executionRecords = Cronograma::where('asignatura_id', $asignaturaId)
+                ->where('grupo_id', $grupoId)
+                ->get()
+                ->keyBy('numero_sesion');
+        }
+
+        // 3. Map Master Records to the result, merging Execution data if it exists
+        $cronogramas = $masterCronogramas->map(function ($master) use ($executionRecords, $grupoId) {
+            $execution = $executionRecords->get($master->numero_sesion);
+
+            if ($execution) {
+                // Merge group-specific fields into the master structure
+                $master->id = $execution->id;
+                $master->grupo_id = $execution->grupo_id;
+                $master->fecha = $execution->fecha;
+                $master->semana_academica = $execution->semana_academica;
+                $master->periodo_examen = $execution->periodo_examen;
+                $master->observaciones = $this->cleanUtf8($execution->observaciones);
+                $master->pedagogico = $this->cleanUtf8($execution->pedagogico);
+                $master->cumplido = $execution->cumplido;
+            } else if ($grupoId) {
+                // Return a template session for the group
+                $master->id = null; // Frontend knows it's new for this group
+                $master->grupo_id = $grupoId;
+                $master->fecha = null;
+                $master->cumplido = false;
+                $master->pedagogico = null;
+            }
+
+            // Cleanup master fields just in case
+            $master->contenido_conceptual = $this->cleanUtf8($master->contenido_conceptual);
+            $master->contenido_procedimental = $this->cleanUtf8($master->contenido_procedimental);
+            $master->contenido_actitudinal = $this->cleanUtf8($master->contenido_actitudinal);
+            $master->criterios_desempeno = $this->cleanUtf8($master->criterios_desempeno);
+            $master->instrumentos_evaluacion = $this->cleanUtf8($master->instrumentos_evaluacion);
+            
+            // Resolver Detalles Pedagógicos (defaults)
+            $needsResolution = empty($master->pedagogico) ||
+                !isset($master->pedagogico['estrategias']) ||
+                !isset($master->pedagogico['evaluacion']) ||
+                !isset($master->pedagogico['secuencia']);
 
             if ($needsResolution) {
-                $resolved = $this->resolvePedagogicoDefaults($cronograma);
-                // Merge with existing pedagogico data (preserve tipo_sesion, etc.)
-                $cronograma->pedagogico = array_merge(
-                    $cronograma->pedagogico ?? [],
+                $resolved = $this->resolvePedagogicoDefaults($master);
+                $master->pedagogico = array_merge(
+                    $master->pedagogico ?? [],
                     $resolved
                 );
             }
-            return $cronograma;
+
+            return $master;
         });
 
         return response()->json([
@@ -149,41 +172,73 @@ class PlanificacionSemestralController extends Controller
         $grupoId = $request->input('grupo_id');
 
         DB::transaction(function () use ($asignatura, $sesiones, $grupoId) {
-
-            if ($grupoId) {
-                $asignatura->cronogramas()->where('grupo_id', $grupoId)->delete();
-            } else {
-                $asignatura->cronogramas()->whereNull('grupo_id')->delete();
-            }
-
             foreach ($sesiones as $sesionData) {
-                $cronograma = $asignatura->cronogramas()->create([
-                    'numero_sesion' => $sesionData['numeroGlobal'] ?? $sesionData['numero_sesion'],
-                    'fecha' => $this->parseDate($sesionData['fecha']),
-                    'semana_academica' => $sesionData['semana'] ?? null,
-                    'periodo_examen' => $sesionData['periodoExamen'] ?? null,
-                    'tema_id' => $sesionData['tema_id'] ?? null,
-                    'grupo_id' => $grupoId,
-                    'contenido_conceptual' => $sesionData['conceptual'] ?? null,
-                    'contenido_procedimental' => $sesionData['procedimental'] ?? null,
-                    'contenido_actitudinal' => $sesionData['actitudinal'] ?? null,
-                    'criterios_desempeno' => $sesionData['criteriosDesempeno'] ?? null,
-                    'instrumentos_evaluacion' => $sesionData['instrumentosEvaluacion'] ?? null,
-                    'observaciones' => $sesionData['observaciones'] ?? null,
-                    'contenido_items_seleccionados' => $sesionData['contenido_items_seleccionados'] ?? []
-                ]);
+                $numeroSesion = $sesionData['numeroGlobal'] ?? $sesionData['numero_sesion'];
 
-                // Sincronizar múltiples temas si vienen en el request
+                // 1. SAVE MASTER PLANNING (Shared content) - ALWAYS
+                // We identify Master record by (asignatura_id, grupo_id=NULL, numero_sesion)
+                $master = Cronograma::updateOrCreate(
+                    [
+                        'asignatura_id' => $asignatura->id,
+                        'grupo_id' => null,
+                        'numero_sesion' => $numeroSesion,
+                    ],
+                    [
+                        'tema_id' => $sesionData['tema_id'] ?? null,
+                        'contenido_conceptual' => $sesionData['conceptual'] ?? null,
+                        'contenido_procedimental' => $sesionData['procedimental'] ?? null,
+                        'contenido_actitudinal' => $sesionData['actitudinal'] ?? null,
+                        'criterios_desempeno' => $sesionData['criteriosDesempeno'] ?? null,
+                        'instrumentos_evaluacion' => $sesionData['instrumentosEvaluacion'] ?? null,
+                        'contenido_items_seleccionados' => $sesionData['contenido_items_seleccionados'] ?? [],
+                        'semana_academica' => $sesionData['semana'] ?? null, // Added missing field
+                        // Fix for type: check if key exists, otherwise don't overwite or use default
+                    ] + (isset($sesionData['tipoClase']) ? ['tipo_clase' => $sesionData['tipoClase']] : [])
+                );
+
+                // Sync multiple topics for Master
                 if (isset($sesionData['temas_ids']) && is_array($sesionData['temas_ids'])) {
-                    $cronograma->temas()->sync($sesionData['temas_ids']);
+                     // Verify relation exists before syncing
+                     // (Assuming Cronograma belongsToMany Temas, if not, skip)
+                     // Based on previous code: $master->temas()
+                     $master->temas()->sync($sesionData['temas_ids']);
                 } elseif (!empty($sesionData['tema_id'])) {
-                    $cronograma->temas()->sync([$sesionData['tema_id']]);
+                     $master->temas()->sync([$sesionData['tema_id']]);
+                }
+
+                // 2. SAVE EXECUTION DATA (Group specific) - ONLY IF GROUP SELECTED
+                if ($grupoId) {
+                    // Check if we really need an execution record.
+                    // If date, observations, compliance or specific pedagogy is set.
+                    // We DO NOT save content here to avoid duplication, unless explicitly overridden (future feature)
+
+                    $fecha = $this->parseDate($sesionData['fecha'] ?? null);
+
+                    // Only create/update if there is meaningful execution data
+                    // But we must support clearing dates too.
+                    // So we updateOrCreate.
+
+                    Cronograma::updateOrCreate(
+                        [
+                            'asignatura_id' => $asignatura->id,
+                            'grupo_id' => $grupoId,
+                            'numero_sesion' => $numeroSesion,
+                        ],
+                        [
+                            'fecha' => $fecha,
+                            'semana_academica' => $sesionData['semana'] ?? null,
+                            'periodo_examen' => $sesionData['periodoExamen'] ?? null,
+                            'observaciones' => $sesionData['observaciones'] ?? null,
+                            // We might want to save cumulative status here
+                            // 'cumplido' => ...
+                        ]
+                    );
                 }
             }
         });
 
         return response()->json([
-            'message' => 'Planificación guardada',
+            'message' => 'Planificación guardada exitosamente',
             'count' => count($sesiones)
         ]);
     }
@@ -193,77 +248,70 @@ class PlanificacionSemestralController extends Controller
      */
     public function generarPlanificacion(Request $request, $asignaturaId)
     {
-        $asignatura = Asignatura::with('horarios')->findOrFail($asignaturaId);
+        $asignatura = Asignatura::findOrFail($asignaturaId);
 
-        if (!$asignatura->fecha_inicio_clases || !$asignatura->horarios->count()) {
-            return response()->json(['error' => 'Configure fechas y horario primero'], 400);
+        // Validar configuración de sesiones semanales
+        $sesionesTeoricas = $asignatura->sesiones_semanales_teoricas ?? 0;
+        $sesionesPracticas = $asignatura->sesiones_semanales_practicas ?? 0;
+
+        if ($sesionesTeoricas == 0 && $sesionesPracticas == 0) {
+             return response()->json(['error' => 'Configure las sesiones teóricas y prácticas semanales en la pestaña Configuración antes de generar'], 400);
         }
 
-        $startDate = \Carbon\Carbon::parse($asignatura->fecha_inicio_clases);
-        $endDate = \Carbon\Carbon::parse($asignatura->fecha_fin_clases);
-        $horarios = $asignatura->horarios;
-        $sesiones = [];
-        $count = 1;
+        DB::transaction(function () use ($asignatura, $sesionesTeoricas, $sesionesPracticas) {
+            // 1. Limpiar PLANIFICACIÓN MAESTRA existente (solo master, grupo_id = NULL)
+            // PRECAUCIÓN: Esto borra el contenido maestro. El usuario debe confirmar "Vaciar" o "Regenerar" en el frontend.
+            // Si hay datos de ejecución (docentes), esos están en registros con grupo_id != NULL y NO SE TOCAN.
+            Cronograma::where('asignatura_id', $asignatura->id)
+                ->whereNull('grupo_id')
+                ->delete();
 
-        // Semanas Académicas (1 a 20)
-        for ($semana = 1; $semana <= 20; $semana++) {
+            $sesiones = [];
+            $totalSemanas = 20;
+            $contadorGlobal = 1;
 
-            // Determinar si es semana de examen (Lógica fija solicitada)
-            $periodoExamen = null;
-            if ($semana >= 7 && $semana <= 8) $periodoExamen = '1er Parcial';
-            elseif ($semana >= 14 && $semana <= 15) $periodoExamen = '2do Parcial';
-            elseif ($semana >= 18 && $semana <= 19) $periodoExamen = 'Examen Final';
-            elseif ($semana == 20) $periodoExamen = '2da Instancia';
+            for ($semana = 1; $semana <= $totalSemanas; $semana++) {
+                // Generar Teóricas
+                for ($t = 1; $t <= $sesionesTeoricas; $t++) {
+                   $sesiones[] = [
+                       'asignatura_id' => $asignatura->id,
+                       'grupo_id' => null, // MASTER RECORD
+                       'numero_sesion' => $contadorGlobal++,
+                       'semana_academica' => $semana,
+                       'tipo_clase' => 'Teórica', // Nuevo campo o atributo en JSON
+                       'observaciones' => 'Teórica ' . $t, // Fallback visual
+                       'fecha' => null, // MASTER tiene fecha NULL
+                       'created_at' => now(),
+                       'updated_at' => now()
+                   ];
+                }
 
-            // Iterar horarios para esta semana
-            foreach ($horarios as $horario) {
-                // Calcular fecha exacta
-                $dayMap = [
-                    'Lunes' => 1,
-                    'Martes' => 2,
-                    'Miercoles' => 3,
-                    'Miércoles' => 3,
-                    'Jueves' => 4,
-                    'Viernes' => 5,
-                    'Sabado' => 6,
-                    'Sábado' => 6
-                ];
-
-                $targetDia = $dayMap[ucfirst($horario->dia)] ?? 1;
-
-                // Fecha base de la semana actual
-                $weekStart = $startDate->copy()->addWeeks($semana - 1)->startOfWeek();
-                // Ajustar al día específico
-                $sessionDate = $weekStart->copy()->addDays($targetDia - 1);
-
-                $sesiones[] = [
-                    'asignatura_id' => $asignatura->id,
-                    'numero_sesion' => $count++,
-                    'fecha' => $sessionDate->format('Y-m-d'),
-                    'semana_academica' => $semana,
-                    'periodo_examen' => $periodoExamen,
-                    'grupo_id' => $request->input('grupo_id'), // Link to Group
-                    // Si es examen, no lleva contenido (user request)
-                    'contenido_conceptual' => $periodoExamen ? null : '',
-                    'created_at' => now(),
-                    'updated_at' => now()
-                ];
+                // Generar Prácticas
+                for ($p = 1; $p <= $sesionesPracticas; $p++) {
+                   $sesiones[] = [
+                       'asignatura_id' => $asignatura->id,
+                       'grupo_id' => null, // MASTER RECORD
+                       'numero_sesion' => $contadorGlobal++,
+                       'semana_academica' => $semana,
+                       'tipo_clase' => 'Práctica', // Nuevo campo o atributo en JSON
+                       'observaciones' => 'Práctica ' . $p, // Fallback visual
+                       'fecha' => null, // MASTER tiene fecha NULL
+                       'created_at' => now(),
+                       'updated_at' => now()
+                   ];
+                }
             }
-        }
 
-        // Reemplazar existente
-        DB::transaction(function () use ($asignatura, $sesiones, $request) {
-            $grupoId = $request->input('grupo_id');
-            if ($grupoId) {
-                $asignatura->cronogramas()->where('grupo_id', $grupoId)->delete();
-            } else {
-                $asignatura->cronogramas()->whereNull('grupo_id')->delete();
+            if (!empty($sesiones)) {
+                \Log::info('Generando Planificación Maestra. Primera Sesión:', $sesiones[0]);
+                Cronograma::insert($sesiones);
             }
-            Cronograma::insert($sesiones);
         });
 
-        return response()->json(['message' => 'Planificación generada', 'total' => count($sesiones)]);
+        return response()->json(['message' => 'Planificación Maestra generada exitosamente']);
     }
+
+
 
     /**
      * Copia la planificación (Cronogramas) de otra asignatura (Unificación)
@@ -393,7 +441,16 @@ class PlanificacionSemestralController extends Controller
 
     private function parseDate($dateString)
     {
-        return \Carbon\Carbon::parse($dateString)->format('Y-m-d');
+        if (empty($dateString)) {
+            return null;
+        }
+        try {
+            // Check if string is a valid date
+            if (!strtotime($dateString)) return null;
+            return \Carbon\Carbon::parse($dateString)->format('Y-m-d');
+        } catch (\Exception $e) {
+            return null;
+        }
     }
 
     /**
@@ -450,24 +507,23 @@ class PlanificacionSemestralController extends Controller
         // 1. Estrategias
         if (!empty($planning->estrategias_recursos)) {
             foreach ($planning->estrategias_recursos as $est) {
-                $defaults['estrategias'][] = ['nombre' => $est, 'cumplido' => false];
+                $defaults['estrategias'][] = ['nombre' => $this->cleanUtf8($est), 'cumplido' => false];
             }
         }
         // Si es Tema base, puede tener metodologías como string
         if (isset($planning->estrategias_metodologicas) && is_string($planning->estrategias_metodologicas)) {
-            $defaults['estrategias'][] = ['nombre' => 'Metodología: ' . substr($planning->estrategias_metodologicas, 0, 50), 'cumplido' => false];
+            $defaults['estrategias'][] = ['nombre' => 'Metodología: ' . $this->cleanUtf8(substr($planning->estrategias_metodologicas, 0, 50)), 'cumplido' => false];
         } else if (empty($defaults['estrategias'])) {
             $defaults['estrategias'][] = ['nombre' => 'Clase Magistral', 'cumplido' => false];
         }
 
         // 2. Evaluación
-        // Estructura en JSON: evaluacion_formativa: { actividades: [], instrumentos: [] }
         $evalSources = [$planning->evaluacion_formativa, $planning->evaluacion_sumativa];
         foreach ($evalSources as $eval) {
             if ($eval && is_array($eval)) {
                 if (!empty($eval['actividades'])) {
                     foreach ($eval['actividades'] as $act) {
-                        $defaults['evaluacion'][] = ['nombre' => $act, 'cumplido' => false];
+                        $defaults['evaluacion'][] = ['nombre' => $this->cleanUtf8($act), 'cumplido' => false];
                     }
                 }
             }
@@ -477,24 +533,21 @@ class PlanificacionSemestralController extends Controller
         }
 
         // 3. Secuencia Didáctica
-        // En PlanificacionPersonal es un JSON (secuencia_didactica array)
         if ($planificacionPersonal && !empty($planificacionPersonal->secuencia_didactica)) {
             foreach ($planificacionPersonal->secuencia_didactica as $sec) {
                 $nombre = $sec['momento'] ?? 'Actividad';
                 if (isset($sec['actividad'])) $nombre .= ': ' . substr($sec['actividad'], 0, 60);
-                $defaults['secuencia'][] = ['nombre' => $nombre, 'cumplido' => false];
+                $defaults['secuencia'][] = ['nombre' => $this->cleanUtf8($nombre), 'cumplido' => false];
             }
         }
-        // En Tema es una relación (secuencias)
         else if ($tema->secuencias->count() > 0) {
             foreach ($tema->secuencias as $sec) {
                 $defaults['secuencia'][] = [
-                    'nombre' => $sec->momento . ': ' . substr($sec->descripcion, 0, 60),
+                    'nombre' => $this->cleanUtf8($sec->momento . ': ' . substr($sec->descripcion, 0, 60)),
                     'cumplido' => false
                 ];
             }
         }
-        // Fallback
         else {
             $defaults['secuencia'] = [
                 ['nombre' => 'Inicio', 'cumplido' => false],
@@ -505,4 +558,26 @@ class PlanificacionSemestralController extends Controller
 
         return $defaults;
     }
+
+    /**
+     * Asegura que un string (o array de strings) sea UTF-8 válido
+     */
+    private function cleanUtf8($data)
+    {
+        if (is_array($data)) {
+            foreach ($data as $key => $value) {
+                $data[$key] = $this->cleanUtf8($value);
+            }
+            return $data;
+        }
+
+        if (is_string($data)) {
+            // Eliminar caracteres no-UTF8 o mal formados
+            return mb_convert_encoding($data, 'UTF-8', 'UTF-8');
+        }
+
+        return $data;
+
 }
+}
+

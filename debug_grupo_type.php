@@ -12,18 +12,17 @@ $asignatura = Asignatura::where('codigo', $codigo)->first();
 
 echo "Asignatura: {$asignatura->nombre} (ID: {$asignatura->id})\n";
 
-$grupos = Grupo::with('horarios')->where('asignatura_id', $asignatura->id)->get();
+$grupos = Grupo::where('asignatura_id', $asignatura->id)->get();
 
 foreach ($grupos as $g) {
     echo "Grupo: '{$g->nombre}' (ID: {$g->id})\n";
-    // Check if name is numeric
-    $isNumeric = is_numeric($g->nombre);
-    echo "  - Is Numeric Name? " . ($isNumeric ? 'YES' : 'NO') . "\n";
+    echo "  - Grupo Tipo: " . (is_null($g->tipo) ? 'NULL' : "'{$g->tipo}'") . "\n";
     
-    // Check horarios
-    foreach ($g->horarios as $h) {
-        echo "  - Horario: {$h->dia} {$h->hora_inicio}\n";
-        echo "  - Tipo (horario): " . ($h->tipo ?? 'NULL') . "\n";
-    }
+    $isNumeric = is_numeric($g->nombre);
+    $esTeorico = $g->tipo 
+        ? ($g->tipo === 'Teórica' || $g->tipo === 'T') 
+        : $isNumeric;
+        
+    echo "  - Calculated esTeorico: " . ($esTeorico ? 'TRUE' : 'FALSE') . "\n";
     echo "\n";
 }
