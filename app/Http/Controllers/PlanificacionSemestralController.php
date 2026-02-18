@@ -74,12 +74,13 @@ class PlanificacionSemestralController extends Controller
             $masterData = $master->toArray();
             $masterData['cronograma_id'] = $master->id; // The real cronograma ID
             $masterData['seguimiento_id'] = null;
+            $masterData['cumplido'] = false; // Reset by default, only true if seguimiento exists below
 
             if ($seguimiento) {
                 // Merge seguimiento data
                 $masterData['seguimiento_id'] = $seguimiento->id;
                 $masterData['grupo_id'] = $seguimiento->grupo_id;
-                $masterData['fecha'] = $seguimiento->fecha;
+                $masterData['fecha'] = $seguimiento->fecha?->format('Y-m-d');
                 $masterData['observaciones'] = $this->cleanUtf8($seguimiento->observaciones);
                 $masterData['cumplido'] = $seguimiento->cumplido;
                 $masterData['estado_cumplimiento'] = $seguimiento->estado_cumplimiento;
@@ -87,6 +88,7 @@ class PlanificacionSemestralController extends Controller
                 $masterData['pedagogico'] = $this->cleanUtf8($seguimiento->pedagogico);
                 $masterData['evidencias'] = $seguimiento->evidencias;
                 $masterData['integracion_transversal'] = $seguimiento->integracion_transversal;
+                $masterData['seguimiento_created_at'] = $seguimiento->created_at?->toIso8601String();
             } else if ($grupoId) {
                 $masterData['grupo_id'] = $grupoId;
                 $masterData['fecha'] = null;
@@ -382,17 +384,28 @@ class PlanificacionSemestralController extends Controller
 
             // Handle evidence file uploads
             $evidencias = [];
+            
+            // Re-use existing evidence paths if provided as strings
+            $existingEvidencias = $request->input('evidencias') ? json_decode($request->input('evidencias'), true) : [];
+            if (json_last_error() !== JSON_ERROR_NONE) $existingEvidencias = [];
 
             if ($request->hasFile('evidencia_aprendizaje')) {
                 $evidencias['aprendizaje_activo'] = $request->file('evidencia_aprendizaje')->store('evidencias/aprendizaje', 'public');
+            } else {
+                $evidencias['aprendizaje_activo'] = $existingEvidencias['aprendizaje_activo'] ?? null;
             }
+
             if ($request->hasFile('evidencia_evaluacion')) {
                 $evidencias['evaluacion_formativa'] = $request->file('evidencia_evaluacion')->store('evidencias/evaluacion', 'public');
-            } elseif ($request->filled('evidencia_evaluacion')) {
-                $evidencias['evaluacion_formativa'] = $request->input('evidencia_evaluacion');
+            } else {
+                // If it's a string (link or existing path), keep it
+                $evidencias['evaluacion_formativa'] = $request->input('evidencia_evaluacion') ?: ($existingEvidencias['evaluacion_formativa'] ?? null);
             }
+
             if ($request->hasFile('evidencia_secuencia')) {
                 $evidencias['secuencia_didactica'] = $request->file('evidencia_secuencia')->store('evidencias/secuencia', 'public');
+            } else {
+                $evidencias['secuencia_didactica'] = $existingEvidencias['secuencia_didactica'] ?? null;
             }
 
             // Integración Transversal evidence files
@@ -400,6 +413,8 @@ class PlanificacionSemestralController extends Controller
             foreach (['investigacion', 'interaccion', 'internalizacion'] as $tipo) {
                 if ($request->hasFile("evidencia_$tipo")) {
                     $integracionEvidencias[$tipo] = $request->file("evidencia_$tipo")->store("evidencias/$tipo", 'public');
+                } else {
+                    $integracionEvidencias[$tipo] = $integracionTransversal[$tipo]['evidencia'] ?? null;
                 }
             }
             foreach ($integracionTransversal as $key => $value) {
@@ -423,7 +438,7 @@ class PlanificacionSemestralController extends Controller
                 ],
                 [
                     'user_id' => Auth::id(),
-                    'fecha' => now()->format('Y-m-d'),
+                    'fecha' => $request->input('fecha') ?: now()->format('Y-m-d'),
                     'cumplido' => true,
                     'tema_cumplido' => $isCumplido,
                     'estado_cumplimiento' => $estadoCumplimiento,
