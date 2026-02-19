@@ -8,6 +8,8 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
+use Illuminate\Support\Facades\Log;
+
 class AuthController extends Controller
 {
     /**
@@ -15,6 +17,13 @@ class AuthController extends Controller
      */
     public function login(Request $request)
     {
+        Log::info('Login attempt', [
+            'username' => $request->username,
+            'ip' => $request->ip(),
+            'origin' => $request->header('Origin'),
+            'user_agent' => $request->header('User-Agent')
+        ]);
+
         $request->validate([
             'username' => 'required',
             'password' => 'required',

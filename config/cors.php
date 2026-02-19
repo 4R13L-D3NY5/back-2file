@@ -21,11 +21,14 @@ return [
 
     'allowed_origins' => [
         'https://documentacion.xpertiaplus.com',
+        'https://planificacion.unitepc.edu.bo',
         'http://localhost:9000',
         'http://127.0.0.1:9000',
         'http://localhost:8080',
         'http://127.0.0.1:8080',
         'http://localhost',
+        'capacitor://localhost',
+        'https://localhost',
     ],
 
     'allowed_origins_patterns' => [],
