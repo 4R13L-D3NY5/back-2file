@@ -206,6 +206,14 @@ class AsignaturaController extends Controller
     {
         $targetUserId = auth()->id();
 
+        // Si viene un docente_id (vista de director/admin)
+        if ($request->has('docente_id')) {
+            $docente = \App\Models\Docente::find($request->input('docente_id'));
+            if ($docente && $docente->user_id) {
+                $targetUserId = $docente->user_id;
+            }
+        }
+
         // 1. Busqueda local por ID con relaciones anidadas profundas para métricas
         $local = Asignatura::with([
             'unidades.temas' => function ($query) use ($targetUserId) {
@@ -267,6 +275,31 @@ class AsignaturaController extends Controller
             }
 
             $response = $local->toArray();
+
+            // Mapear temas para incluir los campos aplastados (estrategias, evaluacion, secuencia_didactica)
+            // de modo que el frontend pueda calcular el porcentaje idénticamente a getFullTema
+            if (isset($response['unidades'])) {
+                foreach ($response['unidades'] as &$u) {
+                    if (isset($u['temas'])) {
+                        foreach ($u['temas'] as &$t) {
+                            $personal = $t['planificacion_personal'] ?? null;
+                            
+                            $t['estrategias'] = [
+                                'metodologicas' => $personal['estrategias_metodologicas'] ?? $t['estrategias_metodologicas'] ?? '',
+                                'aprendizaje' => $personal['estrategias_aprendizaje'] ?? $t['estrategias_aprendizaje'] ?? '',
+                                'recursos' => $personal['estrategias_recursos'] ?? $t['estrategias_recursos'] ?? []
+                            ];
+                            $t['evaluacion'] = [
+                                'formativa' => $personal['evaluacion_formativa'] ?? $t['evaluacion_formativa'] ?? ['actividades' => [], 'instrumentos' => [], 'evidencias' => []],
+                                'sumativa' => $personal['evaluacion_sumativa'] ?? $t['evaluacion_sumativa'] ?? ['actividades' => [], 'instrumentos' => [], 'evidencias' => []]
+                            ];
+                            $t['secuencia_didactica'] = $personal['secuencia_didactica'] ?? $t['secuencia_didactica'] ?? [];
+                            $t['logros_esperados'] = $t['logros'] ?? [];
+                        }
+                    }
+                }
+            }
+
             // Inyectar alias para que el formulario se llene solo
             $response['objetivo_general'] = $local->proposito_general;
             $response['saberes_previos'] = $local->requisitos;
@@ -1010,6 +1043,7 @@ class AsignaturaController extends Controller
                                     'evaluacion_sumativa' => $t->evaluacion_sumativa,
                                     'horas_teoricas' => $t->horas_teoricas,
                                     'horas_practicas' => $t->horas_practicas,
+
                                     'logros_esperados' => $t->logros->map(function ($l) {
                                         return [
                                             'id' => $l->id,
@@ -1021,12 +1055,6 @@ class AsignaturaController extends Controller
                                             ]),
                                         ];
                                     }),
-                                    'secuencia_didactica' => $t->secuencias->map(fn($s) => [
-                                        'id' => $s->id,
-                                        'momento' => $s->momento,
-                                        'descripcion' => $s->descripcion,
-                                        'duracion_minutos' => $s->duracion_minutos,
-                                    ]),
                                     'bibliografias' => $t->bibliografias->map(fn($b) => [
                                         'id' => $b->id,
                                         'titulo' => $b->titulo,

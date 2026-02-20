@@ -376,7 +376,7 @@ class PlanificacionController extends Controller
     /**
      * Devuelve TODA la data rica de un tema formateada para el Frontend
      */
-    public function getFullTema($temaId)
+    public function getFullTema(\Illuminate\Http\Request $request, $temaId)
     {
         $tema = Tema::with([
             'secuencias',
@@ -386,6 +386,14 @@ class PlanificacionController extends Controller
 
         // --- MERGE PERSONAL DATA ---
         $userId = auth()->id();
+
+        // Si viene un docente_id explícito (vista director/admin)
+        if ($request->has('docente_id')) {
+            $docente = \App\Models\Docente::find($request->input('docente_id'));
+            if ($docente && $docente->user_id) {
+                $userId = $docente->user_id;
+            }
+        }
         $hasPersonalSequences = false;
         $personal = null;
 
