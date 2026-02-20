@@ -741,7 +741,7 @@ class AsignaturaController extends Controller
     /**
      * Importar Plan de Clase desde Word (Estructura Tabular "PLAN DE CLASE")
      */
-    public function importPlanClase(Request $request, $id)
+    public function importExcel(Request $request, $id)
     {
         $asignatura = Asignatura::findOrFail($id);
 
@@ -750,71 +750,347 @@ class AsignaturaController extends Controller
         }
 
         try {
-            // 1. Parsear el archivo usando el parser especializado
-            // 1. Parsear el archivo usando el parser especializado
-            $parsedData = $this->planClaseParser->parse($request->file('file'));
+            $file = $request->file('file');
+            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file->getPathname());
 
-            // 2. Poblar los datos en la Asignatura
-            // Mapeo de campos parseados -> Modelo Asignatura
+            // 1. Intentar seleccionar la hoja 'PAC' si existe, si no la activa
+            $sheet = $spreadsheet->getSheetByName('PAC') ?: $spreadsheet->getActiveSheet();
+            $rows = $sheet->toArray(null, false, false, false);
 
-            if (!empty($parsedData['competencias']['competencia_asignatura'])) {
-                $asignatura->competencia_asignatura = $parsedData['competencias']['competencia_asignatura'];
+            // LOG DEPURACIÓN: Ver qué datos hay realmente en el archivo subido
+            \Illuminate\Support\Facades\Log::info("--- EXCEL CONTENT DUMP (First 100 rows) ---");
+            foreach (array_slice($rows, 0, 100) as $rIdx => $row) {
+                foreach ($row as $cIdx => $cell) {
+                    $v = trim($cell ?? '');
+                    if ($v !== '') {
+                        $coord = \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($cIdx + 1) . ($rIdx + 1);
+                        \Illuminate\Support\Facades\Log::info("EXTRACTED [$coord]: $v");
+                    }
+                }
             }
-            // Concatenar elementos si hay varios, o guardar como texto
-            if (!empty($parsedData['competencias']['elementos_competencia'])) {
-                $asignatura->elementos_competencia = implode("\n", $parsedData['competencias']['elementos_competencia']);
-            }
+            \Illuminate\Support\Facades\Log::info("--- END DUMP ---");
+            // FUNCIÓN DE BÚSQUEDA GLOBAL: Busca una etiqueta en TODO el grid
+            // y devuelve el primer valor no vacío que NO sea la etiqueta misma NI un título de sección.
+            $searchGrid = function ($label, $limitCols = 15, $limitRows = 10, $strictHeaderSkip = true) use ($rows) {
+                $labelLower = mb_strtolower(trim($label));
+                foreach ($rows as $rIdx => $row) {
+                    if (empty($row)) continue;
+                    foreach ($row as $cIdx => $cell) {
+                        $cellVal = mb_strtolower(trim($cell ?? ''));
+                        if ($cellVal !== '' && str_contains($cellVal, $labelLower)) {
+                            // Una vez encontrada la etiqueta, buscamos el primer contenido útil en un radio grande
+                            for ($dr = 0; $dr < $limitRows; $dr++) {
+                                for ($dc = 0; $dc < $limitCols; $dc++) {
+                                    $checkRow = $rIdx + $dr;
+                                    $checkCol = $cIdx + $dc;
+                                    if (!isset($rows[$checkRow][$checkCol])) continue;
 
-            // Contenidos (si el parser extrajo contenidos mínimos globales)
-            // ...
+                                    $v = trim($rows[$checkRow][$checkCol]);
+                                    if ($v === '') continue;
 
-            $asignatura->save();
+                                    // REGLAS PARA DESCARTAR:
+                                    // 1. No es la etiqueta misma ni contiene la etiqueta si es muy corto (título)
+                                    $vLower = mb_strtolower($v);
+                                    if ($vLower === $labelLower) continue;
+                                    if (str_contains($vLower, $labelLower) && strlen($v) < 80) continue;
 
-            // 3. Estructura de Unidades (Si el Plan de Clase contiene el desglose)
-            if (!empty($parsedData['unidades'])) {
-                foreach ($parsedData['unidades'] as $uNum => $uData) {
-                    $titulo = $uData['titulo'] ?? "UNIDAD $uNum";
+                                    // 2. FILTRO DE TÍTULO (CRÍTICO): Ignorar si empieza con número (3. o 3.- o 3) y es corto
+                                    if ($strictHeaderSkip && preg_match('/^\d+[\.\-\s\)]+/', $v)) {
+                                        // Si el contenido largo es mayor a 100 caracteres, probablemente es contenido real
+                                        if (strlen($v) < 100) continue;
+                                    }
 
-                    $unidad = $asignatura->unidades()->updateOrCreate(
-                        ['numero' => $uNum],
-                        ['titulo' => substr($titulo, 0, 250)]
-                    );
+                                    // 2. No parece otra etiqueta (contiene :) a menos que sea muy largo
+                                    if (str_contains($v, ':') && strlen($v) < 30) continue;
 
-                    // Temas dentro de la unidad
-                    if (!empty($uData['temas'])) {
-                        // Opcional: Eliminar temas anteriores de esta unidad para evitar duplicados/basura
-                        // $unidad->temas()->delete(); 
+                                    // 3. No es un número de sección solo (ej: "4.-")
+                                    if (preg_match('/^\d+[\.\)-]\s*$/', $v)) continue;
 
-                        foreach ($uData['temas'] as $tNum => $temaData) {
-                            $unidad->temas()->updateOrCreate(
-                                ['orden' => $tNum], // Usamos 'orden' como identificador único dentro de la unidad
-                                [
-                                    'titulo' => substr($temaData['titulo'], 0, 190),
-                                    'contenido_conceptual' => $temaData['contenido_conceptual'] ?? [],
-                                    'contenido_procedimental' => $temaData['contenido_procedimental'] ?? [],
-                                    'contenido_actitudinal' => $temaData['contenido_actitudinal'] ?? [],
-                                    'estrategias_metodologicas' => $temaData['estrategias_metodologicas'] ?? null,
-                                    'estrategias_aprendizaje' => $temaData['estrategias_aprendizaje'] ?? null,
-                                    'estrategias_recursos' => $temaData['estrategias_recursos'] ?? [],
-                                    'evaluacion_formativa' => $temaData['evaluacion_formativa'] ?? [],
-                                    'evaluacion_sumativa' => $temaData['evaluacion_sumativa'] ?? [],
-                                    'secuencia_didactica' => $temaData['secuencia_didactica'] ?? [], /* SI EXISTE COLUMNA EN TABLA */
-                                    'resultado_aprendizaje' => $temaData['logros'] ?? null,
-                                ]
-                            );
+                                    return $v;
+                                }
+                            }
+                        }
+                    }
+                }
+                return null;
+            };
+
+            // 1. Identificación de la Asignatura
+            $val = $searchGrid('modalidad');
+            if ($val) $asignatura->modalidad = $val;
+            $val = $searchGrid('tipo de curso');
+            if ($val) $asignatura->tipo_curso = $val;
+            $val = $searchGrid('área de desempeño');
+            if ($val) $asignatura->area_desempenio = $val;
+            $val = $searchGrid('pre-requisito');
+            if ($val) $asignatura->requisitos = $val;
+
+            // Sesiones
+            $teoricas = $searchGrid('teóricas:');
+            if ($teoricas) $asignatura->sesiones_semanales_teoricas = intval($teoricas);
+
+            $practicas = $searchGrid('prácticas:');
+            if ($practicas) $asignatura->sesiones_semanales_practicas = intval($practicas);
+
+            // 2. Docente Responsable
+            $val = $searchGrid('email') ?: $searchGrid('correo');
+            if ($val) $asignatura->docente_email = $val;
+            $val = $searchGrid('formación');
+            if ($val) $asignatura->docente_formacion = $val;
+            $val = $searchGrid('teléfono');
+            if ($val) $asignatura->docente_telefono = $val;
+
+            // 3. Justificación
+            $just = $searchGrid('justificación de la asignatura', 15, 10, true);
+            if ($just) $asignatura->justificacion = $just;
+
+            // 4. Propósito General
+            $prop = $searchGrid('propósito general de la unidad', 15, 10, true);
+            if ($prop) $asignatura->proposito_general = $prop;
+
+            // 5. Competencias (CRÍTICO - BÚSQUEDA FUZZY PERO DISTINTA)
+            $global = $searchGrid('competencia global específica');
+            if ($global) $asignatura->competencia_global_especifica = $global;
+
+            $unidad = $searchGrid('unidad de competencia específica');
+            if ($unidad) $asignatura->competencia_asignatura = $unidad;
+
+            // 6. Elementos de Competencia (EXTRACCIÓN ÚNICAMENTE DEL PUNTO 6)
+            $ec = [];
+            $foundSec6 = false;
+            foreach ($rows as $rIdx => $row) {
+                $lineStr = mb_strtolower(implode(' ', array_filter($row)));
+
+                if (str_contains($lineStr, '6.- elementos de competencia') || (str_contains($lineStr, 'elementos de competencia') && strlen($lineStr) < 40)) {
+                    $foundSec6 = true;
+                    continue;
+                }
+
+                if ($foundSec6) {
+                    // STOP: Detección de siguiente sección (7 u 8)
+                    if (preg_match('/^\d+\.-/', trim(implode('', $row))) && !str_contains($lineStr, '6.-')) {
+                        // Si detectamos un nuevo número de sección que no sea el 6, salimos.
+                        break;
+                    }
+
+                    // Buscar "Elemento de competencia X" en cualquier celda de la fila
+                    foreach ($row as $cIdx => $cell) {
+                        $cellVal = mb_strtolower(trim($cell ?? ''));
+                        if (preg_match('/elemento de competencia\s*(\d+)/i', $cellVal, $m)) {
+                            $num = intval($m[1]);
+                            $foundContent = '';
+
+                            // 1. Buscar en la MISMA FILA a la derecha (Rango corto para evitar saltar a otras etiquetas)
+                            for ($dc = 1; $dc < 15; $dc++) {
+                                $v = trim($row[$cIdx + $dc] ?? '');
+                                if (strlen($v) > 5) {
+                                    // NO capturar si es otra etiqueta de sección o de elemento
+                                    if (str_contains(mb_strtolower($v), 'elemento de competencia')) continue;
+                                    if (preg_match('/^\d+\.-/i', $v)) continue;
+
+                                    $foundContent = $v;
+                                    break;
+                                }
+                            }
+                            // El usuario solicitó no buscar en otras filas si la derecha está vacía.
+
+                            if ($foundContent !== '') {
+                                $ec[] = $foundContent;
+                                // Sincronización con Unidades para la UI
+                                $asignatura->unidades()->updateOrCreate(
+                                    ['numero' => $num],
+                                    [
+                                        'elemento_competencia' => $foundContent,
+                                        'titulo' => $asignatura->unidades()->where('numero', $num)->value('titulo') ?: "UNIDAD $num"
+                                    ]
+                                );
+                            }
                         }
                     }
                 }
             }
 
-            return response()->json([
-                'message' => 'Plan de Clase importado correctamente.',
-                'data_preview' => $parsedData
-            ]);
+            if (!empty($ec)) {
+                $asignatura->elementos_competencia = array_values(array_unique($ec));
+            }
 
+            // 8. Metodología General
+            $metodologia = [];
+            // Búsqueda específica para metodologías ignorando etiquetas de "Si corresponde"
+            $vAula = $searchGrid('en el aula');
+            if ($vAula && strlen($vAula) > 5) $metodologia['aula'] = $vAula;
+
+            $vSim = $searchGrid('centro de simulación');
+            if ($vSim && strlen($vSim) > 5) $metodologia['simulacion'] = $vSim;
+
+            $vHosp = $searchGrid('hospital y centros de salud');
+            if ($vHosp && strlen($vHosp) > 5) $metodologia['hospital'] = $vHosp;
+
+            if (!empty($metodologia)) {
+                $asignatura->metodologia_general = $metodologia;
+            }
+
+            // 9. Sistema de Evaluación (EXTRACCIÓN ESTRUCTURADA)
+            $evaluacion = [
+                'intro' => '',
+                'diagnostica' => '',
+                'formativa' => '',
+                'sumativa' => '',
+                'ponderacion' => '',
+                'final' => ''
+            ];
+
+            foreach ($rows as $rIdx => $row) {
+                foreach ($row as $cIdx => $cell) {
+                    $cellVal = mb_strtolower(trim($cell ?? ''));
+                    if (str_contains($cellVal, '9. sistema de evaluación')) {
+                        // BLOQUE 1: Intro y Fases (Suelen estar 2 filas abajo)
+                        $rIntro = $rIdx + 2;
+                        if (isset($rows[$rIntro])) {
+                            $evaluacion['intro'] = trim($rows[$rIntro][1] ?? ''); // Col B
+
+                            $fasesRaw = trim($rows[$rIntro][5] ?? ''); // Col F
+                            if ($fasesRaw !== '') {
+                                // Split a., b., c. usando delimitadores flexibles
+                                if (preg_match('/a\.\s*(.*?)\s+b\.\s*(.*?)\s+c\.\s*(.*)/is', $fasesRaw, $m)) {
+                                    $evaluacion['diagnostica'] = trim($m[1]);
+                                    $evaluacion['formativa'] = trim($m[2]);
+                                    $evaluacion['sumativa'] = trim($m[3]);
+                                } else {
+                                    $evaluacion['formativa'] = $fasesRaw;
+                                }
+                            }
+                        }
+
+                        // BLOQUE 2: Ponderación y Final (Suelen estar 3-4 filas abajo)
+                        $rPond = $rIdx + 3;
+                        if (isset($rows[$rPond])) {
+                            $fullBlock = trim($rows[$rPond][1] ?? ''); // Col B
+                            if (str_contains($fullBlock, 'La evaluación final')) {
+                                $parts = explode('La evaluación final', $fullBlock);
+                                $evaluacion['ponderacion'] = trim($parts[0]);
+                                $evaluacion['final'] = 'La evaluación final ' . trim($parts[1]);
+                            } else {
+                                $evaluacion['ponderacion'] = $fullBlock;
+                            }
+                        }
+                        break 2;
+                    }
+                }
+            }
+            if (!empty(array_filter($evaluacion))) {
+                $asignatura->sistema_evaluacion = $evaluacion;
+            }
+
+            // 12. Criterios y Normativa (EXTRACCIÓN ESTRUCTURADA)
+            $normativaObj = [
+                'clase' => '',
+                'laboratorio' => ''
+            ];
+
+            foreach ($rows as $rIdx => $row) {
+                foreach ($row as $cIdx => $cell) {
+                    $cellVal = mb_strtolower(trim($cell ?? ''));
+                    if (str_contains($cellVal, '12.- criterios y normativa') || str_contains($cellVal, 'reglamento para las clases')) {
+
+                        $allText = "";
+                        // Capturamos el bloque de texto (Columnas B-J, filas+1 a +9)
+                        for ($dr = 1; $dr <= 9; $dr++) {
+                            if (isset($rows[$rIdx + $dr])) {
+                                $rowStr = mb_strtolower(implode(' ', array_filter($rows[$rIdx + $dr])));
+                                // Si detectamos el inicio de la siguiente sección, paramos
+                                if (str_contains($rowStr, '14.- bibliografía')) break;
+
+                                foreach ($rows[$rIdx + $dr] as $cVal) {
+                                    $v = trim($cVal ?? '');
+                                    if ($v !== '') $allText .= $v . "\n";
+                                }
+                            }
+                        }
+
+                        if ($allText !== "") {
+                            // Separamos por el delimitador clave
+                            if (str_contains($allText, 'Además, en laboratorio')) {
+                                $parts = explode('Además, en laboratorio', $allText);
+                                $normativaObj['clase'] = trim($parts[0]);
+                                $normativaObj['laboratorio'] = 'Además, en laboratorio' . trim($parts[1]);
+                            } else {
+                                $normativaObj['clase'] = trim($allText);
+                            }
+                        }
+                        break 2;
+                    }
+                }
+            }
+
+            if ($normativaObj['clase'] !== '' || $normativaObj['laboratorio'] !== '') {
+                $asignatura->reglamento_normativa = $normativaObj;
+            }
+
+            // 14. Bibliografía (ESTRATEGIA REFORZADA CON DIVISIÓN POR TIPO)
+            $especifica = [];
+            $complementaria = [];
+            $currentMode = ''; // 'basica' or 'complementaria'
+            $foundBiblioHeader = false;
+
+            foreach ($rows as $rIdx => $row) {
+                $rowCombined = mb_strtolower(implode(' ', array_filter($row)));
+
+                // Detección de cabecera de sección
+                if (str_contains($rowCombined, '14.- bibliografía')) {
+                    $foundBiblioHeader = true;
+                    continue;
+                }
+
+                if ($foundBiblioHeader) {
+                    // Cambio de modo por sub-cabecera (Específica o Complementaria)
+                    if (str_contains($rowCombined, 'específica:')) {
+                        $currentMode = 'basica';
+                        continue;
+                    }
+                    if (str_contains($rowCombined, 'complementaria:')) {
+                        $currentMode = 'complementaria';
+                        continue;
+                    }
+
+                    // Stop if next section header (e.g. 15.-)
+                    $fullRowStr = trim(implode('', $row));
+                    if (preg_match('/^\d+\.-/', $fullRowStr) && !str_contains($rowCombined, '14.-')) {
+                        break;
+                    }
+
+                    // Captura de contenido de la fila
+                    $line = trim(implode(' ', array_filter($row)));
+
+                    // Filtramos ruido: longitud mínima y que no sean los propios encabezados
+                    if ($currentMode !== '' && $line !== '' && strlen($line) > 3) {
+                        // Evitar capturar accidentalmente el título de la sección
+                        if (str_contains(mb_strtolower($line), 'bibliografía') && strlen($line) < 25) continue;
+
+                        if ($currentMode === 'basica') {
+                            $especifica[] = $line;
+                        } else if ($currentMode === 'complementaria') {
+                            $complementaria[] = $line;
+                        }
+                    }
+                }
+            }
+
+            if (!empty($especifica) || !empty($complementaria)) {
+                $asignatura->bibliografias()->delete();
+                if (!empty($especifica)) $this->saveBibliografias($asignatura, $especifica, 'Basica');
+                if (!empty($complementaria)) $this->saveBibliografias($asignatura, $complementaria, 'Complementaria');
+            }
+
+            // LOG DE RESULTADOS PARA DEPURACIÓN
+            \Illuminate\Support\Facades\Log::info("PAC IMPORT SUCCESS: " . $asignatura->id . " | Biblio count: " . (count($especifica) + count($complementaria)));
+
+            $asignatura->save();
+
+            return response()->json(['message' => 'Programa de Asignatura importado con éxito total', 'asignatura' => $asignatura]);
         } catch (\Exception $e) {
-            Log::error('Error importando Plan de Clase: ' . $e->getMessage());
-            return response()->json(['error' => 'Error al procesar Plan de Clase: ' . $e->getMessage()], 500);
+            \Illuminate\Support\Facades\Log::error("Excel PAC Import Error: " . $e->getMessage());
+            return response()->json(['error' => 'Error al procesar el PAC Excel: ' . $e->getMessage()], 500);
         }
     }
 
