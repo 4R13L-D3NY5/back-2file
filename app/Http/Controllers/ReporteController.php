@@ -35,7 +35,7 @@ class ReporteController extends Controller
         // Fetch cronogramas for this week
         $cronogramas = $grupo->cronogramas()
             ->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
-            ->with(['tema', 'secuenciasDidacticas', 'evaluaciones', 'asistencias'])
+            ->with(['tema', 'secuenciasDidacticas', 'evaluaciones', 'asistencias', 'seguimientos'])
             ->get();
 
         if ($cronogramas->isEmpty()) {
@@ -59,104 +59,105 @@ class ReporteController extends Controller
 
         // Initialize Criteria counters
         $criteriaStats = [
-            'tema_impartido' => 0,
-            'actividades' => 0,
-            'secuencia' => 0,
-            'plataforma' => 0, // Manual mostly
-            'evidencias' => 0,
-            'evaluaciones' => 0,
-            'integracion' => 0
+            'cumplimiento' => ['totalmente' => 0, 'parcialmente' => 0, 'no_cumplido' => 0],
+            'planificacion' => ['estrategias' => 0, 'evaluacion' => 0, 'secuencia' => 0],
+            'integracion' => ['investigacion' => 0, 'interaccion_social' => 0, 'internalizacion' => 0],
+            'evidencia_tipos' => ['fotos_videos' => 0, 'link_evidencia' => 0, 'archivos_secuencia' => 0],
+            'registro_oportuno' => ['en_hora_verde' => 0, 'en_el_dia_amarillo' => 0, 'fuera_rojo' => 0]
         ];
 
         $totalSessions = $cronogramas->count();
 
         foreach ($cronogramas as $crono) {
-            $pedagogico = $crono->pedagogico ?? [];
+            $seguimiento = $crono->seguimientos->first();
 
-            // 1. Tema Impartido
-            if ($crono->cumplido && $crono->tema_id) {
-                $criteriaStats['tema_impartido']++;
+            if (!$seguimiento) {
+                // Si no hay seguimiento se cuenta como NO CUMPLIDO y ROJO/Fuera de hora
+                $criteriaStats['cumplimiento']['no_cumplido']++;
+                $criteriaStats['registro_oportuno']['fuera_rojo']++;
+                continue;
             }
 
-            // 2. Actividades Formativas (Check pedagogico json or strategies)
-            // Fix: Check inside pedagogico['estrategias'] explicitly
-            $hasActivities = !empty($crono->tema->estrategias_metodologicas) || 
-                             (!empty($pedagogico['estrategias']) && count($pedagogico['estrategias']) > 0);
+            // 1. Estado de Cumplimiento
+            $estadoStr = $seguimiento->estado_cumplimiento ?? '';
+            if ($estadoStr === 'TOTAL' || $estadoStr === 'TOTALMENTE') {
+                 $criteriaStats['cumplimiento']['totalmente']++;
+            } elseif ($estadoStr === 'PARCIAL' || $estadoStr === 'PARCIALMENTE') {
+                 $criteriaStats['cumplimiento']['parcialmente']++;
+            } elseif ($estadoStr === 'NO' || $estadoStr === 'NO CUMPLIDO') {
+                 $criteriaStats['cumplimiento']['no_cumplido']++;
+            } else {
+                 $criteriaStats['cumplimiento']['no_cumplido']++;
+            }
+
+            // 2. Planificación por tema
+            $pedagogico = is_string($seguimiento->pedagogico) ? json_decode($seguimiento->pedagogico, true) : ($seguimiento->pedagogico ?? []);
+            if (!empty($pedagogico)) {
+                if (collect($pedagogico['estrategias'] ?? [])->where('cumplido', true)->count() > 0) $criteriaStats['planificacion']['estrategias']++;
+                if (collect($pedagogico['evaluacion'] ?? [])->where('cumplido', true)->count() > 0) $criteriaStats['planificacion']['evaluacion']++;
+                if (collect($pedagogico['secuencia'] ?? [])->where('cumplido', true)->count() > 0) $criteriaStats['planificacion']['secuencia']++;
+            }
+
+            // 3. Integración Transversal
+            $integracion = is_string($seguimiento->integracion_transversal) ? json_decode($seguimiento->integracion_transversal, true) : ($seguimiento->integracion_transversal ?? []);
+            if (!empty($integracion)) {
+                if ($integracion['investigacion']['cumplido'] ?? false) $criteriaStats['integracion']['investigacion']++;
+                if ($integracion['interaccion']['cumplido'] ?? false) $criteriaStats['integracion']['interaccion_social']++;
+                if ($integracion['internalizacion']['cumplido'] ?? false) $criteriaStats['integracion']['internalizacion']++;
+            }
+
+            // 4. Evidencias types
+            $evidencias = is_string($seguimiento->evidencias) ? json_decode($seguimiento->evidencias, true) : ($seguimiento->evidencias ?? []);
+            if (!empty($evidencias)) {
+                if (!empty($evidencias['aprendizaje_activo'])) $criteriaStats['evidencia_tipos']['fotos_videos']++;
+                if (!empty($evidencias['evaluacion_formativa'])) $criteriaStats['evidencia_tipos']['link_evidencia']++;
+                if (!empty($evidencias['secuencia_didactica'])) $criteriaStats['evidencia_tipos']['archivos_secuencia']++;
+            }
+
+            // 5. Registro oportuno
+            $cronoDate = \Carbon\Carbon::parse($crono->fecha)->startOfDay();
+            $createdAt = \Carbon\Carbon::parse($seguimiento->created_at)->startOfDay();
             
-            if ($hasActivities) {
-                $criteriaStats['actividades']++;
+            if ($createdAt->equalTo($cronoDate)) {
+                $criteriaStats['registro_oportuno']['en_hora_verde']++;
+            } else if ($createdAt->diffInDays($cronoDate) == 1) {
+                $criteriaStats['registro_oportuno']['en_el_dia_amarillo']++;
+            } else {
+                $criteriaStats['registro_oportuno']['fuera_rojo']++;
             }
-
-            // 3. Secuencia Didáctica
-            // Fix: Check inside pedagogico['secuencia'] explicitly
-            $hasSequence = $crono->secuenciasDidacticas->isNotEmpty() || 
-                           !empty($crono->contenido_conceptual) ||
-                           (!empty($pedagogico['secuencia']) && count($pedagogico['secuencia']) > 0);
-
-            if ($hasSequence) {
-                $criteriaStats['secuencia']++;
-            }
-
-            // 4. Plataforma (Placeholder: check if links exists in observations)
-            if (str_contains(strtolower($crono->observaciones ?? ''), 'moodle') || 
-                str_contains(strtolower($crono->observaciones ?? ''), 'teams')) {
-                $criteriaStats['plataforma']++;
-            }
-
-            // 5. Evidencias (Asistencia taken OR Uploaded Files)
-            // Fix: Check inside pedagogico['evidencias'] explicitly
-            $hasEvidence = $crono->asistencias->count() > 0 || 
-                           (!empty($pedagogico['evidencias']) && count($pedagogico['evidencias']) > 0);
-
-            if ($hasEvidence) {
-                $criteriaStats['evidencias']++;
-            }
-
-            // 6. Evaluaciones
-            // Fix: Check inside pedagogico['evaluacion'] explicitly
-            $hasEvaluation = $crono->evaluaciones->isNotEmpty() || 
-                             !empty($crono->instrumentos_evaluacion) ||
-                             (!empty($pedagogico['evaluacion']) && count($pedagogico['evaluacion']) > 0);
-
-            if ($hasEvaluation) {
-                $criteriaStats['evaluaciones']++;
-            }
-
-            // 7. Integración (Check transversal in tema)
-            // Assuming simplified check for now
-            $criteriaStats['integracion']++;
         }
 
-        // Build the 7 criteria rows for the report
+        // Build the 5 criteria rows for the report
         $criterios = [
-            'Tema impartido' => [
-                'cumple' => $criteriaStats['tema_impartido'] === $totalSessions,
-                'obs' => $criteriaStats['tema_impartido'] . '/' . $totalSessions . ' sesiones cumplen.'
+            'Cumplimiento' => [
+                'cumple' => $criteriaStats['cumplimiento']['totalmente'] === $totalSessions,
+                'obs' => "Totalmente: {$criteriaStats['cumplimiento']['totalmente']} | Parcialmente: {$criteriaStats['cumplimiento']['parcialmente']} | No Cumplido: {$criteriaStats['cumplimiento']['no_cumplido']}",
+                'stats' => $criteriaStats['cumplimiento'],
+                'type' => 'cumplimiento'
             ],
-            'Actividades formativas' => [
-                'cumple' => $criteriaStats['actividades'] >= 1, // At least once a week
-                'obs' => 'Actividades alineadas a competencias.'
+            'Planificación por Tema' => [
+                'cumple' => ($criteriaStats['planificacion']['estrategias'] + $criteriaStats['planificacion']['evaluacion'] + $criteriaStats['planificacion']['secuencia']) > 0,
+                'obs' => "Estrategias: {$criteriaStats['planificacion']['estrategias']} | Evaluación: {$criteriaStats['planificacion']['evaluacion']} | Secuencia: {$criteriaStats['planificacion']['secuencia']}",
+                'stats' => $criteriaStats['planificacion'],
+                'type' => 'planificacion'
             ],
-            'Secuencia didáctica' => [
-                'cumple' => $criteriaStats['secuencia'] === $totalSessions,
-                'obs' => 'Inicio, desarrollo y cierre registrados.'
-            ],
-            'Plataforma virtual' => [
-                'cumple' => false, // Default to false for manual check
-                'obs' => 'Verificar actividades en campus virtual.'
+            'Integración Transversal' => [
+                'cumple' => ($criteriaStats['integracion']['investigacion'] + $criteriaStats['integracion']['interaccion_social'] + $criteriaStats['integracion']['internalizacion']) > 0,
+                'obs' => "Investigación: {$criteriaStats['integracion']['investigacion']} | Interacción Social: {$criteriaStats['integracion']['interaccion_social']} | Internalización: {$criteriaStats['integracion']['internalizacion']}",
+                'stats' => $criteriaStats['integracion'],
+                'type' => 'integracion'
             ],
             'Evidencias' => [
-                // If attendance is hidden, we rely on uploaded evidence mostly
-                'cumple' => $criteriaStats['evidencias'] >= 1, // At least one evidence per week? Or all sessions? Let's stay strict: all sessions
-                'obs' => 'Reportes generados o archivos subidos.'
+                'cumple' => ($criteriaStats['evidencia_tipos']['fotos_videos'] + $criteriaStats['evidencia_tipos']['link_evidencia'] + $criteriaStats['evidencia_tipos']['archivos_secuencia']) > 0,
+                'obs' => "Fotos/Videos: {$criteriaStats['evidencia_tipos']['fotos_videos']} | Links: {$criteriaStats['evidencia_tipos']['link_evidencia']} | Secuencia: {$criteriaStats['evidencia_tipos']['archivos_secuencia']}",
+                'stats' => $criteriaStats['evidencia_tipos'],
+                'type' => 'evidencias'
             ],
-            'Evaluaciones' => [
-                'cumple' => $criteriaStats['evaluaciones'] >= 1, // Optional depending on week
-                'obs' => 'Banco de preguntas y coherencia (Verificar).'
-            ],
-            'Integración transversal' => [
-                'cumple' => true,
-                'obs' => 'Investigación / Interacción Social.'
+            'Registro Oportuno' => [
+                'cumple' => $criteriaStats['registro_oportuno']['fuera_rojo'] === 0,
+                'obs' => "En Hora: {$criteriaStats['registro_oportuno']['en_hora_verde']} | En el Día: {$criteriaStats['registro_oportuno']['en_el_dia_amarillo']} | Fuera: {$criteriaStats['registro_oportuno']['fuera_rojo']}",
+                'stats' => $criteriaStats['registro_oportuno'],
+                'type' => 'registro_oportuno'
             ]
         ];
 
@@ -660,6 +661,8 @@ class ReporteController extends Controller
         $startDate = Carbon::parse($request->fecha_inicio)->startOfWeek();
         $endDate = $startDate->copy()->endOfWeek();
 
+        \Log::info("Generating Weekly Report. Request: Carrera $carreraId, Sede: $sedeId, Start: {$startDate->toDateString()}, End: {$endDate->toDateString()}");
+
         // 1. Find Subjects linked to this Career & Sede
         $asignaturaIds = Asignatura::whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
             $q->where('carreras.id', $carreraId)
@@ -667,20 +670,16 @@ class ReporteController extends Controller
         })->pluck('id');
 
         // 2. Fetch Groups: strict match OR via subject link
-        $grupos = Grupo::where(function($query) use ($carreraId, $sedeId, $asignaturaIds) {
-                // Option A: Link via Subject (Pivot)
-                $query->whereIn('asignatura_id', $asignaturaIds)
-                // Option B: Direct match on Group table (Legacy/Alternative)
-                      ->orWhere(function($q) use ($carreraId, $sedeId) {
-                          $q->where('carrera_id', $carreraId)
-                            ->where('sede_id', $sedeId);
-                      });
-            })
-            ->with(['asignatura', 'docente', 'cronogramas' => function ($cq) use ($startDate, $endDate) {
+        $grupos = Grupo::whereHas('asignatura.carreras', function ($q) use ($carreraId, $sedeId) {
+            $q->where('carreras.id', $carreraId)
+              ->where('asignatura_carrera.sede_id', $sedeId);
+        })
+        ->with(['asignatura', 'docente', 'cronogramas' => function ($cq) use ($startDate, $endDate) {
                 $cq->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
                    ->withCount(['asistencias' => function ($aq) {
                         $aq->where('asistio', true);
-                   }]);
+                   }])
+                   ->with(['seguimientos']);
             }])
             ->get();
 
@@ -741,12 +740,18 @@ class ReporteController extends Controller
             $alertLevel = 'VERDE';
 
             foreach ($sessions as $session) {
-                $pedagogico = $session->pedagogico ?? [];
+                // If there is no planificacion recorded, then it's directly ROJO
+                $alertLevel = 'ROJO'; 
+                $seguimiento = $session->seguimientos->first();
+
+                $pedagogico = $seguimiento ? (is_string($seguimiento->pedagogico) ? json_decode($seguimiento->pedagogico, true) : ($seguimiento->pedagogico ?? [])) : [];
 
                 // 1. Asistencia / Evidencias Check
                 // Allow uploaded evidences to pass this check if attendance is not used
                 $hasAttendance = $session->asistencias_count > 0; // Pre-calculated in withCount
-                $hasEvidenceFiles = !empty($pedagogico['evidencias']) && count($pedagogico['evidencias']) > 0;
+                
+                $evidencias = $seguimiento ? (is_string($seguimiento->evidencias) ? json_decode($seguimiento->evidencias, true) : ($seguimiento->evidencias ?? [])) : [];
+                $hasEvidenceFiles = !empty($evidencias);
                 
                 $evidenceOk = $hasAttendance || $hasEvidenceFiles;
 
@@ -756,10 +761,11 @@ class ReporteController extends Controller
                 // 3. Resources/Strategies
                 // Check strict structure
                 $planningOk = !empty($pedagogico) && 
-                              (!empty($pedagogico['estrategias']) || !empty($session->tema->estrategias_metodologicas));
+                              (collect($pedagogico['estrategias'] ?? [])->where('cumplido', true)->count() > 0 || !empty($session->tema->estrategias_metodologicas));
 
-                // 4. Completed Check
-                $completedOk = $session->cumplido;
+                // 4. Completed Check from Seguimiento
+                $estadoStr = $seguimiento->estado_cumplimiento ?? '';
+                $completedOk = ($estadoStr === 'TOTAL' || $estadoStr === 'TOTALMENTE' || $estadoStr === 'PARCIAL' || $estadoStr === 'PARCIALMENTE');
 
                 $checks[] = [
                     'fecha' => $session->fecha,
@@ -773,6 +779,8 @@ class ReporteController extends Controller
                     $alertLevel = 'ROJO';
                 } else if (!$planningOk) {
                     $alertLevel = ($alertLevel === 'ROJO') ? 'ROJO' : 'AMARILLO';
+                } else {
+                    $alertLevel = ($alertLevel === 'ROJO' || $alertLevel === 'AMARILLO') ? $alertLevel : 'VERDE';
                 }
             }
 
