@@ -201,6 +201,7 @@ class PlanificacionSemestralController extends Controller
                         'criterios_desempeno' => $sesionData['criteriosDesempeno'] ?? null,
                         'instrumentos_evaluacion' => $sesionData['instrumentosEvaluacion'] ?? null,
                         'contenido_items_seleccionados' => $sesionData['contenido_items_seleccionados'] ?? [],
+                        'observaciones' => $sesionData['observaciones'] ?? null, // ADDED: Enable saving manual extra content
                         'semana_academica' => $sesionData['semana'] ?? null, // Added missing field
                         // Fix for type: check if key exists, otherwise don't overwite or use default
                     ] + (isset($sesionData['tipoClase']) ? ['tipo_clase' => $sesionData['tipoClase']] : [])
