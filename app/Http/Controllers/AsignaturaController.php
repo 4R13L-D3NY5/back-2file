@@ -204,8 +204,19 @@ class AsignaturaController extends Controller
      */
     public function show(Request $request, $id)
     {
-        // 1. Busqueda local por ID
-        $local = Asignatura::with(['unidades.temas', 'bibliografias', 'docentes', 'carreras', 'grupos.horarios.aula'])->find($id);
+        $targetUserId = auth()->id();
+
+        // 1. Busqueda local por ID con relaciones anidadas profundas para métricas
+        $local = Asignatura::with([
+            'unidades.temas' => function ($query) use ($targetUserId) {
+                $query->with(['logros.indicadores', 'planificacionPersonal' => function ($q) use ($targetUserId) {
+                    if ($targetUserId) {
+                        $q->where('user_id', $targetUserId);
+                    }
+                }]);
+            },
+            'bibliografias', 'docentes', 'carreras', 'grupos.horarios.aula'
+        ])->find($id);
 
         if ($local) {
             // Verificar si tiene unidades (Si no tiene, intentar sync)
@@ -221,7 +232,15 @@ class AsignaturaController extends Controller
                 $actualBranchCode = $mainCarrera->sede->codigo ?? $branchCode; // Use ->sede->codigo safely
                 $actualCareerCode = $mainCarrera->codigo ?? $careerCode;
                 $this->syncService->syncAnalyticalProgram($local, $actualBranchCode, $actualCareerCode);
-                $local->load(['unidades.temas', 'bibliografias', 'docentes']);
+                $local->load([
+                    'unidades.temas.logros.indicadores',
+                    'unidades.temas.planificacionPersonal' => function ($q) use ($targetUserId) {
+                        if ($targetUserId) {
+                            $q->where('user_id', $targetUserId);
+                        }
+                    },
+                    'bibliografias', 'docentes'
+                ]);
             }
 
             // AUTO-SYNC (CONTENIDO DESCRIPTIVO)

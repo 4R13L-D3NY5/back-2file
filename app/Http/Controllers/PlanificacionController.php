@@ -470,6 +470,7 @@ class PlanificacionController extends Controller
             'contenido_items' => $tema->contenido_items ?? [],
             'horas_practicas' => $tema->horas_practicas,
             'horas_teoricas' => $tema->horas_teoricas,
+            'resultado_aprendizaje' => $tema->resultado_aprendizaje,
             // Reconstruir Objetos
             'contenidos' => [
                 'conceptual' => $tema->contenido_conceptual ?? [],
