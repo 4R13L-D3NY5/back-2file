@@ -4,15 +4,10 @@ $app = require_once __DIR__.'/bootstrap/app.php';
 $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
 $kernel->bootstrap();
 
-$startDate = \Carbon\Carbon::parse('2026-02-09')->startOfWeek();
-$endDate = $startDate->copy()->endOfWeek();
+$asignaturas = \App\Models\Asignatura::where('nombre', 'like', '%REDES%')
+    ->orWhere('codigo', 'like', '%SIS-312%')
+    ->select('id', 'codigo', 'nombre', 'sesiones_semanales_teoricas', 'sesiones_semanales_practicas')
+    ->get()
+    ->toArray();
 
-$grupo = \App\Models\Grupo::with(['cronogramas' => function ($cq) use ($startDate, $endDate) {
-    echo "Executing eager load constraint for dates ".$startDate->toDateString()." to ".$endDate->toDateString()."\n";
-    $cq->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()]);
-}])->find(1177);
-
-echo "\nEAGER LOADED CLASSES for 1177:\n";
-foreach($grupo->cronogramas as $c) {
-    echo "- ID {$c->id} | {$c->fecha}\n";
-}
+echo json_encode($asignaturas, JSON_PRETTY_PRINT);

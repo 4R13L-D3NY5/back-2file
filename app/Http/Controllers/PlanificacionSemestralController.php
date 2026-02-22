@@ -201,9 +201,8 @@ class PlanificacionSemestralController extends Controller
                         'criterios_desempeno' => $sesionData['criteriosDesempeno'] ?? null,
                         'instrumentos_evaluacion' => $sesionData['instrumentosEvaluacion'] ?? null,
                         'contenido_items_seleccionados' => $sesionData['contenido_items_seleccionados'] ?? [],
-                        'observaciones' => $sesionData['observaciones'] ?? null, // ADDED: Enable saving manual extra content
-                        'semana_academica' => $sesionData['semana'] ?? null, // Added missing field
-                        // Fix for type: check if key exists, otherwise don't overwite or use default
+                        'observaciones' => $sesionData['observaciones'] ?? null,
+                        'semana_academica' => $sesionData['semana'] ?? null,
                     ] + (isset($sesionData['tipoClase']) ? ['tipo_clase' => $sesionData['tipoClase']] : [])
                 );
 
@@ -263,7 +262,7 @@ class PlanificacionSemestralController extends Controller
                        'grupo_id' => null, // MASTER RECORD
                        'numero_sesion' => $contadorGlobal++,
                        'semana_academica' => $semana,
-                       'tipo_clase' => 'Teórica', // Nuevo campo o atributo en JSON
+                       'tipo_clase' => 'Teórica',
                        'observaciones' => 'Teórica ' . $t, // Fallback visual
                        'fecha' => null, // MASTER tiene fecha NULL
                        'created_at' => now(),
@@ -278,7 +277,7 @@ class PlanificacionSemestralController extends Controller
                        'grupo_id' => null, // MASTER RECORD
                        'numero_sesion' => $contadorGlobal++,
                        'semana_academica' => $semana,
-                       'tipo_clase' => 'Práctica', // Nuevo campo o atributo en JSON
+                       'tipo_clase' => 'Práctica',
                        'observaciones' => 'Práctica ' . $p, // Fallback visual
                        'fecha' => null, // MASTER tiene fecha NULL
                        'created_at' => now(),
