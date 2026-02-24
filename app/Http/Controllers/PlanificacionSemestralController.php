@@ -50,9 +50,17 @@ class PlanificacionSemestralController extends Controller
         // Master records have group_id = NULL
         $masterCronogramas = Cronograma::where('asignatura_id', $asignaturaId)
             ->whereNull('grupo_id')
-            ->with(['temas', 'tema.planificacionPersonal' => function ($query) use ($targetUserId) {
-                $query->where('user_id', $targetUserId);
-            }])
+            ->with([
+                'temas',
+                'temas.secuencias',
+                'temas.planificacionPersonal' => function ($query) use ($targetUserId) {
+                    $query->where('user_id', $targetUserId);
+                },
+                'tema.secuencias',
+                'tema.planificacionPersonal' => function ($query) use ($targetUserId) {
+                    $query->where('user_id', $targetUserId);
+                },
+            ])
             ->orderBy('numero_sesion')
             ->get();
 
@@ -505,11 +513,15 @@ class PlanificacionSemestralController extends Controller
             ]
         ];
 
-        if (!$cronograma->tema) {
-            return $defaults;
+        // If tema (singular, via tema_id) is not set, fall back to first of multi-tema relation
+        $tema = $cronograma->tema;
+        if (!$tema && $cronograma->relationLoaded('temas') && $cronograma->temas->isNotEmpty()) {
+            $tema = $cronograma->temas->first();
         }
 
-        $tema = $cronograma->tema;
+        if (!$tema) {
+            return $defaults;
+        }
 
         // Check if planificacionPersonal was eager loaded and exists
         // The relationship is loaded with user_id constraint in the index method
