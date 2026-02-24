@@ -18,9 +18,9 @@ Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,
 Route::post('/register', [AuthController::class, 'register']);
 
 // Programas Analíticos (público con token estático)
-Route::get('/programas-analiticos', [AsignaturaController::class, 'programasAnaliticos']);
-
-// Protected Routes
+// Programas Analíticos (público con token estático)
+Route::get('/programas-analiticos', [\App\Http\Controllers\AsignaturaController::class, 'programasAnaliticos']);
+Route::get('/reportes/semanal/print', [\App\Http\Controllers\ReporteController::class, 'exportWeeklyReportHtml']);
 Route::middleware('auth:sanctum')->group(function () {
     // Auth
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -197,7 +197,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/matriz-control', [\App\Http\Controllers\ReporteController::class, 'getMatrizControl']);
     Route::get('/reportes/auditoria-25', [\App\Http\Controllers\ReporteController::class, 'getAuditoria25']);
     
-    // Informe Semanal (Micro-curricular)
     Route::get('/reportes/semanal/draft', [\App\Http\Controllers\ReporteController::class, 'getWeeklyReportDraft']);
     Route::post('/reportes/semanal', [\App\Http\Controllers\ReporteController::class, 'storeWeeklyReport']);
 

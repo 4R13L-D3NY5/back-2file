@@ -12,13 +12,11 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 use App\Models\InformeSemanal;
+use App\Models\Cronograma;
+use App\Models\Seguimiento;
 
 class ReporteController extends Controller
 {
-    /**
-     * Generate a draft for the Weekly Micro-curricular Report
-     * Automates 7 technical verification points based on Cronograma
-     */
     public function getWeeklyReportDraft(Request $request) 
     {
         $request->validate([
@@ -27,37 +25,31 @@ class ReporteController extends Controller
         ]);
 
         $grupoId = $request->grupo_id;
-        $startDate = Carbon::parse($request->fecha_inicio)->startOfWeek(); // Ensure monday
+        $startDate = Carbon::parse($request->fecha_inicio)->startOfWeek();
         $endDate = $startDate->copy()->endOfWeek();
+        
+        $baseDate = Carbon::create(2026, 2, 9)->startOfWeek();
+        $weekNum = $startDate->diffInWeeks($baseDate) + 1;
 
         $grupo = Grupo::with(['docente', 'asignatura'])->findOrFail($grupoId);
 
-        // Fetch cronogramas for this week
-        $cronogramas = $grupo->cronogramas()
-            ->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
-            ->with(['tema', 'secuenciasDidacticas', 'evaluaciones', 'asistencias', 'seguimientos'])
+        // 1. Sesiones planificadas para esta semana académica
+        $plannedSessions = $grupo->cronogramas()
+            ->where('semana_academica', $weekNum)
+            ->with(['tema', 'seguimientos'])
             ->get();
 
-        if ($cronogramas->isEmpty()) {
-            // Return a "Non-compliance" draft
-            return response()->json([
-                'exists' => false,
-                'report' => [
-                    'grupo_id' => $grupo->id,
-                    'docente_id' => $grupo->docente_id,
-                    'docente_nombre' => $grupo->docente->nombre_completo,
-                    'asignatura_nombre' => $grupo->asignatura->nombre,
-                    'semana_inicio' => $startDate->toDateString(),
-                    'semana_fin' => $endDate->toDateString(),
-                    'criterios' => [], // Empty criteria
-                    'observaciones' => 'No hay clases/cronograma registrado para esta semana.',
-                    'escala_alerta' => 'ROJO',
-                    'cumplimiento_porcentaje' => 0
-                ]
-            ]);
-        }
+        // 2. Seguimientos realizados en este rango de fechas real
+        $seguimientos = $grupo->seguimientos()
+            ->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
+            ->get();
 
-        // Initialize Criteria counters
+        $executionMap = $seguimientos->keyBy('cronograma_id');
+
+        // Pre-cargar cronogramas extras
+        $extraCronoIds = $seguimientos->pluck('cronograma_id')->diff($plannedSessions->pluck('id'))->filter();
+        $extraCronosMap = Cronograma::whereIn('id', $extraCronoIds)->with('tema')->get()->keyBy('id');
+
         $criteriaStats = [
             'cumplimiento' => ['totalmente' => 0, 'parcialmente' => 0, 'no_cumplido' => 0],
             'planificacion' => ['estrategias' => 0, 'evaluacion' => 0, 'secuencia' => 0],
@@ -66,109 +58,116 @@ class ReporteController extends Controller
             'registro_oportuno' => ['en_hora_verde' => 0, 'en_el_dia_amarillo' => 0, 'fuera_rojo' => 0]
         ];
 
-        $totalSessions = $cronogramas->count();
+        $detailedSessions = [];
+        $relevantCronoIds = $plannedSessions->pluck('id')->merge($seguimientos->pluck('cronograma_id'))->filter()->unique();
 
-        foreach ($cronogramas as $crono) {
-            $seguimiento = $crono->seguimientos->first();
+        foreach ($relevantCronoIds as $cronoId) {
+            $session = $plannedSessions->firstWhere('id', $cronoId) ?? $extraCronosMap->get($cronoId);
+            $seguimiento = $executionMap->get($cronoId) ?? ($session ? $session->seguimientos->first() : null);
 
-            if (!$seguimiento) {
-                // Si no hay seguimiento se cuenta como NO CUMPLIDO y ROJO/Fuera de hora
-                $criteriaStats['cumplimiento']['no_cumplido']++;
-                $criteriaStats['registro_oportuno']['fuera_rojo']++;
-                continue;
-            }
+            $isPlannedThisWeek = $session && $session->semana_academica == $weekNum;
+            $isExecutedThisWeek = $seguimiento && Carbon::parse($seguimiento->fecha)->between($startDate, $endDate);
 
-            // 1. Estado de Cumplimiento
-            $estadoStr = $seguimiento->estado_cumplimiento ?? '';
-            if ($estadoStr === 'TOTAL' || $estadoStr === 'TOTALMENTE') {
-                 $criteriaStats['cumplimiento']['totalmente']++;
-            } elseif ($estadoStr === 'PARCIAL' || $estadoStr === 'PARCIALMENTE') {
-                 $criteriaStats['cumplimiento']['parcialmente']++;
-            } elseif ($estadoStr === 'NO' || $estadoStr === 'NO CUMPLIDO') {
-                 $criteriaStats['cumplimiento']['no_cumplido']++;
-            } else {
-                 $criteriaStats['cumplimiento']['no_cumplido']++;
-            }
+            if (!$isPlannedThisWeek && !$isExecutedThisWeek) continue;
 
-            // 2. Planificación por tema
-            $pedagogico = is_string($seguimiento->pedagogico) ? json_decode($seguimiento->pedagogico, true) : ($seguimiento->pedagogico ?? []);
-            if (!empty($pedagogico)) {
-                if (collect($pedagogico['estrategias'] ?? [])->where('cumplido', true)->count() > 0) $criteriaStats['planificacion']['estrategias']++;
-                if (collect($pedagogico['evaluacion'] ?? [])->where('cumplido', true)->count() > 0) $criteriaStats['planificacion']['evaluacion']++;
-                if (collect($pedagogico['secuencia'] ?? [])->where('cumplido', true)->count() > 0) $criteriaStats['planificacion']['secuencia']++;
-            }
+            $pedagogico = $seguimiento ? (is_string($seguimiento->pedagogico) ? json_decode($seguimiento->pedagogico, true) : ($seguimiento->pedagogico ?? [])) : [];
+            $integracion = $seguimiento ? (is_string($seguimiento->integracion_transversal) ? json_decode($seguimiento->integracion_transversal, true) : ($seguimiento->integracion_transversal ?? [])) : [];
+            $evidencias = $seguimiento ? (is_string($seguimiento->evidencias) ? json_decode($seguimiento->evidencias, true) : ($seguimiento->evidencias ?? [])) : [];
 
-            // 3. Integración Transversal
-            $integracion = is_string($seguimiento->integracion_transversal) ? json_decode($seguimiento->integracion_transversal, true) : ($seguimiento->integracion_transversal ?? []);
-            if (!empty($integracion)) {
+            if ($seguimiento) {
+                $estadoStr = $seguimiento->estado_cumplimiento ?? '';
+                if (in_array($estadoStr, ['TOTAL', 'TOTALMENTE'])) $criteriaStats['cumplimiento']['totalmente']++;
+                elseif (in_array($estadoStr, ['PARCIAL', 'PARCIALMENTE'])) $criteriaStats['cumplimiento']['parcialmente']++;
+                else $criteriaStats['cumplimiento']['no_cumplido']++;
+
+                if (!empty($pedagogico['estrategias'])) $criteriaStats['planificacion']['estrategias']++;
+                if (!empty($pedagogico['evaluación'] ?? $pedagogico['evaluacion'] ?? [])) $criteriaStats['planificacion']['evaluacion']++;
+                if (!empty($pedagogico['secuencia'] ?? $pedagogico['secuencias'] ?? [])) $criteriaStats['planificacion']['secuencia']++;
+
                 if ($integracion['investigacion']['cumplido'] ?? false) $criteriaStats['integracion']['investigacion']++;
                 if ($integracion['interaccion']['cumplido'] ?? false) $criteriaStats['integracion']['interaccion_social']++;
                 if ($integracion['internalizacion']['cumplido'] ?? false) $criteriaStats['integracion']['internalizacion']++;
-            }
 
-            // 4. Evidencias types
-            $evidencias = is_string($seguimiento->evidencias) ? json_decode($seguimiento->evidencias, true) : ($seguimiento->evidencias ?? []);
-            if (!empty($evidencias)) {
                 if (!empty($evidencias['aprendizaje_activo'])) $criteriaStats['evidencia_tipos']['fotos_videos']++;
                 if (!empty($evidencias['evaluacion_formativa'])) $criteriaStats['evidencia_tipos']['link_evidencia']++;
                 if (!empty($evidencias['secuencia_didactica'])) $criteriaStats['evidencia_tipos']['archivos_secuencia']++;
-            }
 
-            // 5. Registro oportuno
-            $cronoDate = \Carbon\Carbon::parse($crono->fecha)->startOfDay();
-            $createdAt = \Carbon\Carbon::parse($seguimiento->created_at)->startOfDay();
-            
-            if ($createdAt->equalTo($cronoDate)) {
-                $criteriaStats['registro_oportuno']['en_hora_verde']++;
-            } else if ($createdAt->diffInDays($cronoDate) == 1) {
-                $criteriaStats['registro_oportuno']['en_el_dia_amarillo']++;
+                $cronoDate = $session ? Carbon::parse($session->fecha)->startOfDay() : Carbon::parse($seguimiento->fecha)->startOfDay();
+                $createdAt = Carbon::parse($seguimiento->created_at)->startOfDay();
+                if ($createdAt->equalTo($cronoDate)) $criteriaStats['registro_oportuno']['en_hora_verde']++;
+                else if ($createdAt->diffInDays($cronoDate) <= 1) $criteriaStats['registro_oportuno']['en_el_dia_amarillo']++;
+                else $criteriaStats['registro_oportuno']['fuera_rojo']++;
             } else {
+                $criteriaStats['cumplimiento']['no_cumplido']++;
                 $criteriaStats['registro_oportuno']['fuera_rojo']++;
             }
+
+            $detailedSessions[] = [
+                'fecha' => $seguimiento ? substr($seguimiento->fecha, 0, 10) : ($session->fecha ?? 'N/A'),
+                'tema' => $session->tema->nombre ?? 'N/A',
+                'tipo' => $isExecutedThisWeek ? ($isPlannedThisWeek ? 'Programada' : 'Extra') : 'Pendiente',
+                'estado' => $seguimiento ? ($seguimiento->estado_cumplimiento ?? 'PENDIENTE') : 'PENDIENTE'
+            ];
         }
 
-        // Build the 5 criteria rows for the report
+        $totalSessions = count($detailedSessions);
+
         $criterios = [
-            'Cumplimiento' => [
-                'cumple' => $criteriaStats['cumplimiento']['totalmente'] === $totalSessions,
-                'obs' => "Totalmente: {$criteriaStats['cumplimiento']['totalmente']} | Parcialmente: {$criteriaStats['cumplimiento']['parcialmente']} | No Cumplido: {$criteriaStats['cumplimiento']['no_cumplido']}",
+            'Cumplimiento del Tema' => [
+                'cumple' => $totalSessions > 0 && ($criteriaStats['cumplimiento']['totalmente'] + $criteriaStats['cumplimiento']['parcialmente']) === $totalSessions,
+                'obs' => "Totalmente: {$criteriaStats['cumplimiento']['totalmente']} | Parcialmente: {$criteriaStats['cumplimiento']['parcialmente']} | No: {$criteriaStats['cumplimiento']['no_cumplido']}",
                 'stats' => $criteriaStats['cumplimiento'],
                 'type' => 'cumplimiento'
             ],
-            'Planificación por Tema' => [
-                'cumple' => ($criteriaStats['planificacion']['estrategias'] + $criteriaStats['planificacion']['evaluacion'] + $criteriaStats['planificacion']['secuencia']) > 0,
-                'obs' => "Estrategias: {$criteriaStats['planificacion']['estrategias']} | Evaluación: {$criteriaStats['planificacion']['evaluacion']} | Secuencia: {$criteriaStats['planificacion']['secuencia']}",
-                'stats' => $criteriaStats['planificacion'],
-                'type' => 'planificacion'
+            'Estrategias Pedagógicas' => [
+                'cumple' => $criteriaStats['planificacion']['estrategias'] > 0,
+                'obs' => "Detectadas: {$criteriaStats['planificacion']['estrategias']}",
+                'stats' => ['count' => $criteriaStats['planificacion']['estrategias']],
+                'type' => 'planificacion_item'
+            ],
+            'Evaluación Formativa' => [
+                'cumple' => $criteriaStats['planificacion']['evaluacion'] > 0,
+                'obs' => "Detectadas: {$criteriaStats['planificacion']['evaluacion']}",
+                'stats' => ['count' => $criteriaStats['planificacion']['evaluacion']],
+                'type' => 'planificacion_item'
+            ],
+            'Secuencia Didáctica' => [
+                'cumple' => $criteriaStats['planificacion']['secuencia'] > 0,
+                'obs' => "Detectadas: {$criteriaStats['planificacion']['secuencia']}",
+                'stats' => ['count' => $criteriaStats['planificacion']['secuencia']],
+                'type' => 'planificacion_item'
             ],
             'Integración Transversal' => [
                 'cumple' => ($criteriaStats['integracion']['investigacion'] + $criteriaStats['integracion']['interaccion_social'] + $criteriaStats['integracion']['internalizacion']) > 0,
-                'obs' => "Investigación: {$criteriaStats['integracion']['investigacion']} | Interacción Social: {$criteriaStats['integracion']['interaccion_social']} | Internalización: {$criteriaStats['integracion']['internalizacion']}",
+                'obs' => "I+D: {$criteriaStats['integracion']['investigacion']} | Soc: {$criteriaStats['integracion']['interaccion_social']} | Int: {$criteriaStats['integracion']['internalizacion']}",
                 'stats' => $criteriaStats['integracion'],
                 'type' => 'integracion'
             ],
-            'Evidencias' => [
+            'Evidencia de Aprendizaje' => [
                 'cumple' => ($criteriaStats['evidencia_tipos']['fotos_videos'] + $criteriaStats['evidencia_tipos']['link_evidencia'] + $criteriaStats['evidencia_tipos']['archivos_secuencia']) > 0,
-                'obs' => "Fotos/Videos: {$criteriaStats['evidencia_tipos']['fotos_videos']} | Links: {$criteriaStats['evidencia_tipos']['link_evidencia']} | Secuencia: {$criteriaStats['evidencia_tipos']['archivos_secuencia']}",
+                'obs' => "Media: {$criteriaStats['evidencia_tipos']['fotos_videos']} | Links: {$criteriaStats['evidencia_tipos']['link_evidencia']} | Docs: {$criteriaStats['evidencia_tipos']['archivos_secuencia']}",
                 'stats' => $criteriaStats['evidencia_tipos'],
                 'type' => 'evidencias'
             ],
             'Registro Oportuno' => [
-                'cumple' => $criteriaStats['registro_oportuno']['fuera_rojo'] === 0,
-                'obs' => "En Hora: {$criteriaStats['registro_oportuno']['en_hora_verde']} | En el Día: {$criteriaStats['registro_oportuno']['en_el_dia_amarillo']} | Fuera: {$criteriaStats['registro_oportuno']['fuera_rojo']}",
+                'cumple' => $criteriaStats['registro_oportuno']['en_hora_verde'] > 0,
+                'obs' => "Verde: {$criteriaStats['registro_oportuno']['en_hora_verde']} | Rojo: {$criteriaStats['registro_oportuno']['fuera_rojo']}",
                 'stats' => $criteriaStats['registro_oportuno'],
                 'type' => 'registro_oportuno'
             ]
         ];
 
-        // Check verification existence
         $existingReport = InformeSemanal::where('grupo_id', $grupoId)
             ->whereDate('semana_inicio', $startDate->toDateString())
             ->first();
 
-        // Calculate initial Alert Scale
+        if ($existingReport) {
+            $existingReport->load(['grupo.docente', 'grupo.asignatura']);
+        }
+
         $yesCount = collect($criterios)->where('cumple', true)->count();
-        $percentage = round(($yesCount / 7) * 100);
+        $totalCriterios = count($criterios);
+        $percentage = $totalSessions > 0 ? round(($yesCount / $totalCriterios) * 100) : 0;
         
         $scale = 'VERDE';
         if ($percentage < 70) $scale = 'ROJO';
@@ -176,17 +175,31 @@ class ReporteController extends Controller
 
         return response()->json([
             'exists' => !!$existingReport,
-            'report' => $existingReport ?? [
+            'report' => $existingReport ? [
+                'id' => $existingReport->id,
+                'grupo_id' => $existingReport->grupo_id,
+                'docente_id' => $existingReport->docente_id,
+                'docente_nombre' => $existingReport->grupo->docente->nombre_completo ?? 'N/A',
+                'asignatura_nombre' => $existingReport->grupo->asignatura->nombre ?? 'N/A',
+                'semana_inicio' => $existingReport->semana_inicio ? $existingReport->semana_inicio->toDateString() : $startDate->toDateString(),
+                'semana_fin' => $existingReport->semana_fin ? $existingReport->semana_fin->toDateString() : $endDate->toDateString(),
+                'criterios' => $existingReport->criterios,
+                'observaciones' => $existingReport->observaciones,
+                'escala_alerta' => $existingReport->escala_alerta,
+                'cumplimiento_porcentaje' => $existingReport->cumplimiento_porcentaje,
+                'sesiones_detalle' => $detailedSessions
+            ] : [
                 'grupo_id' => $grupo->id,
                 'docente_id' => $grupo->docente_id,
-                'docente_nombre' => $grupo->docente->nombre_completo,
-                'asignatura_nombre' => $grupo->asignatura->nombre,
+                'docente_nombre' => $grupo->docente->nombre_completo ?? 'N/A',
+                'asignatura_nombre' => $grupo->asignatura->nombre ?? 'N/A',
                 'semana_inicio' => $startDate->toDateString(),
                 'semana_fin' => $endDate->toDateString(),
                 'criterios' => $criterios,
                 'observaciones' => '',
                 'escala_alerta' => $scale,
-                'cumplimiento_porcentaje' => $percentage
+                'cumplimiento_porcentaje' => $percentage,
+                'sesiones_detalle' => $detailedSessions
             ]
         ]);
     }
@@ -206,9 +219,9 @@ class ReporteController extends Controller
         $startDate = Carbon::parse($request->semana_inicio)->startOfWeek();
         $endDate = $startDate->copy()->endOfWeek();
 
-        // Calculate percentage from criteria
         $yesCount = collect($request->criterios)->where('cumple', true)->count();
-        $percentage = round(($yesCount / 7) * 100);
+        $totalCriterios = count($request->criterios);
+        $percentage = $totalCriterios > 0 ? round(($yesCount / $totalCriterios) * 100) : 0;
 
         $report = InformeSemanal::updateOrCreate(
             [
@@ -646,6 +659,7 @@ class ReporteController extends Controller
             ]
         ]);
     }
+
     public function generateWeeklyReport(Request $request)
     {
         $request->validate([
@@ -657,38 +671,60 @@ class ReporteController extends Controller
         $carreraId = $request->carrera_id;
         $sedeId = $request->sede_id;
         
-        // Align to Monday-Sunday
+        // Alinear a Lunes-Domingo
         $startDate = Carbon::parse($request->fecha_inicio)->startOfWeek();
         $endDate = $startDate->copy()->endOfWeek();
+        
+        // Calcular semana académica (Base: 9 de Feb, 2026)
+        $baseDate = Carbon::create(2026, 2, 9)->startOfWeek();
+        $weekNum = $startDate->diffInWeeks($baseDate) + 1;
 
-        \Log::info("Generating Weekly Report. Request: Carrera $carreraId, Sede: $sedeId, Start: {$startDate->toDateString()}, End: {$endDate->toDateString()}");
+        \Log::info("Generando Reporte Semanal. Semana Académica: $weekNum, Rango: {$startDate->toDateString()} - {$endDate->toDateString()}");
 
-        // 1. Find Subjects linked to this Career & Sede
-        $asignaturaIds = Asignatura::whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
-            $q->where('carreras.id', $carreraId)
-              ->where('asignatura_carrera.sede_id', $sedeId);
-        })->pluck('id');
-
-        // 2. Fetch Groups: strict match OR via subject link
+        // 1. Obtener Grupos con relaciones filtradas
         $grupos = Grupo::whereHas('asignatura.carreras', function ($q) use ($carreraId, $sedeId) {
             $q->where('carreras.id', $carreraId)
               ->where('asignatura_carrera.sede_id', $sedeId);
         })
-        ->with(['asignatura', 'docente', 'cronogramas' => function ($cq) use ($startDate, $endDate) {
-                $cq->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
-                   ->withCount(['asistencias' => function ($aq) {
-                        $aq->where('asistio', true);
-                   }])
-                   ->with(['seguimientos']);
-            }])
-            ->get();
+        ->with([
+            'asignatura',
+            'docente',
+            'cronogramas' => function ($cq) use ($weekNum) {
+                $cq->where('semana_academica', $weekNum);
+            }, 
+            'seguimientos' => function ($sq) use ($startDate, $endDate) {
+                $sq->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()]);
+            }
+        ])
+        ->get();
+
+        // Si el modelo usa 'docente', corregir aquí
+        // This block is now redundant as 'docente' is loaded in the 'with' clause above
+        // if ($grupos->isNotEmpty() && !$grupos->first()->relationLoaded('docente')) {
+        //     $grupos->load('docente');
+        // }
+
+        // 2. Pre-cargar todos los cronogramas relevantes para evitar N+1
+        // Necesitamos cronogramas de la semana académica O cronogramas vinculados a seguimientos realizados esta semana
+        $allCronogramaIds = collect();
+        foreach ($grupos as $grupo) {
+            $allCronogramaIds = $allCronogramaIds->merge($grupo->cronogramas->pluck('id'));
+            $allCronogramaIds = $allCronogramaIds->merge($grupo->seguimientos->pluck('cronograma_id'));
+        }
+        $allCronogramaIds = $allCronogramaIds->filter()->unique();
+
+        $allCronogramasMap = Cronograma::whereIn('id', $allCronogramaIds)
+            ->with('tema')
+            ->get()
+            ->keyBy('id');
 
         $reports = [];
 
         foreach ($grupos as $grupo) {
-            if (!$grupo->docente || !$grupo->asignatura) continue;
+            $docente = $grupo->docente ?? $grupo->docence;
+            if (!$docente || !$grupo->asignatura) continue;
 
-            // Check if official report exists
+            // Verificar si existe reporte oficial guardado
             $officialReport = InformeSemanal::where('grupo_id', $grupo->id)
                 ->whereDate('semana_inicio', $startDate->toDateString())
                 ->first();
@@ -699,13 +735,7 @@ class ReporteController extends Controller
                     'grupo_id' => $grupo->id,
                     'grupo_nombre' => $grupo->nombre,
                     'asignatura' => $grupo->asignatura->nombre,
-                    // Use Carrera name from Group relation if loaded, or fetch simply? 
-                    // ReporteController usually runs in context where we know the carrera name from ID?
-                    // Let's just put the name if we can, or just keep it simple.
-                    // The frontend might expect it. Let's try to get it from relation or fallback.
-                    // Since we filtered by carrera_id, all have same carrera.
-                    'carrera' => $grupo->carrera ? $grupo->carrera->nombre : 'Carrera ' . $carreraId, 
-                    'docente' => $grupo->docente->nombre_completo,
+                    'docente' => $docente->nombre_completo,
                     'semana_inicio' => $startDate->toDateString(),
                     'criterios' => $officialReport->criterios,
                     'alerta' => $officialReport->escala_alerta,
@@ -715,18 +745,18 @@ class ReporteController extends Controller
                 continue;
             }
 
-            // If no official report, calculate PROJECTION/DRAFT
-            $sessions = $grupo->cronogramas; 
+            // CÁLCULO DE BORRADOR DINÁMICO
+            $executionMap = $grupo->seguimientos->keyBy('cronograma_id');
+            $plannedSessions = $grupo->cronogramas; 
             
-            if ($sessions->isEmpty()) {
-                // No planning for this week -> Red Flag
+            // Si no hay nada planificado NI ejecutado
+            if ($plannedSessions->isEmpty() && $grupo->seguimientos->isEmpty()) {
                 $reports[] = [
                     'id' => $grupo->id . '-' . $startDate->timestamp,
                     'grupo_id' => $grupo->id,
                     'grupo_nombre' => $grupo->nombre,
                     'asignatura' => $grupo->asignatura->nombre,
-                    'carrera' => $grupo->carrera ? $grupo->carrera->nombre : 'Carrera',
-                    'docente' => $grupo->docente->nombre_completo,
+                    'docente' => $docente->nombre_completo,
                     'semana_inicio' => $startDate->toDateString(),
                     'criterios' => [],
                     'alerta' => 'ROJO',
@@ -739,63 +769,62 @@ class ReporteController extends Controller
             $checks = [];
             $alertLevel = 'VERDE';
 
-            foreach ($sessions as $session) {
-                // If there is no planificacion recorded, then it's directly ROJO
-                $alertLevel = 'ROJO'; 
-                $seguimiento = $session->seguimientos->first();
+            // Identificar todos los cronogramas que pintaremos en este grupo (planificados o ejecutados)
+            $relevantCronoIds = $plannedSessions->pluck('id')
+                ->merge($grupo->seguimientos->pluck('cronograma_id'))
+                ->filter()
+                ->unique();
+            
+            foreach ($relevantCronoIds as $cronoId) {
+                $session = $allCronogramasMap->get($cronoId);
+                $seguimiento = $executionMap->get($cronoId);
+                
+                if (!$session && !$seguimiento) continue;
+
+                $isPlannedThisWeek = $session && $session->semana_academica == $weekNum;
+                $isExecutedThisWeek = $seguimiento && Carbon::parse($seguimiento->fecha)->between($startDate, $endDate);
+
+                // Solo incluimos si pertenece a esta semana (por plan o por ejecución real)
+                if (!$isPlannedThisWeek && !$isExecutedThisWeek) continue;
 
                 $pedagogico = $seguimiento ? (is_string($seguimiento->pedagogico) ? json_decode($seguimiento->pedagogico, true) : ($seguimiento->pedagogico ?? [])) : [];
-
-                // 1. Asistencia / Evidencias Check
-                // Allow uploaded evidences to pass this check if attendance is not used
-                $hasAttendance = $session->asistencias_count > 0; // Pre-calculated in withCount
-                
                 $evidencias = $seguimiento ? (is_string($seguimiento->evidencias) ? json_decode($seguimiento->evidencias, true) : ($seguimiento->evidencias ?? [])) : [];
-                $hasEvidenceFiles = !empty($evidencias);
+
+                // Criterios de cumplimiento
+                $evidenceOk = !empty($evidencias); 
+                $contentOk = $session && !empty($session->tema_id);
+                $planningOk = !empty($pedagogico) && (isset($pedagogico['estrategias']) && collect($pedagogico['estrategias'])->where('cumplido', true)->count() > 0);
                 
-                $evidenceOk = $hasAttendance || $hasEvidenceFiles;
-
-                // 2. Content Check
-                $contentOk = !empty($session->tema_id);
-
-                // 3. Resources/Strategies
-                // Check strict structure
-                $planningOk = !empty($pedagogico) && 
-                              (collect($pedagogico['estrategias'] ?? [])->where('cumplido', true)->count() > 0 || !empty($session->tema->estrategias_metodologicas));
-
-                // 4. Completed Check from Seguimiento
                 $estadoStr = $seguimiento->estado_cumplimiento ?? '';
-                $completedOk = ($estadoStr === 'TOTAL' || $estadoStr === 'TOTALMENTE' || $estadoStr === 'PARCIAL' || $estadoStr === 'PARCIALMENTE');
+                $completedOk = in_array($estadoStr, ['TOTAL', 'TOTALMENTE', 'PARCIAL', 'PARCIALMENTE']);
 
                 $checks[] = [
-                    'fecha' => $session->fecha,
+                    'fecha' => $seguimiento ? (is_string($seguimiento->fecha) ? substr($seguimiento->fecha, 0, 10) : $seguimiento->fecha->format('Y-m-d')) : ($session->fecha ?? 'Pendiente'),
                     'asistencia' => $evidenceOk,
                     'contenido' => $contentOk,
                     'planificacion' => $planningOk,
-                    'cumplido' => $completedOk
+                    'cumplido' => $completedOk,
+                    'tipo' => $isExecutedThisWeek ? ($isPlannedThisWeek ? 'Programada' : 'Extra') : 'Pendiente'
                 ];
 
                 if (!$completedOk || !$evidenceOk) {
                     $alertLevel = 'ROJO';
-                } else if (!$planningOk) {
-                    $alertLevel = ($alertLevel === 'ROJO') ? 'ROJO' : 'AMARILLO';
-                } else {
-                    $alertLevel = ($alertLevel === 'ROJO' || $alertLevel === 'AMARILLO') ? $alertLevel : 'VERDE';
                 }
             }
+
+            if (empty($checks)) $alertLevel = 'ROJO';
 
             $reports[] = [
                 'id' => $grupo->id . '-' . $startDate->timestamp,
                 'grupo_id' => $grupo->id,
                 'grupo_nombre' => $grupo->nombre,
                 'asignatura' => $grupo->asignatura->nombre,
-                'carrera' => $grupo->carrera ? $grupo->carrera->nombre : 'Carrera',
-                'docente' => $grupo->docente->nombre_completo,
+                'docente' => $docente->nombre_completo,
                 'semana_inicio' => $startDate->toDateString(),
                 'criterios' => $checks,
                 'alerta' => $alertLevel,
                 'acciones' => $alertLevel === 'ROJO' ? 'Verificar' : 'Pendiente',
-                'estado' => 'Borrador'
+                'estado' => count($checks) > 0 ? 'Borrador' : 'Pendiente'
             ];
         }
 
@@ -804,7 +833,6 @@ class ReporteController extends Controller
 
     /**
      * Estadísticas para Dashboard de Dirección Académica
-     * Retorna métricas consolidadas de la sede
      */
     public function direccionStats(Request $request)
     {
@@ -1629,6 +1657,13 @@ class ReporteController extends Controller
                 }
             }
 
+
+
+
+
+
+
+
             $avance = $totalTemas > 0 ? round(($temasAvanzados / $totalTemas) * 100) : 0;
 
             return [
@@ -1641,5 +1676,17 @@ class ReporteController extends Controller
                 'semaforo' => $avance >= 80 ? 'positive' : ($avance >= 50 ? 'warning' : 'negative')
             ];
         });
+    }
+
+    public function exportWeeklyReportHtml(Request $request)
+    {
+        $response = $this->getWeeklyReportDraft($request);
+        $data = $response->getData(true);
+        
+        if (!isset($data['report'])) {
+            return "Error: No se pudo generar el reporte.";
+        }
+
+        return view('reports.weekly_official', ['report' => $data['report']]);
     }
 }
