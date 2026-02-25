@@ -22,9 +22,39 @@ class RolExamenController extends Controller
         if ($request->has('gestion')) {
             $query->where('rol_examenes.gestion', $request->gestion);
         }
-
         if ($request->has('carrera_id')) {
-            $query->where('rol_examenes.carrera_id', $request->carrera_id);
+            $carreraId = $request->carrera_id;
+            
+            // Seguridad: Si es Director, validar que sea su carrera
+            $user = auth()->user();
+            if ($user && isset($user->rol) && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+                $carreraIds = [];
+                if ($user->director) {
+                    if ($user->director->carrera_id) $carreraIds[] = $user->director->carrera_id;
+                    if ($user->director->carreras) $carreraIds = array_merge($carreraIds, $user->director->carreras->pluck('id')->toArray());
+                }
+                
+                if (!in_array($carreraId, array_unique($carreraIds))) {
+                    return response()->json(['message' => 'No tiene permiso para ver esta carrera'], 403);
+                }
+            }
+            $query->where('rol_examenes.carrera_id', $carreraId);
+        } else {
+            // Seguridad: Si es Director, filtrar por sus carreras por defecto
+            $user = auth()->user();
+            if ($user && isset($user->rol) && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+                $carreraIds = [];
+                if ($user->director) {
+                    if ($user->director->carrera_id) $carreraIds[] = $user->director->carrera_id;
+                    if ($user->director->carreras) $carreraIds = array_merge($carreraIds, $user->director->carreras->pluck('id')->toArray());
+                }
+                
+                if (!empty($carreraIds)) {
+                    $query->whereIn('rol_examenes.carrera_id', array_unique($carreraIds));
+                } else {
+                    $query->whereRaw('1 = 0');
+                }
+            }
         }
 
         if ($request->has('materia_codigo')) {
@@ -42,7 +72,8 @@ class RolExamenController extends Controller
             })
             ->addSelect('asignatura_carrera.semestre');
 
-        $examenes = $query->orderBy('rol_examenes.semana')
+        $examenes = $query->distinct()
+            ->orderBy('rol_examenes.semana')
             ->orderBy('rol_examenes.fecha')
             ->orderBy('rol_examenes.hora_inicio')
             ->get();
@@ -116,40 +147,82 @@ class RolExamenController extends Controller
 
                 try {
                     // Validar formato de fila
-                    // A: Código, B: Nombre, C: Tipo, D: Grupo, E: Semana, F: Fecha, G: Hora Inicio, H: Hora Fin, I: Aula
+                    // A: Código, B: Tipo, C: Grupo, D: Fecha, E: Hora Inicio
                     $codigo = trim($row[0] ?? '');
-                    $nombre = trim($row[1] ?? '');
-                    $tipo = trim($row[2] ?? '');
-                    $grupo = trim($row[3] ?? '');
-                    $semana = intval($row[4] ?? 0);
-                    $fecha = $this->parseDate($row[5] ?? ''); // Shifted
-                    $horaInicio = $this->parseTime($row[6] ?? ''); // Shifted
-                    $horaFin = $this->parseTime($row[7] ?? ''); // Shifted
-                    $aula = trim($row[8] ?? ''); // Shifted
+                    $tipo = trim($row[1] ?? '');
+                    $grupo = trim($row[2] ?? '');
+                    $fecha = $this->parseDate($row[3] ?? '');
+                    $horaInicio = $this->parseTime($row[4] ?? '');
+                    $aula = null; // Aula removida del importador por simplicidad
 
-                    if (empty($codigo) || empty($tipo) || $semana <= 0) {
-                        $errors[] = "Fila {$rowNumber}: Datos incompletos";
+                    if (empty($codigo) || empty($tipo) || empty($fecha)) {
+                        $errors[] = "Fila {$rowNumber}: Datos incompletos (Código, Tipo y Fecha son obligatorios)";
                         continue;
                     }
 
-                    // Normalizar tipo de examen
+                    // 1. Automatización: Obtener Nombre de Materia
+                    $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+                    
+                    if (!$asignatura) {
+                        $errors[] = "Fila {$rowNumber}: No se encontró la materia con código '{$codigo}'";
+                        continue;
+                    }
+
+                    // VALIDACIÓN: ¿Pertenece la materia a la carrera seleccionada?
+                    $perteneceACarrera = \Illuminate\Support\Facades\DB::table('asignatura_carrera')
+                        ->where('asignatura_id', $asignatura->id)
+                        ->where('carrera_id', $carreraId)
+                        ->exists();
+
+                    if (!$perteneceACarrera) {
+                        $errors[] = "Fila {$rowNumber}: La materia '{$codigo}' no pertenece a la carrera seleccionada.";
+                        continue;
+                    }
+
+                    $nombre = $asignatura->nombre;
+
+                    // 2. Automatización: Normalizar Tipo y Obtener Semana por defecto
                     $tipoNormalizado = $this->normalizarTipoExamen($tipo);
                     if (!$tipoNormalizado) {
                         $errors[] = "Fila {$rowNumber}: Tipo de examen inválido '{$tipo}'";
                         continue;
                     }
 
+                    $semana = intval($row[6] ?? 0); // Intentar leer si hubiera columna G extra
+                    if ($semana <= 0) {
+                        $semanasDefault = [
+                            '1er Parcial' => 8,
+                            '2do Parcial' => 15,
+                            'Final' => 19,
+                            '2da Instancia' => 22,
+                        ];
+                        $semana = $semanasDefault[$tipoNormalizado] ?? 1;
+                    }
+
+                    // 3. Automatización: Hora Fin (Default +90 mins)
+                    $horaFin = $this->parseTime($row[7] ?? ''); // Intentar leer si hubiera columna H extra
+                    if ($horaFin === '00:00' || empty($row[7])) {
+                        $horaFin = date('H:i', strtotime($horaInicio . ' +90 minutes'));
+                    }
+
                     // VALIDAR REGLAS DE NEGOCIO
                     $validation = $this->validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipoNormalizado);
 
-                    if (!empty($validation['error'])) {
-                        $errors[] = "Fila {$rowNumber}: " . $validation['error'];
-                        continue; // Block row
+                    if (!empty($validation['errors'])) {
+                        $errors[] = "Fila {$rowNumber}: " . implode(', ', $validation['errors']);
+                        continue; // Block row only for fatal errors
                     }
 
-                    if (!empty($validation['warning'])) {
-                        $warnings[] = "Fila {$rowNumber}: " . $validation['warning'];
-                        // Proceed anyway
+                    $conflictos = $validation['warnings'] ?? [];
+                    // Ensure structured warnings for frontend highlighting
+                    $conflictosData = [];
+                    foreach ($conflictos as $w) {
+                        if (str_contains(strtolower($w), 'semana')) $conflictosData['semana'] = $w;
+                        if (str_contains(strtolower($w), 'clase') || str_contains(strtolower($w), 'dia')) $conflictosData['horario'] = $w;
+                    }
+
+                    if (!empty($conflictos)) {
+                        $warnings[] = "Fila {$rowNumber}: " . implode(', ', $conflictos);
                     }
 
                     // Crear o actualizar examen
@@ -171,6 +244,7 @@ class RolExamenController extends Controller
                             'hora_inicio' => $horaInicio,
                             'hora_fin' => $horaFin,
                             'aula' => $aula,
+                            'conflictos' => !empty($conflictosData) ? $conflictosData : null, 
                             'created_by' => auth()->id(),
                         ]
                     );
@@ -199,7 +273,7 @@ class RolExamenController extends Controller
 
     private function validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipo)
     {
-        $result = ['error' => null, 'warning' => null];
+        $result = ['errors' => [], 'warnings' => []];
 
         // 1. Validar Semana vs Tipo (Error Blocking)
         $ranges = [
@@ -212,8 +286,7 @@ class RolExamenController extends Controller
         if (isset($ranges[$tipo])) {
             [$min, $max] = $ranges[$tipo];
             if ($semana < $min || $semana > $max) {
-                $result['error'] = "El {$tipo} debe ser entre semana {$min} y {$max} (Actual: {$semana})";
-                return $result;
+                $result['warnings'][] = "Fuera de semana sugerida (Semanas {$min}-{$max})";
             }
         }
 
@@ -274,9 +347,7 @@ class RolExamenController extends Controller
                     if (!empty($diasClase) && !in_array($diaExamen, $diasClase)) {
                         $nombresDias = [1 => 'Lunes', 2 => 'Martes', 3 => 'Miércoles', 4 => 'Jueves', 5 => 'Viernes', 6 => 'Sábado', 7 => 'Domingo'];
                         $diaNombre = $nombresDias[$diaExamen] ?? $diaExamen;
-                        $diaNombre = $nombresDias[$diaExamen] ?? $diaExamen;
-                        $result['error'] = "El examen es el {$diaNombre}, pero el grupo {$grupo} (Teórico) no tiene clases ese día.";
-                        return $result;
+                        $result['warnings'][] = "El examen es el {$diaNombre}, pero el grupo no tiene clases ese día.";
                     }
                 }
             }
@@ -411,7 +482,7 @@ class RolExamenController extends Controller
         $sheet = $spreadsheet->getActiveSheet();
 
         // 1. Set Headers
-        $headers = ['Código Materia', 'Nombre Materia', 'Tipo Examen', 'Grupo (Teórico)', 'Semana', 'Fecha', 'Hora Inicio', 'Hora Fin', 'Aula'];
+        $headers = ['Código Materia', 'Tipo Examen', 'Grupo (Teórico)', 'Fecha', 'Hora Inicio'];
         $sheet->fromArray($headers, NULL, 'A1');
 
         // 2. Add Formatting
@@ -420,18 +491,18 @@ class RolExamenController extends Controller
             'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['rgb' => '4F46E5']], // Indigo
             'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
         ];
-        $sheet->getStyle('A1:I1')->applyFromArray($headerStyle);
+        $sheet->getStyle('A1:E1')->applyFromArray($headerStyle);
 
-        foreach (range('A', 'I') as $col) {
+        foreach (range('A', 'E') as $col) {
             $sheet->getColumnDimension($col)->setAutoSize(true);
         }
 
-        // 3. Add Sample Data (Different types)
+        // 3. Add Sample Data
         $samples = [
-            ['FIS101', 'FÍSICA I', '1er Parcial', '1', '7', date('Y-m-d'), '08:00', '10:00', 'Aula 101'],
-            ['MAT101', 'CALCULO I', '2do Parcial', '1', '14', date('Y-m-d', strtotime('+7 days')), '10:00', '12:00', 'Aula 102'],
-            ['QMC101', 'QUÍMICA I', 'Final', '2', '20', date('Y-m-d', strtotime('+14 days')), '14:00', '16:00', 'Aula 201'],
-            ['INF101', 'INTRODUCCIÓN', '2da Instancia', '1', '22', date('Y-m-d', strtotime('+30 days')), '08:00', '10:00', 'Aula 101'],
+            ['FIS101', '1er Parcial', '1', date('Y-m-d'), '08:00'],
+            ['MAT101', '2do Parcial', '1', date('Y-m-d', strtotime('+7 days')), '10:00'],
+            ['QMC101', 'Final', '2', date('Y-m-d', strtotime('+14 days')), '14:00'],
+            ['INF101', '2da Instancia', '1', date('Y-m-d', strtotime('+30 days')), '08:00'],
         ];
 
         $row = 2;

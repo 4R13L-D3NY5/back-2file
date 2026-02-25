@@ -61,7 +61,8 @@ class AuthController extends Controller
             'docente.grupos.horarios',
             'docente.grupos.asignatura',
             'director.sede',
-            'director.carrera'
+            'director.carrera',
+            'director.carreras'
         ]);
 
         // Append progress

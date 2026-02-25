@@ -24,12 +24,14 @@ class RolExamen extends Model
         'hora_fin',
         'aula',
         'observaciones',
+        'conflictos',
         'created_by',
     ];
 
     protected $casts = [
         'fecha' => 'date',
         'semana' => 'integer',
+        'conflictos' => 'array',
     ];
 
     // ==========================================
