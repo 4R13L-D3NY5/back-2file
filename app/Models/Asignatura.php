@@ -137,16 +137,43 @@ class Asignatura extends Model
         $total = 0;
         $completados = 0;
 
+        $criteria = [
+            'descripcion' => !empty($this->descripcion),
+            'justificacion' => !empty($this->justificacion),
+            'proposito_general' => !empty($this->proposito_general),
+            'metodologia_general' => !empty($this->metodologia_general),
+            'sistema_evaluacion' => !empty($this->sistema_evaluacion),
+        ];
+
+        foreach ($criteria as $completed_item) {
+            $total++;
+            if ($completed_item) $completados++;
+        }
+
         // Relies on eager loading to avoid N+1
         foreach ($this->unidades as $unidad) {
             foreach ($unidad->temas as $tema) {
-                $total++;
-                // Criteria for completion: content is not empty
+                // Aumentamos en 2 el total por tema: 1 por contenido y 1 por plan de clase
+                $total += 2;
+
+                // 1. Criteria for completion: content is not empty
                 if (
                     !empty($tema->contenido_conceptual) ||
-                    !empty($tema->contenido_procedimental)
+                    !empty($tema->contenido_procedimental) ||
+                    !empty($tema->contenido_items)
                 ) {
                     $completados++;
+                }
+
+                // 2. Plan de Clase (Planificación Personal) presence
+                $plan = $tema->planificacionPersonal;
+                if ($plan) {
+                    if (!empty($plan->estrategias_metodologicas) || 
+                        !empty($plan->secuencia_didactica) || 
+                        !empty($plan->evaluacion_formativa) ||
+                        !empty($plan->estrategias_aprendizaje)) {
+                        $completados++;
+                    }
                 }
             }
         }

@@ -91,9 +91,9 @@ class AsignaturaController extends Controller
                 }
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
-            }]);
+            }, 'unidades.temas.planificacionPersonal']);
         } else {
-            $query->with('carreras');
+            $query->with(['carreras', 'unidades.temas.planificacionPersonal']);
         }
 
         if ($request->filled('search')) {
@@ -112,19 +112,8 @@ class AsignaturaController extends Controller
 
             $docentes = $a->grupos->map(fn($g) => $g->docente)->filter()->unique('id');
 
-            // Calcular progreso de documentación (basado en campos completados)
-            $campos = [
-                !empty($a->proposito_general),
-                !empty($a->justificacion),
-                !empty($a->metodologia_general),
-                !empty($a->sistema_evaluacion),
-                !empty($a->contenido_minimo),
-                !empty($a->competencia_asignatura),
-                $a->unidades()->count() > 0, // Tiene unidades
-                $a->unidades()->whereHas('temas')->count() > 0, // Tiene temas
-            ];
-            $camposCompletados = count(array_filter($campos));
-            $progreso = round(($camposCompletados / count($campos)) * 100);
+            // Calcular progreso de documentación usando el accesor centralizado del modelo (que incluye planes de clase)
+            $progreso = $a->progreso;
 
             // Context resolution: Priority to the Group's Sede (Actual Assignment)
             // If the subject is here because of a group, show THAT group's location.
@@ -726,6 +715,9 @@ class AsignaturaController extends Controller
                     $importedUnits = true;
                 }
             }
+            
+            // Sync bibliographies to sister subjects
+            app(\App\Services\MateriasComunesSyncService::class)->syncBibliografias($asignatura);
 
             return response()->json([
                 'message' => 'Importación completada correctamente.',

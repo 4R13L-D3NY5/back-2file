@@ -229,6 +229,8 @@ class PlanificacionSemestralController extends Controller
             }
         });
 
+        app(\App\Services\MateriasComunesSyncService::class)->syncCronogramasFusionada($asignatura);
+
         return response()->json([
             'message' => 'Planificación guardada exitosamente',
             'count' => count($sesiones)
@@ -299,6 +301,8 @@ class PlanificacionSemestralController extends Controller
                 Cronograma::insert($sesiones);
             }
         });
+
+        app(\App\Services\MateriasComunesSyncService::class)->syncCronogramasFusionada($asignatura);
 
         return response()->json(['message' => 'Planificación Maestra generada exitosamente']);
     }

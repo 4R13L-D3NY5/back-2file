@@ -134,9 +134,10 @@ class DocenteController extends Controller
                             $q->where('id', $asignatura->id);
                         })->exists();
 
-                    $pac = $hasPlanning; // Simple heuristic: If they planned, PAC is "Done"
-                    $syllabus = $hasPlanning; // Syllabus is usually generated from plan
-                    $planClase = $avanceTemas > 0; // If they have cronogramas, they have class plans (implied)
+                    $programaAnalitico = $hasPlanning; // Simple heuristic
+                    $pac = $hasPlanning; // PAC is usually generated from plan
+                    $planClase = $hasPlanning; // Check if lesson plans are uploaded
+                    $cronograma = $avanceTemas > 0; // If they have scheduled sessions
 
                     // Detailed State
                     $estado = 'Al día';
@@ -150,9 +151,10 @@ class DocenteController extends Controller
                         'grupo' => $grupo->nombre, // 'Grupo 1'
                         'avanceTemas' => $avanceTemas,
                         'asistencia' => $asistenciaPromedio,
+                        'programaAnalitico' => $programaAnalitico,
                         'pac' => $pac,
                         'planClase' => $planClase,
-                        'syllabus' => $syllabus,
+                        'cronograma' => $cronograma,
                         'estado' => $estado
                     ];
                 }

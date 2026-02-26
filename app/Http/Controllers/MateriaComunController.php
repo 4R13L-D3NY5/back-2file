@@ -45,9 +45,18 @@ class MateriaComunController extends Controller
                 ->with('carreras')
                 ->get();
             
-            // La primera asignatura será la "base" (la que tiene el token más antiguo)
-            $base = $grupo->first();
-            $vinculadas = $grupo->skip(1);
+            // La "base" debe ser aquella que pertenezca a la carrera de este director.
+            $base = $grupo->first(function ($asignatura) use ($carreraIds) {
+                return $asignatura->carreras->whereIn('id', $carreraIds)->isNotEmpty();
+            });
+
+            // Fallback por seguridad si no halló (aunque por la consulta inicial debería haber alguna)
+            if (!$base) {
+                $base = $grupo->first();
+            }
+
+            // Las vinculadas son el resto del grupo
+            $vinculadas = $grupo->where('id', '!=', $base->id)->values();
 
             return [
                 'id' => $base->id,
@@ -57,14 +66,14 @@ class MateriaComunController extends Controller
                     'id' => $base->id,
                     'codigo' => $base->codigo,
                     'nombre' => $base->nombre,
-                    'carrera_nombre' => $base->carreras->pluck('nombre')->join(', '),
+                    'carrera_nombre' => $base->carreras->pluck('nombre')->unique()->join(', '),
                 ],
                 'vinculadas' => $vinculadas->map(function ($h) {
                     return [
                         'id' => $h->id,
                         'codigo' => $h->codigo,
                         'nombre' => $h->nombre,
-                        'carrera_nombre' => $h->carreras->pluck('nombre')->join(', ') ?: 'Sin Carrera',
+                        'carrera_nombre' => $h->carreras->pluck('nombre')->unique()->join(', ') ?: 'Sin Carrera',
                     ];
                 })->values(),
                 'total_materias' => $grupo->count()
@@ -198,6 +207,38 @@ class MateriaComunController extends Controller
                         'comun_token' => $tokenSource,
                         'comun_tipo' => $source->comun_tipo
                     ]);
+            }
+        }
+
+        // AUTO-SYNC INICIAL BASADO EN EL MAYOR AVANCE
+        // Cuando se declaran como comunes, la que tenga más avance alimentará a las demás
+        $tokenToSync = $source->comun_token;
+        if ($tokenToSync) {
+            $asignaturasVinculadas = Asignatura::where('comun_token', $tokenToSync)->get();
+            
+            if ($asignaturasVinculadas->count() > 1) {
+                $syncService = app(\App\Services\MateriasComunesSyncService::class);
+                
+                $maxProgress = -1;
+                $bestSource = null;
+                
+                foreach ($asignaturasVinculadas as $asig) {
+                    $progress = $asig->progreso;
+                    if ($progress > $maxProgress) {
+                        $maxProgress = $progress;
+                        $bestSource = $asig;
+                    }
+                }
+                
+                // Si encontramos una ganadora y tiene al menos algo de progreso, forzamos sync
+                if ($bestSource && $maxProgress > 0) {
+                    $syncService->syncAllDocumentationToLinked($bestSource);
+                    $syncService->syncBibliografias($bestSource);
+                    
+                    if ($bestSource->comun_tipo === 'fusionada') {
+                        $syncService->syncCronogramasFusionada($bestSource);
+                    }
+                }
             }
         }
 

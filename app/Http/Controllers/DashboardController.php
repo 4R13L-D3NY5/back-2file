@@ -26,7 +26,7 @@ class DashboardController extends Controller
         $asignaturas = Asignatura::whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
             $q->where('carreras.id', $carreraId)
                 ->where('asignatura_carrera.sede_id', $sedeId);
-        })->withCount('temas')->with(['grupos.cronogramas'])->get();
+        })->withCount('temas')->with(['grupos.cronogramas', 'unidades.temas.planificacionPersonal'])->get();
 
         $totalAsignaturas = $asignaturas->count();
 
@@ -34,7 +34,7 @@ class DashboardController extends Controller
         $docentes = User::whereHas('docente.grupos.asignatura.carreras', function ($q) use ($carreraId, $sedeId) {
             $q->where('carreras.id', $carreraId)
                 ->where('asignatura_carrera.sede_id', $sedeId);
-        })->with('docente.grupos.asignatura')->get();
+        })->with(['docente.grupos.asignatura.carreras', 'docente.grupos.asignatura.unidades.temas.planificacionPersonal'])->get();
 
         // 3. Metrics
         $totalAvanceSum = 0;
@@ -53,17 +53,10 @@ class DashboardController extends Controller
                 ->value('semestre') ?? 1;
 
             $semestresMap[$semestre]['asignaturas']++;
+            $materiaAvance = $asignatura->progreso;
 
-            $materiaAvance = 0;
-            $materiaGruposCount = $asignatura->grupos->count();
-
-            if ($materiaGruposCount > 0) {
-                foreach ($asignatura->grupos as $grupo) {
-                    $avanzados = $grupo->cronogramas->count();
-                    $progreso = $asignatura->temas_count > 0 ? min(100, round(($avanzados / $asignatura->temas_count) * 100)) : 0;
-                    $materiaAvance += $progreso;
-                }
-                $materiaAvance = round($materiaAvance / $materiaGruposCount);
+            if ($materiaAvance < 100) {
+                $documentacionPendiente++;
             }
 
             $semestresMap[$semestre]['avanceSum'] += $materiaAvance;
@@ -85,17 +78,30 @@ class DashboardController extends Controller
         // Docentes detail
         $docentesList = $docentes->map(function ($u) use ($carreraId) {
             $d = $u->docente;
-            // Eager loaded asignatura.carreras or check asignatura directly
-            $materiasCount = $d->grupos->filter(function ($g) use ($carreraId) {
-                return $g->asignatura && $g->asignatura->carrera_id == $carreraId;
-            })->count();
+
+            $materiasList = $d->grupos->map(function ($g) {
+                return $g->asignatura;
+            })->filter()->unique('id');
+
+            // Filtrar y calcular materias por carrera asiganda
+            $progresoSum = 0;
+            $materiasCount = 0;
+
+            foreach ($materiasList as $materia) {
+                if ($materia && $materia->carreras->contains('id', $carreraId)) {
+                    $progresoSum += $materia->progreso;
+                    $materiasCount++;
+                }
+            }
+
+            $progresoDocente = $materiasCount > 0 ? round($progresoSum / $materiasCount) : 0;
 
             return [
                 'id' => $d->id,
                 'nombre' => $u->nombre . ' ' . $u->apellido,
                 'avatar' => strtoupper(substr($u->nombre, 0, 1) . substr($u->apellido, 0, 1)),
                 'materias' => $materiasCount,
-                'progreso' => 0
+                'progreso' => $progresoDocente
             ];
         })->values();
 
@@ -103,7 +109,7 @@ class DashboardController extends Controller
             'stats' => [
                 'totalAsignaturas' => $totalAsignaturas,
                 'docentesActivos' => $docentes->count(),
-                'documentacionPendiente' => 0, // TODO
+                'documentacionPendiente' => $documentacionPendiente,
                 'progresoCarrera' => $totalAvanceCount > 0 ? round($totalAvanceSum / $totalAvanceCount) : 0,
             ],
             'semestres' => $semestresFormatted,
@@ -119,18 +125,29 @@ class DashboardController extends Controller
         $totalAsignaturas = Asignatura::count();
         $totalUsuarios = User::count();
 
-        // 2. Progress by Sede (Mocked for now but structure ready)
+        // 2. Progress by Sede
         $sedes = Sede::all();
         $estadisticasSedes = $sedes->map(function ($sede) {
             $colors = ['#7C3AED', '#14B8A6', '#F97316', '#3B82F6', '#22C55E', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4'];
 
+            $asignaturasSede = Asignatura::whereHas('carreras', function ($q) use ($sede) {
+                $q->where('asignatura_carrera.sede_id', $sede->id);
+            })->with('unidades.temas')->get();
+
+            $progresoSum = 0;
+            $asignaturasCount = $asignaturasSede->count();
+
+            foreach ($asignaturasSede as $asig) {
+                $progresoSum += $asig->progreso;
+            }
+
+            $progresoPromedio = $asignaturasCount > 0 ? round($progresoSum / $asignaturasCount) : 0;
+
             return [
                 'id' => $sede->id,
                 'nombre' => $sede->nombre,
-                'progreso' => 0,
-                'asignaturas' => Asignatura::whereHas('carreras', function ($q) use ($sede) {
-                    $q->where('asignatura_carrera.sede_id', $sede->id);
-                })->count(),
+                'progreso' => $progresoPromedio,
+                'asignaturas' => $asignaturasCount,
                 'docentes' => User::whereHas('docente', function ($q) use ($sede) {
                     $q->where('sede_id', $sede->id);
                 })->count(),
@@ -155,12 +172,18 @@ class DashboardController extends Controller
         $temasAvanzados = DB::table('cronogramas')->whereNotNull('tema_id')->distinct('tema_id')->count();
         $progresoGlobal = $temasTotales > 0 ? min(100, round(($temasAvanzados / $temasTotales) * 100)) : 0;
 
+        $documentacionPendiente = 0;
+        foreach (Asignatura::with('unidades.temas.planificacionPersonal')->get() as $asig) {
+           if ($asig->progreso < 100) $documentacionPendiente++;
+        }
+
         return response()->json([
             'stats' => [
                 'totalSedes' => $totalSedes,
                 'totalCarreras' => $totalCarreras,
                 'totalAsignaturas' => $totalAsignaturas,
                 'totalUsuarios' => $totalUsuarios,
+                'documentacionPendiente' => $documentacionPendiente,
                 'progresoGlobal' => $progresoGlobal,
                 'tasaCompletitud' => $progresoGlobal, // Use same for now or logic if exists
                 'tasaCumplimiento' => round($progresoGlobal * 0.9), // Placeholder logic

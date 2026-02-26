@@ -40,33 +40,12 @@ class MateriasComunesSyncService
             return collect();
         }
 
-        // Obtener docente_ids de la asignatura origen (via grupos)
-        $sourceDocenteIds = Grupo::where('asignatura_id', $source->id)
-            ->whereNotNull('docente_id')
-            ->pluck('docente_id')
-            ->unique()
-            ->toArray();
-
-        if (empty($sourceDocenteIds)) {
-            return collect();
-        }
-
-        // Buscar asignaturas hermanas (mismo comun_token, diferente id)
-        $hermanas = Asignatura::where('comun_token', $source->comun_token)
+        // Buscar TODAS las asignaturas hermanas (mismo comun_token, diferente id)
+        // La documentación base (Unidades, Temas) debe ser la misma para todas 
+        // las materias comunes sin importar el docente asignado.
+        return Asignatura::where('comun_token', $source->comun_token)
             ->where('id', '!=', $source->id)
             ->get();
-
-        // Filtrar solo las que tengan al menos un docente en común
-        return $hermanas->filter(function ($hermana) use ($sourceDocenteIds) {
-            $hermanaDocenteIds = Grupo::where('asignatura_id', $hermana->id)
-                ->whereNotNull('docente_id')
-                ->pluck('docente_id')
-                ->unique()
-                ->toArray();
-
-            // Verificar si hay intersección de docentes
-            return !empty(array_intersect($sourceDocenteIds, $hermanaDocenteIds));
-        });
     }
 
     /**
@@ -322,6 +301,7 @@ class MateriasComunesSyncService
         }
 
         $unidad = $tema->unidad;
+        /** @var \App\Models\Asignatura $asignatura */
         $asignatura = $unidad->asignatura;
         $linked = $this->getLinkedSubjectsWithSameTeacher($asignatura);
 
@@ -465,6 +445,7 @@ class MateriasComunesSyncService
         }
 
         $unidad = $tema->unidad;
+        /** @var \App\Models\Asignatura $asignatura */
         $asignatura = $unidad->asignatura;
         $linked = $this->getLinkedSubjectsWithSameTeacher($asignatura);
 
@@ -666,5 +647,123 @@ class MateriasComunesSyncService
         }
 
         return $total > 0 ? round(($completed / $total) * 100) : 0;
+    }
+
+    /**
+     * Sincroniza la Bibliografía a todas las materias vinculadas
+     * (Llamado desde BibliografiaController y AsignaturaController)
+     */
+    public function syncBibliografias(Asignatura $source): int
+    {
+        if (self::$isSyncing) return 0;
+        
+        $linked = $this->getLinkedSubjectsWithSameTeacher($source);
+        if ($linked->isEmpty()) return 0;
+
+        self::$isSyncing = true;
+        $synced = 0;
+        
+        try {
+            DB::transaction(function () use ($source, $linked, &$synced) {
+                $sourceBibliografias = $source->bibliografias;
+                
+                foreach ($linked as $target) {
+                    $target->bibliografias()->delete();
+                    
+                    foreach ($sourceBibliografias as $bib) {
+                        $target->bibliografias()->create($bib->only([
+                            'titulo', 'autor', 'editorial', 'edicion', 'anio', 
+                            'tipo', 'isbn', 'paginas', 'descripcion'
+                        ]));
+                    }
+                    $synced++;
+                }
+            });
+        } finally {
+            self::$isSyncing = false;
+        }
+        
+        return $synced;
+    }
+
+    /**
+     * Sincroniza el Cronograma maestro SOLO a las materias vinculadas
+     * que son del tipo 'fusionada' (mismo horario y docente).
+     * (Llamado desde PlanificacionSemestralController)
+     */
+    public function syncCronogramasFusionada(Asignatura $source): int
+    {
+        if (self::$isSyncing) return 0;
+        if ($source->comun_tipo !== 'fusionada') return 0;
+        
+        $linked = $this->getLinkedSubjectsWithSameTeacher($source);
+        if ($linked->isEmpty()) return 0;
+
+        self::$isSyncing = true;
+        $synced = 0;
+        
+        try {
+            DB::transaction(function () use ($source, $linked, &$synced) {
+                // Obtenemos el cronograma MASTER de la materia origen
+                $masterCronogramas = \App\Models\Cronograma::where('asignatura_id', $source->id)
+                    ->whereNull('grupo_id')
+                    ->orderBy('numero_sesion')
+                    ->get();
+                    
+                foreach ($linked as $target) {
+                    // Borramos cronograma master del target
+                    \App\Models\Cronograma::where('asignatura_id', $target->id)
+                        ->whereNull('grupo_id')
+                        ->delete();
+                        
+                    foreach($masterCronogramas as $mc) {
+                        /** @var \App\Models\Cronograma $mc */
+                        $newMaster = $mc->replicate(['id', 'asignatura_id', 'created_at', 'updated_at']);
+                        $newMaster->asignatura_id = $target->id;
+                        
+                        // Si está asignado a un tema, debemos mapearlo al tema homólogo en la materia target
+                        if ($mc->tema_id) {
+                            $sourceTema = \App\Models\Tema::with('unidad')->find($mc->tema_id);
+                            if ($sourceTema && $sourceTema->unidad) {
+                                $targetUnidad = $target->unidades()->where('numero', $sourceTema->unidad->numero)->first();
+                                if ($targetUnidad) {
+                                    $targetTema = $targetUnidad->temas()->where('orden', $sourceTema->orden)->first();
+                                    if ($targetTema) {
+                                        $newMaster->tema_id = $targetTema->id;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        $newMaster->save();
+                        
+                        // Si manejaran el relations ManyToMany temas (cronograma_tema)
+                        $mcTemas = $mc->temas;
+                        if ($mcTemas->isNotEmpty()) {
+                            $targetTemaIds = [];
+                            foreach ($mcTemas as $st) {
+                                $st->loadMissing('unidad');
+                                if ($st->unidad) {
+                                    $targetUnidad = $target->unidades()->where('numero', $st->unidad->numero)->first();
+                                    if ($targetUnidad) {
+                                        $targetTema = $targetUnidad->temas()->where('orden', $st->orden)->first();
+                                        if ($targetTema) {
+                                            $targetTemaIds[] = $targetTema->id;
+                                        }
+                                    }
+                                }
+                            }
+                            if (!empty($targetTemaIds)) {
+                                $newMaster->temas()->sync($targetTemaIds);
+                            }
+                        }
+                    }
+                    $synced++;
+                }
+            });
+        } finally {
+             self::$isSyncing = false;
+        }
+        return $synced;
     }
 }

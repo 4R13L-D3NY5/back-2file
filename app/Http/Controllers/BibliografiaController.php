@@ -4,10 +4,17 @@ namespace App\Http\Controllers;
 
 use App\Models\Bibliografia;
 use App\Models\Asignatura;
+use App\Services\MateriasComunesSyncService;
 use Illuminate\Http\Request;
 
 class BibliografiaController extends Controller
 {
+    protected $syncService;
+
+    public function __construct(MateriasComunesSyncService $syncService)
+    {
+        $this->syncService = $syncService;
+    }
     /**
      * Listar bibliografía de una asignatura
      */
@@ -38,6 +45,10 @@ class BibliografiaController extends Controller
 
         $bibliografia = Bibliografia::create($request->all());
 
+        if ($bibliografia->asignatura) {
+            $this->syncService->syncBibliografias($bibliografia->asignatura);
+        }
+
         return response()->json($bibliografia, 201);
     }
 
@@ -49,6 +60,10 @@ class BibliografiaController extends Controller
         $bibliografia = Bibliografia::findOrFail($id);
         $bibliografia->update($request->all());
 
+        if ($bibliografia->asignatura) {
+            $this->syncService->syncBibliografias($bibliografia->asignatura);
+        }
+
         return response()->json($bibliografia);
     }
 
@@ -58,7 +73,12 @@ class BibliografiaController extends Controller
     public function destroy($id)
     {
         $bibliografia = Bibliografia::findOrFail($id);
+        $asignatura = $bibliografia->asignatura;
         $bibliografia->delete();
+
+        if ($asignatura) {
+            $this->syncService->syncBibliografias($asignatura);
+        }
 
         return response()->json(['message' => 'Eliminado correctamente']);
     }
