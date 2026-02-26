@@ -217,6 +217,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/sedes-criticas', [\App\Http\Controllers\ReporteController::class, 'sedesCriticas']);
     Route::get('/reportes/ranking-sedes', [\App\Http\Controllers\ReporteController::class, 'rankingSedes']);
     Route::get('/reportes/alertas-rojas', [\App\Http\Controllers\ReporteController::class, 'alertasRojas']);
+    Route::get('/reportes/auditorias-vicerrector', [\App\Http\Controllers\ReporteController::class, 'auditoriasVicerrector']);
 
     // Dirección Académica Dashboard
     Route::get('/direccion/stats', [\App\Http\Controllers\ReporteController::class, 'direccionStats']);
@@ -226,4 +227,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Evaluaciones (Exámenes Programados)
     Route::get('/mis-evaluaciones', [\App\Http\Controllers\EvaluacionController::class, 'misEvaluaciones']);
+
+    // Auditorías
+    Route::get('/auditorias', [\App\Http\Controllers\AuditoriaController::class, 'index']);
+    Route::post('/auditorias', [\App\Http\Controllers\AuditoriaController::class, 'store']);
 });

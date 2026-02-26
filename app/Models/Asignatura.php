@@ -129,6 +129,11 @@ class Asignatura extends Model
         return $this->hasMany(Matricula::class);
     }
 
+    public function auditorias(): HasMany
+    {
+        return $this->hasMany(Auditoria::class);
+    }
+
     /**
      * ACCESSORS
      */
@@ -189,5 +194,76 @@ class Asignatura extends Model
     public function getProgresoAttribute()
     {
         return $this->estadisticas_progreso['porcentaje'];
+    }
+
+    public function getIndicadoresDocumentacionAttribute()
+    {
+        // 1. Programa de Asignatura (PAC)
+        $pac_puntos = 0;
+        if (!empty($this->justificacion)) $pac_puntos++;
+        if (!empty($this->proposito_general)) $pac_puntos++;
+        if (!empty($this->competencia_global_especifica) || !empty($this->competencia_asignatura) || !empty($this->elementos_competencia)) $pac_puntos++;
+        if ($this->relationLoaded('bibliografias') && $this->bibliografias->count() > 0) $pac_puntos++;
+        $pac_pct = round(($pac_puntos / 4) * 100);
+
+        // 2. Programa Analítico, 3. Plan de Clase, 5. Preguntas
+        $total_unidades = $this->relationLoaded('unidades') ? $this->unidades->count() : 0;
+        $unidades_con_temas = 0;
+        
+        $total_temas = 0;
+        $temas_con_plan = 0;
+        $temas_con_preguntas = 0;
+
+        if ($this->relationLoaded('unidades')) {
+            foreach ($this->unidades as $unidad) {
+                if ($unidad->relationLoaded('temas') && $unidad->temas->count() > 0) {
+                    $unidades_con_temas++;
+                    $total_temas += $unidad->temas->count();
+                    
+                    foreach ($unidad->temas as $tema) {
+                        // Plan de Clase
+                        if ($tema->planificacionPersonal && (
+                            !empty($tema->planificacionPersonal->estrategias_metodologicas) ||
+                            !empty($tema->planificacionPersonal->secuencia_didactica) ||
+                            !empty($tema->planificacionPersonal->evaluacion_formativa)
+                        )) {
+                            $temas_con_plan++;
+                        }
+                        
+                        // Preguntas
+                        $has_q = false;
+                        if ($tema->relationLoaded('logros')) {
+                            foreach ($tema->logros as $logro) {
+                                if ($logro->relationLoaded('bancoPreguntas') && $logro->bancoPreguntas->count() > 0) {
+                                    $has_q = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if ($has_q) $temas_con_preguntas++;
+                    }
+                }
+            }
+        }
+
+        $analitico_pct = $total_unidades > 0 ? round(($unidades_con_temas / $total_unidades) * 100) : 0;
+        $plan_clase_pct = $total_temas > 0 ? round(($temas_con_plan / $total_temas) * 100) : 0;
+        $preguntas_pct = $total_temas > 0 ? round(($temas_con_preguntas / $total_temas) * 100) : 0;
+        
+        $cronograma_pct = ($this->relationLoaded('cronogramas') && $this->cronogramas->count() > 0) ? 100 : 0;
+
+        $getColor = function($pct) {
+            if ($pct <= 0) return 'negative';
+            if ($pct < 100) return 'warning';
+            return 'positive';
+        };
+
+        return [
+            'programa_asignatura' => ['porcentaje' => $pac_pct, 'color' => $getColor($pac_pct)],
+            'programa_analitico' => ['porcentaje' => $analitico_pct, 'color' => $getColor($analitico_pct)],
+            'plan_clase' => ['porcentaje' => $plan_clase_pct, 'color' => $getColor($plan_clase_pct)],
+            'cronograma' => ['porcentaje' => $cronograma_pct, 'color' => $getColor($cronograma_pct)],
+            'preguntas' => ['porcentaje' => $preguntas_pct, 'color' => $getColor($preguntas_pct)]
+        ];
     }
 }

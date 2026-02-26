@@ -91,9 +91,9 @@ class AsignaturaController extends Controller
                 }
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
-            }, 'unidades.temas.planificacionPersonal']);
+            }, 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias']);
         } else {
-            $query->with(['carreras', 'unidades.temas.planificacionPersonal']);
+            $query->with(['carreras', 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias']);
         }
 
         if ($request->filled('search')) {
@@ -164,6 +164,7 @@ class AsignaturaController extends Controller
                 'docente_nombre' => $docentes->isEmpty() ? null : $docentes->pluck('nombre_completo')->implode(', '), // Fix for card display
                 'grupos_count' => $a->grupos->count(),
                 'progreso_documentacion' => $progreso,
+                'indicadores_documentacion' => $a->indicadores_documentacion,
                 'docentes_data' => $docentes->map(function ($d) use ($a) { // Para el diálogo de selección
                     // Calcular descripción de grupos para este docente
                     $gruposDocente = $a->grupos->where('docente_id', $d->id);

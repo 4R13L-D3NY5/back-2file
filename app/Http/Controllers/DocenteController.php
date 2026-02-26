@@ -80,13 +80,19 @@ class DocenteController extends Controller
         $data = $docentes->map(function ($docente) {
             try {
                 $grupos = $docente->grupos;
-                $materiasData = [];
+                $materiasGrouped = [];
 
                 // Group by Asignatura/Materia to show detailed progress per subject
                 foreach ($grupos as $grupo) {
                     if (!$grupo->asignatura) continue;
 
                     $asignatura = $grupo->asignatura;
+
+                    // Merge groups if the subject is already processed
+                    if (isset($materiasGrouped[$asignatura->id])) {
+                        $materiasGrouped[$asignatura->id]['grupo'] .= ', ' . $grupo->nombre;
+                        continue;
+                    }
 
                     // --- 1. Avance de Temas ---
                     // Total themes in the subject
@@ -126,38 +132,67 @@ class DocenteController extends Controller
                     }
 
                     // --- 3. Documentación Status ---
-                    // Heuristics based on PlanificacionPersonal existence
-                    // Check if ANY planning exists for this user + subject
-                    // Ideally, we check specific "types" or just existence.
-                    $hasPlanning = \App\Models\PlanificacionPersonal::where('user_id', $docente->user_id)
-                        ->whereHas('tema.unidad.asignatura', function ($q) use ($asignatura) {
-                            $q->where('id', $asignatura->id);
-                        })->exists();
+                    // Programa Analitico is based on the initial configuration of the subject (descripcion, sistema interpretacion etc)
+                    $programaAnalitico = !empty($asignatura->descripcion) && !empty($asignatura->justificacion) && !empty($asignatura->sistema_evaluacion);
+                    
+                    // PAC is based on having content in Temas
+                    $totalTemasEvaluados = 0;
+                    $temasConContenido = 0;
+                    $temasConPlanClase = 0;
 
-                    $programaAnalitico = $hasPlanning; // Simple heuristic
-                    $pac = $hasPlanning; // PAC is usually generated from plan
-                    $planClase = $hasPlanning; // Check if lesson plans are uploaded
+                    foreach ($asignatura->unidades as $unidad) {
+                        foreach ($unidad->temas as $tema) {
+                            $totalTemasEvaluados++;
+                            
+                            if (!empty($tema->contenido_conceptual) || !empty($tema->contenido_procedimental) || !empty($tema->contenido_items)) {
+                                $temasConContenido++;
+                            }
+
+                            // Verifica si existe algun Plan de Clase del Docente actual para este tema
+                            $hasPlan = \App\Models\PlanificacionPersonal::where('user_id', $docente->user_id)
+                                ->where('tema_id', $tema->id)
+                                ->exists();
+                            
+                            if ($hasPlan) {
+                                $temasConPlanClase++;
+                            }
+                        }
+                    }
+
+                    $pac = ($totalTemasEvaluados > 0 && $temasConContenido == $totalTemasEvaluados);
+                    $planClase = ($totalTemasEvaluados > 0 && $temasConPlanClase > 0);
                     $cronograma = $avanceTemas > 0; // If they have scheduled sessions
 
                     // Detailed State
                     $estado = 'Al día';
-                    if ($avanceTemas < 20 && $totalTemas > 0) $estado = 'Atrasado';
-                    if (!$hasPlanning) $estado = 'Sin documentación';
+                    if (!$programaAnalitico || !$pac || !$planClase || !$cronograma) {
+                        $estado = 'Sin documentación';
+                    } else if ($avanceTemas < 20 && $totalTemas > 0) {
+                        $estado = 'Atrasado';
+                    }
 
-                    $materiasData[] = [
+                    // Load related carreras to allow UI filtering by director career
+                    $carreras_ids = [];
+                    if ($asignatura->carreras) {
+                        $carreras_ids = $asignatura->carreras->pluck('id')->toArray();
+                    }
+
+                    $materiasGrouped[$asignatura->id] = [
                         'id' => $asignatura->id,
                         'codigo' => $asignatura->codigo,
                         'nombre' => $asignatura->nombre,
                         'grupo' => $grupo->nombre, // 'Grupo 1'
                         'avanceTemas' => $avanceTemas,
-                        'asistencia' => $asistenciaPromedio,
                         'programaAnalitico' => $programaAnalitico,
                         'pac' => $pac,
                         'planClase' => $planClase,
                         'cronograma' => $cronograma,
-                        'estado' => $estado
+                        'estado' => $estado,
+                        'carreras_ids' => $carreras_ids
                     ];
                 }
+
+                $materiasData = array_values($materiasGrouped);
 
                 // Inferencia de Sede (First Group)
                 $sede = null;

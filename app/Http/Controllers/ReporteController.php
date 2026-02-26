@@ -1054,19 +1054,37 @@ class ReporteController extends Controller
 
         $query = Asignatura::query()
             ->withCount('temas')
-            ->with(['grupos.cronogramas', 'carreras']);
+            ->with(['grupos' => function($q) use ($sedeId, $carreraId) {
+                if ($sedeId) {
+                    $q->where('sede_id', $sedeId);
+                }
+                if ($carreraId) {
+                    $q->where('carrera_id', $carreraId);
+                }
+                $q->with(['cronogramas', 'docente']); // Eager load cronogramas and docente inside filtered grupos
+            }, 'carreras', 'auditorias' => function($q) {
+                // Get the latest audit per subject
+                $q->latest();
+            }]);
 
-        // Filtrar por sede
-        if ($sedeId) {
-            $query->whereHas('carreras', function ($q) use ($sedeId) {
-                $q->where('asignatura_carrera.sede_id', $sedeId);
+        // Filtrar por sede y carrera en la relación principal y en grupos
+        if ($sedeId || $carreraId) {
+            $query->whereHas('grupos', function($q) use ($sedeId, $carreraId) {
+                if ($sedeId) {
+                    $q->where('sede_id', $sedeId);
+                }
+                if ($carreraId) {
+                    $q->where('carrera_id', $carreraId);
+                }
             });
-        }
 
-        // Filtrar por carrera
-        if ($carreraId) {
-            $query->whereHas('carreras', function ($q) use ($carreraId) {
-                $q->where('carreras.id', $carreraId);
+            $query->whereHas('carreras', function ($q) use ($sedeId, $carreraId) {
+                if ($sedeId) {
+                    $q->where('asignatura_carrera.sede_id', $sedeId);
+                }
+                if ($carreraId) {
+                    $q->where('carreras.id', $carreraId);
+                }
             });
         }
 
@@ -1076,8 +1094,24 @@ class ReporteController extends Controller
         $inicioSemestre = Carbon::create(2026, 1, 6); // Primer lunes de enero 2026
         $semanasTranscurridas = max(1, Carbon::now()->diffInWeeks($inicioSemestre));
         $semanasTotales = 20; // 20 semanas por semestre
+        
+        // Cargar Docentes mapping para verificar documentación
+        $allUserIds = $asignaturas->pluck('grupos.*.docente.user_id')->flatten()->filter()->unique();
+        $planningMap = [];
+        if ($allUserIds->isNotEmpty()) {
+            $planningMap = DB::table('planificaciones_personales')
+                ->join('temas', 'planificaciones_personales.tema_id', '=', 'temas.id')
+                ->join('unidades', 'temas.unidad_id', '=', 'unidades.id')
+                ->whereIn('planificaciones_personales.user_id', $allUserIds)
+                ->select('planificaciones_personales.user_id', 'unidades.asignatura_id')
+                ->distinct()
+                ->get()
+                ->groupBy('user_id')
+                ->map(fn($items) => $items->pluck('asignatura_id')->all())
+                ->all();
+        }
 
-        $matriz = $asignaturas->map(function ($asig) use ($semanasTranscurridas, $semanasTotales) {
+        $matriz = $asignaturas->map(function ($asig) use ($semanasTranscurridas, $semanasTotales, $planningMap) {
             $totalTemas = $asig->temas_count;
             
             // Avance real: temas avanzados / total temas
@@ -1087,36 +1121,69 @@ class ReporteController extends Controller
             // Avance planeado: semanas transcurridas / semanas totales
             $avancePlaneado = min(100, round(($semanasTranscurridas / $semanasTotales) * 100));
             
-            // Calcular diferencia y semáforo
+            // Calcular diferencia
             $diferencia = $avanceReal - $avancePlaneado;
             
-            if ($diferencia >= -10) {
-                $semaforo = 'positive';
-                $alertaLabel = 'Normal';
-                $acciones = 'Ninguna';
-            } elseif ($diferencia >= -25) {
-                $semaforo = 'warning';
-                $alertaLabel = 'Atención';
-                $acciones = 'Seguimiento reforzado';
-            } else {
+            // Verificar si el docente asignado tiene planificación (PAC + Plan de Clase)
+            $docentes = $asig->grupos->map(fn($g) => $g->docente)->filter();
+            $userIds = $docentes->pluck('user_id')->filter()->unique();
+            $hasPlanning = false;
+            foreach ($userIds as $userId) {
+                if (isset($planningMap[$userId]) && in_array($asig->id, $planningMap[$userId])) {
+                    $hasPlanning = true;
+                    break;
+                }
+            }
+
+            // Alertas
+            $alertas = [];
+            if (!$hasPlanning) {
+                $alertas[] = 'Falta Plan de Clase';
+            }
+            if ($diferencia < -25) {
+                $alertas[] = 'Atraso Crítico';
+            }
+
+            // Auditoria
+            $ultimaAuditoria = $asig->auditorias->first();
+            $semaforoAuditoria = $ultimaAuditoria ? $ultimaAuditoria->semaforo : 'verde';
+            $accionesCorrectivas = $ultimaAuditoria ? $ultimaAuditoria->acciones_correctivas : null;
+            
+            // Determine Semáforo depending on Audit or difference
+            if ($semaforoAuditoria === 'rojo' || $diferencia < -25 || !$hasPlanning) {
                 $semaforo = 'negative';
                 $alertaLabel = 'Crítico';
-                $acciones = 'Requiere intervención inmediata';
+                $acciones = $accionesCorrectivas ?: 'Requiere intervención inmediata';
+            } elseif ($semaforoAuditoria === 'amarillo' || $diferencia < -10) {
+                $semaforo = 'warning';
+                $alertaLabel = 'Atención';
+                $acciones = $accionesCorrectivas ?: 'Seguimiento reforzado';
+            } else {
+                $semaforo = 'positive';
+                $alertaLabel = 'Normal';
+                $acciones = $accionesCorrectivas ?: 'Ninguna';
             }
 
             // Obtener carrera principal
             $carrera = $asig->carreras->first();
+
+            // Extraer nombre y un ID de docente (tomamos el primero asignado a la carrera)
+            $docenteNombres = $docentes->pluck('nombre_completo')->unique()->implode(', ');
+            $docenteId = $docentes->first() ? $docentes->first()->id : null;
 
             return [
                 'id' => $asig->id,
                 'asignatura' => $asig->nombre,
                 'codigo' => $asig->codigo,
                 'carrera' => $carrera ? $carrera->nombre : 'N/A',
+                'docente' => $docenteNombres ?: 'Sin asignar',
+                'docenteId' => $docenteId,
                 'avancePlaneado' => $avancePlaneado . '%',
                 'avanceReal' => $avanceReal . '%',
                 'diferencia' => ($diferencia >= 0 ? '+' : '') . $diferencia . '%',
                 'semaforo' => $semaforo,
                 'alertaLabel' => $alertaLabel,
+                'alertas' => count($alertas) > 0 ? implode(', ', $alertas) : 'Ninguna',
                 'acciones' => $acciones,
                 'temasTotal' => $totalTemas,
                 'temasAvanzados' => $temasAvanzados
@@ -1688,5 +1755,38 @@ class ReporteController extends Controller
         }
 
         return view('reports.weekly_official', ['report' => $data['report']]);
+    }
+
+    public function auditoriasVicerrector(Request $request)
+    {
+        $query = \App\Models\Auditoria::with(['asignatura.carreras', 'docente', 'auditor'])
+            ->whereIn('semaforo', ['amarillo', 'rojo']);
+
+        if ($request->has('sede_id')) {
+            $query->whereHas('asignatura.carreras', function ($q) use ($request) {
+                $q->where('asignatura_carrera.sede_id', $request->sede_id);
+            });
+        }
+
+        $auditorias = $query->orderBy('created_at', 'desc')->get();
+
+        $data = $auditorias->map(function ($auditoria) {
+            $carrera = $auditoria->asignatura->carreras->first();
+            return [
+                'id' => $auditoria->id,
+                'fecha' => $auditoria->created_at->format('Y-m-d'),
+                'semana' => $auditoria->semana,
+                'asignatura' => $auditoria->asignatura ? $auditoria->asignatura->nombre : 'N/A',
+                'carrera' => $carrera ? $carrera->nombre : 'N/A',
+                'docente' => $auditoria->docente ? $auditoria->docente->nombre_completo : 'N/A',
+                'auditor' => $auditoria->auditor ? $auditoria->auditor->name : 'N/A',
+                'semaforo' => $auditoria->semaforo === 'rojo' ? 'negative' : 'warning',
+                'alertaLabel' => $auditoria->semaforo === 'rojo' ? 'Crítico' : 'Atención',
+                'observaciones' => $auditoria->observaciones,
+                'acciones_correctivas' => $auditoria->acciones_correctivas,
+            ];
+        });
+
+        return response()->json($data);
     }
 }
