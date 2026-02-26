@@ -21,6 +21,7 @@ Route::post('/register', [AuthController::class, 'register']);
 // Programas Analíticos (público con token estático)
 Route::get('/programas-analiticos', [\App\Http\Controllers\AsignaturaController::class, 'programasAnaliticos']);
 Route::get('/reportes/semanal/print', [\App\Http\Controllers\ReporteController::class, 'exportWeeklyReportHtml']);
+Route::get('/asignaturas/{id}/template-personal', [AsignaturaController::class, 'templatePersonal']);
 Route::middleware('auth:sanctum')->group(function () {
     // Auth
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -42,6 +43,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/asignaturas/{id}/import-word', [AsignaturaController::class, 'importWord']);
     Route::post('/asignaturas/{id}/import-excel', [AsignaturaController::class, 'importExcel']);
     Route::post('/asignaturas/{id}/import-plan-clase', [AsignaturaController::class, 'importPlanClase']);
+    Route::post('/asignaturas/{id}/import-personal', [AsignaturaController::class, 'importPersonal']);
     Route::post('/asignaturas/{id}/import-cronograma', [AsignaturaController::class, 'importCronograma']);
 
 

@@ -1512,8 +1512,159 @@ class AsignaturaController extends Controller
         ]);
     }
 
+    /**
+     * Descargar plantilla Excel para Planificación Personal (Pre-llenada con temas)
+     */
+    public function templatePersonal($id)
+    {
+        $asignatura = Asignatura::with(['unidades.temas'])->findOrFail($id);
 
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
 
+        // 1. Cabeceras
+        $headers = [
+            'Unidad (#)', 'Tema (#)', 'Título (Referencial)',
+            'Estrategias Metodológicas', 'Actividades de Aprendizaje', 'Recursos (1 x línea)',
+            'Eval. Formativa: Actividades', 'Eval. Formativa: Instrumentos', 'Eval. Formativa: Evidencias',
+            'Eval. Sumativa: Actividades', 'Eval. Sumativa: Instrumentos', 'Eval. Sumativa: Evidencias',
+            'Secuencia: Intro (Actividad)', 'Secuencia: Intro (Min)',
+            'Secuencia: Resultados (Actividad)', 'Secuencia: Resultados (Min)',
+            'Secuencia: Contenido (Actividad)', 'Secuencia: Contenido (Min)',
+            'Secuencia: Cuerpo (Actividad)', 'Secuencia: Cuerpo (Min)',
+            'Secuencia: Cierre (Actividad)', 'Secuencia: Cierre (Min)'
+        ];
+        $sheet->fromArray($headers, NULL, 'A1');
 
+        // Estilo cabecera
+        $headerStyle = [
+            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['rgb' => '10b981']], // Teal-600
+            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
+        ];
+        $sheet->getStyle('A1:V1')->applyFromArray($headerStyle);
+        
+        foreach (range('A', 'V') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
 
+        // 2. Pre-llenar datos reales
+        $row = 2;
+        foreach ($asignatura->unidades->sortBy('numero') as $unidad) {
+            foreach ($unidad->temas->sortBy('orden') as $tema) {
+                $data = [
+                    $unidad->numero,
+                    $tema->orden,
+                    $tema->titulo,
+                    // El resto de columnas vacías para que el docente las llene
+                ];
+                $sheet->fromArray($data, NULL, 'A' . $row);
+                $row++;
+            }
+        }
+
+        // Si no hay temas, dejar una fila de ejemplo vacía o al menos asegurar el formato
+        if ($row == 2) {
+            $sheet->setCellValue('A2', '1');
+            $sheet->setCellValue('B2', '1');
+            $sheet->setCellValue('C2', 'Ejemplo: Tema 1');
+        }
+
+        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+        return response()->streamDownload(function () use ($writer) {
+            $writer->save('php://output');
+        }, 'plantilla_planificacion_' . \Illuminate\Support\Str::slug($asignatura->nombre) . '.xlsx');
+    }
+
+    /**
+     * Importar Planificación Personal desde Excel
+     */
+    public function importPersonal(Request $request, $id)
+    {
+        $asignatura = Asignatura::findOrFail($id);
+        $userId = \Illuminate\Support\Facades\Auth::id();
+
+        if (!$request->hasFile('file')) {
+            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+        }
+
+        try {
+            $file = $request->file('file');
+            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($file->getPathname());
+            $sheet = $spreadsheet->getActiveSheet();
+            $rows = $sheet->toArray();
+
+            // Saltar cabecera
+            array_shift($rows);
+
+            $stats = ['updated' => 0, 'errors' => 0];
+            $errors = [];
+
+            foreach ($rows as $index => $row) {
+                if (empty($row[0]) || empty($row[1])) continue; // Skip if unit or theme # is missing
+
+                $uNum = intval($row[0]);
+                $tNum = intval($row[1]);
+
+                // Buscar el tema en la asignatura actual
+                $tema = \App\Models\Tema::whereHas('unidad', function($q) use ($id, $uNum) {
+                    $q->where('asignatura_id', $id)->where('numero', $uNum);
+                })->where('orden', $tNum)->first();
+
+                if (!$tema) {
+                    $stats['errors']++;
+                    $errors[] = "Fila " . ($index + 2) . ": No se encontró Unidad $uNum - Tema $tNum en esta asignatura.";
+                    continue;
+                }
+
+                // Procesar Listas (Recursos, Evaluaciones)
+                $parseList = function($val) {
+                    if (empty($val)) return [];
+                    return array_values(array_filter(preg_split('/\r\n|\r|\n|,/', trim($val)), 'trim'));
+                };
+
+                // Construir Secuencia
+                $secuencia = [
+                    ['momento' => 'INTRODUCCION', 'actividad' => trim($row[12] ?? ''), 'duracion' => intval($row[13] ?? 10)],
+                    ['momento' => 'RESULTADOS DE APRENDIZAJE/LOGROS ESPERADOS', 'actividad' => trim($row[14] ?? ''), 'duracion' => intval($row[15] ?? 5)],
+                    ['momento' => 'CONTENIDOS DE LA CLASE', 'actividad' => trim($row[16] ?? ''), 'duracion' => intval($row[17] ?? 15)],
+                    ['momento' => 'CUERPO DE CONTENIDOS', 'actividad' => trim($row[18] ?? ''), 'duracion' => intval($row[19] ?? 45)],
+                    ['momento' => 'CONCLUSION O CIERRE', 'actividad' => trim($row[20] ?? ''), 'duracion' => intval($row[21] ?? 15)],
+                ];
+
+                // Update or Create
+                \App\Models\PlanificacionPersonal::updateOrCreate(
+                    ['tema_id' => $tema->id, 'user_id' => $userId],
+                    [
+                        'estrategias_metodologicas' => trim($row[3] ?? ''),
+                        'estrategias_aprendizaje' => trim($row[4] ?? ''),
+                        'estrategias_recursos' => $parseList($row[5] ?? ''),
+                        'evaluacion_formativa' => [
+                            'actividades' => $parseList($row[6] ?? ''),
+                            'instrumentos' => $parseList($row[7] ?? ''),
+                            'evidencias' => $parseList($row[8] ?? ''),
+                        ],
+                        'evaluacion_sumativa' => [
+                            'actividades' => $parseList($row[9] ?? ''),
+                            'instrumentos' => $parseList($row[10] ?? ''),
+                            'evidencias' => $parseList($row[11] ?? ''),
+                        ],
+                        'secuencia_didactica' => $secuencia
+                    ]
+                );
+
+                $stats['updated']++;
+            }
+
+            return response()->json([
+                'message' => 'Proceso completado.',
+                'stats' => $stats,
+                'errors' => $errors
+            ]);
+
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error("Import Personal Excel Error: " . $e->getMessage());
+            return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
+        }
+    }
 }
