@@ -165,7 +165,7 @@ class AsignaturaController extends Controller
                 'grupos_count' => $a->grupos->count(),
                 'progreso_documentacion' => $progreso,
                 'indicadores_documentacion' => $a->indicadores_documentacion,
-                'docentes_data' => $docentes->map(function ($d) use ($a) { // Para el diálogo de selección
+                'docentes_data' => $docentes->map(function ($d) use ($a, $progreso) { // Para el diálogo de selección y lista individual
                     // Calcular descripción de grupos para este docente
                     $gruposDocente = $a->grupos->where('docente_id', $d->id);
                     $desc = $gruposDocente->map(fn($g) => ($g->nombre ?? 'S/N') . ' (' . ($g->tipo ?? 'TEO') . ')')->implode(', ');
@@ -176,12 +176,22 @@ class AsignaturaController extends Controller
                     $carreraId = $firstGroup->carrera_id ?? null;
                     $sedeId = $firstGroup->sede_id ?? null;
 
+                    // Calcular progreso por docente
+                    $userId = $d->user_id;
+                    $indicadoresDocente = $userId ? $a->getIndicadoresDocumentacionPorDocente($userId) : $a->indicadores_documentacion;
+                    
+                    // Calcular progreso por docente utilizando la misma lógica del progreso general
+                    $progresoDocente = $userId ? $a->getProgresoPorDocente($userId) : $progreso;
+
                     return [
                         'id' => $d->id,
+                        'user_id' => $userId,
                         'nombre' => $d->nombre_completo,
                         'descripcion_grupos' => $desc,
                         'carrera_id' => $carreraId,
-                        'sede_id' => $sedeId
+                        'sede_id' => $sedeId,
+                        'progreso_documentacion' => $progresoDocente,
+                        'indicadores_documentacion' => $indicadoresDocente
                     ];
                 })->values()
             ];

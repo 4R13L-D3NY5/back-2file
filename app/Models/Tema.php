@@ -70,6 +70,11 @@ class Tema extends Model
         return $this->hasOne(PlanificacionPersonal::class);
     }
 
+    public function planificacionesPersonales()
+    {
+        return $this->hasMany(PlanificacionPersonal::class);
+    }
+
     public function cronogramas()
     {
         return $this->belongsToMany(Cronograma::class, 'cronograma_tema');

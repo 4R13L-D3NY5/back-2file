@@ -1062,10 +1062,7 @@ class ReporteController extends Controller
                     $q->where('carrera_id', $carreraId);
                 }
                 $q->with(['cronogramas', 'docente']); // Eager load cronogramas and docente inside filtered grupos
-            }, 'carreras', 'auditorias' => function($q) {
-                // Get the latest audit per subject
-                $q->latest();
-            }]);
+            }, 'carreras']);
 
         // Filtrar por sede y carrera en la relación principal y en grupos
         if ($sedeId || $carreraId) {
@@ -1144,10 +1141,10 @@ class ReporteController extends Controller
                 $alertas[] = 'Atraso Crítico';
             }
 
-            // Auditoria
-            $ultimaAuditoria = $asig->auditorias->first();
-            $semaforoAuditoria = $ultimaAuditoria ? $ultimaAuditoria->semaforo : 'verde';
-            $accionesCorrectivas = $ultimaAuditoria ? $ultimaAuditoria->acciones_correctivas : null;
+            // Auditoria temporalmente desactivada por falta de tabla en DB
+            $ultimaAuditoria = null;
+            $semaforoAuditoria = 'verde';
+            $accionesCorrectivas = null;
             
             // Determine Semáforo depending on Audit or difference
             if ($semaforoAuditoria === 'rojo' || $diferencia < -25 || !$hasPlanning) {
