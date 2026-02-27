@@ -127,11 +127,23 @@ class RolExamenController extends Controller
         try {
             $file = $request->file('file');
             $spreadsheet = IOFactory::load($file->getPathname());
-            $sheet = $spreadsheet->getActiveSheet();
+            
+            $sheet = $spreadsheet->getSheetByName('Rol de Examenes');
+            if (!$sheet) {
+                $sheet = $spreadsheet->getActiveSheet();
+            }
+
+            // Obtener el año de la gestión desde la celda B7 (Fila 7, Columna B)
+            $gestionAño = 2025; // Default fallback
+            $celdaB7 = $sheet->getCell('B7')->getValue();
+            if ($celdaB7 && preg_match('/\d{4}/', $celdaB7, $matches)) {
+                $gestionAño = $matches[0];
+            }
+
             $rows = $sheet->toArray();
 
-            // Saltar encabezado
-            array_shift($rows);
+            // Los registros inician en el registro 12 (indice 11)
+            $rowsProcessed = array_slice($rows, 11);
 
             $imported = 0;
             $errors = [];
@@ -139,126 +151,107 @@ class RolExamenController extends Controller
 
             DB::beginTransaction();
 
-            foreach ($rows as $index => $row) {
-                // Skip empty rows
-                if (empty($row[0]) && empty($row[1])) continue;
+            foreach ($rowsProcessed as $index => $row) {
+                $rowNumber = $index + 12;
 
-                $rowNumber = $index + 2; // +2 porque saltamos encabezado y Excel es 1-indexed
+                // C: Código Materia (indice 2)
+                $codigo = trim($row[2] ?? '');
+                
+                // E: Grupo (indice 4)
+                $grupo = trim($row[4] ?? '');
 
-                try {
-                    // Validar formato de fila
-                    // A: Código, B: Tipo, C: Grupo, D: Fecha, E: Hora Inicio
-                    $codigo = trim($row[0] ?? '');
-                    $tipo = trim($row[1] ?? '');
-                    $grupo = trim($row[2] ?? '');
-                    $fecha = $this->parseDate($row[3] ?? '');
-                    $horaInicio = $this->parseTime($row[4] ?? '');
-                    $aula = null; // Aula removida del importador por simplicidad
+                if (empty($codigo)) continue;
 
-                    if (empty($codigo) || empty($tipo) || empty($fecha)) {
-                        $errors[] = "Fila {$rowNumber}: Datos incompletos (Código, Tipo y Fecha son obligatorios)";
-                        continue;
-                    }
+                // 1. Validar Materia
+                $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+                if (!$asignatura) {
+                    $errors[] = "Fila {$rowNumber}: No se encontró la materia con código '{$codigo}'";
+                    continue;
+                }
 
-                    // 1. Automatización: Obtener Nombre de Materia
-                    $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+                // 2. Definir bloques de exámenes a procesar: [Tipo, FechaCol, HoraCol]
+                $bloques = [
+                    ['1er Parcial', 6, 7],   // G, H
+                    ['2do Parcial', 8, 9],   // I, J
+                    ['Final', 10, 11],       // K, L
+                    ['2da Instancia', 39, 40] // AN, AO
+                ];
+
+                foreach ($bloques as $bloque) {
+                    [$tipo, $fechaIdx, $horaIdx] = $bloque;
                     
-                    if (!$asignatura) {
-                        $errors[] = "Fila {$rowNumber}: No se encontró la materia con código '{$codigo}'";
-                        continue;
-                    }
+                    $fechaRaw = $row[$fechaIdx] ?? '';
+                    $horaRaw = $row[$horaIdx] ?? '';
 
-                    // VALIDACIÓN: ¿Pertenece la materia a la carrera seleccionada?
-                    $perteneceACarrera = \Illuminate\Support\Facades\DB::table('asignatura_carrera')
-                        ->where('asignatura_id', $asignatura->id)
-                        ->where('carrera_id', $carreraId)
-                        ->exists();
+                    if (empty($fechaRaw) || $fechaRaw === 'A') continue;
 
-                    if (!$perteneceACarrera) {
-                        $errors[] = "Fila {$rowNumber}: La materia '{$codigo}' no pertenece a la carrera seleccionada.";
-                        continue;
-                    }
+                    try {
+                        $fecha = $this->parseDate($fechaRaw, $gestionAño);
+                        $horaInicio = $this->parseTime($horaRaw);
+                        $horaFin = date('H:i', strtotime($horaInicio . ' +90 minutes'));
 
-                    $nombre = $asignatura->nombre;
+                        if (!$fecha) continue;
 
-                    // 2. Automatización: Normalizar Tipo y Obtener Semana por defecto
-                    $tipoNormalizado = $this->normalizarTipoExamen($tipo);
-                    if (!$tipoNormalizado) {
-                        $errors[] = "Fila {$rowNumber}: Tipo de examen inválido '{$tipo}'";
-                        continue;
-                    }
-
-                    $semana = intval($row[6] ?? 0); // Intentar leer si hubiera columna G extra
-                    if ($semana <= 0) {
+                        // Automatización de semana por defecto
                         $semanasDefault = [
                             '1er Parcial' => 8,
                             '2do Parcial' => 15,
                             'Final' => 19,
                             '2da Instancia' => 22,
                         ];
-                        $semana = $semanasDefault[$tipoNormalizado] ?? 1;
+                        $semana = $semanasDefault[$tipo] ?? 1;
+
+                        // Validar reglas
+                        $validation = $this->validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipo);
+
+                        if (!empty($validation['errors'])) {
+                            $errors[] = "Fila {$rowNumber} ({$tipo}): " . implode(', ', $validation['errors']);
+                            continue;
+                        }
+
+                        $conflictos = $validation['warnings'] ?? [];
+                        $conflictosData = [];
+                        foreach ($conflictos as $w) {
+                            if (str_contains(strtolower($w), 'semana')) $conflictosData['semana'] = $w;
+                            if (str_contains(strtolower($w), 'clase') || str_contains(strtolower($w), 'dia')) $conflictosData['horario'] = $w;
+                        }
+
+                        if (!empty($conflictos)) {
+                            $warnings[] = "Fila {$rowNumber} ({$tipo}): " . implode(', ', $conflictos);
+                        }
+
+                        // Crear o actualizar
+                        RolExamen::updateOrCreate(
+                            [
+                                'gestion' => $gestion,
+                                'carrera_id' => $carreraId,
+                                'materia_codigo' => $codigo,
+                                'tipo_examen' => $tipo,
+                                'grupo' => $grupo ?: null,
+                            ],
+                            [
+                                'materia_nombre' => $asignatura->nombre,
+                                'semana' => $semana,
+                                'fecha' => $fecha,
+                                'hora_inicio' => $horaInicio,
+                                'hora_fin' => $horaFin,
+                                'created_by' => auth()->id(),
+                                'conflictos' => !empty($conflictosData) ? $conflictosData : null,
+                            ]
+                        );
+
+                        $imported++;
+
+                    } catch (\Exception $e) {
+                        $errors[] = "Fila {$rowNumber} ({$tipo}): " . $e->getMessage();
                     }
-
-                    // 3. Automatización: Hora Fin (Default +90 mins)
-                    $horaFin = $this->parseTime($row[7] ?? ''); // Intentar leer si hubiera columna H extra
-                    if ($horaFin === '00:00' || empty($row[7])) {
-                        $horaFin = date('H:i', strtotime($horaInicio . ' +90 minutes'));
-                    }
-
-                    // VALIDAR REGLAS DE NEGOCIO
-                    $validation = $this->validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipoNormalizado);
-
-                    if (!empty($validation['errors'])) {
-                        $errors[] = "Fila {$rowNumber}: " . implode(', ', $validation['errors']);
-                        continue; // Block row only for fatal errors
-                    }
-
-                    $conflictos = $validation['warnings'] ?? [];
-                    // Ensure structured warnings for frontend highlighting
-                    $conflictosData = [];
-                    foreach ($conflictos as $w) {
-                        if (str_contains(strtolower($w), 'semana')) $conflictosData['semana'] = $w;
-                        if (str_contains(strtolower($w), 'clase') || str_contains(strtolower($w), 'dia')) $conflictosData['horario'] = $w;
-                    }
-
-                    if (!empty($conflictos)) {
-                        $warnings[] = "Fila {$rowNumber}: " . implode(', ', $conflictos);
-                    }
-
-                    // Crear o actualizar examen
-                    RolExamen::updateOrCreate(
-                        [
-                            'gestion' => $gestion,
-                            'carrera_id' => $carreraId,
-                            'materia_codigo' => $codigo,
-                            'tipo_examen' => $tipoNormalizado,
-                            'grupo' => $grupo ?: null, // Include group in unique key if needed? Maybe not strictly unique for CREATE but for UPDATE yes?
-                            // WARNING: unique key logic might need 'grupo' if we want to differentiate exams for different groups of same subject.
-                            // If 'grupo' is null, we treat as general exam?
-                            // Let's assume unique key includes grupo if present.
-                        ],
-                        [
-                            'materia_nombre' => $nombre,
-                            'semana' => $semana,
-                            'fecha' => $fecha,
-                            'hora_inicio' => $horaInicio,
-                            'hora_fin' => $horaFin,
-                            'aula' => $aula,
-                            'conflictos' => !empty($conflictosData) ? $conflictosData : null, 
-                            'created_by' => auth()->id(),
-                        ]
-                    );
-
-                    $imported++;
-                } catch (\Exception $e) {
-                    $errors[] = "Fila {$rowNumber}: " . $e->getMessage();
                 }
             }
 
             DB::commit();
 
             return response()->json([
-                'message' => "Se procesaron {$imported} registros",
+                'message' => "Se procesaron {$imported} registros de exámenes",
                 'imported' => $imported,
                 'errors' => $errors,
                 'warnings' => $warnings,
@@ -266,7 +259,7 @@ class RolExamenController extends Controller
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
-                'message' => 'Error procesando archivo: ' . $e->getMessage()
+                'message' => 'Error crítico procesando archivo: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -529,7 +522,7 @@ class RolExamenController extends Controller
     // HELPERS
     // ==========================================
 
-    private function parseDate($value)
+    private function parseDate($value, $añoDefault = 2025)
     {
         if (empty($value)) return null;
 
@@ -538,9 +531,35 @@ class RolExamenController extends Controller
             return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject($value)->format('Y-m-d');
         }
 
-        // Si es string, intentar parsear
+        // Si es string, limpiar y normalizar
         try {
-            return date('Y-m-d', strtotime($value));
+            $value = strtolower(trim($value));
+            
+            // Eliminar conectores comunes en español
+            $value = str_replace([' de ', ' del '], ' ', $value);
+            
+            // Mapeo extendido de meses (incluyendo variaciones)
+            $meses = [
+                'ene' => 'Jan', 'feb' => 'Feb', 'mar' => 'Mar',
+                'abr' => 'Apr', 'may' => 'May', 'jun' => 'Jun',
+                'jul' => 'Jul', 'ago' => 'Aug', 'sep' => 'Sep', 'set' => 'Sep',
+                'oct' => 'Oct', 'nov' => 'Nov', 'dic' => 'Dec'
+            ];
+            
+            foreach ($meses as $es => $en) {
+                if (str_contains($value, $es)) {
+                    $value = str_replace($es, $en, $value);
+                    break; 
+                }
+            }
+            
+            // Asegurar año si no está presente
+            if (!preg_match('/\d{4}/', $value)) {
+                $value .= ' ' . $añoDefault;
+            }
+
+            $timestamp = strtotime($value);
+            return $timestamp ? date('Y-m-d', $timestamp) : null;
         } catch (\Exception $e) {
             return null;
         }

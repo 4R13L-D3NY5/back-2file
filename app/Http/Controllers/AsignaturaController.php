@@ -45,7 +45,7 @@ class AsignaturaController extends Controller
      */
     public function index(Request $request)
     {
-        $query = Asignatura::query();
+        $query = Asignatura::query()->where('estado', '!=', 'cancelado');
 
         // NOTE: Role-based filtering (Director de Carrera) is handled by the frontend
         // The frontend sends sede_id and carrera_id filters based on user's assigned data
