@@ -128,13 +128,13 @@ class RolExamenController extends Controller
             $file = $request->file('file');
             $spreadsheet = IOFactory::load($file->getPathname());
             
-            $sheet = $spreadsheet->getSheetByName('Rol de Examenes');
+            $sheet = $spreadsheet->getSheetByName('ROL GENERAL');
             if (!$sheet) {
                 $sheet = $spreadsheet->getActiveSheet();
             }
 
             // Obtener el año de la gestión desde la celda B7 (Fila 7, Columna B)
-            $gestionAño = 2025; // Default fallback
+            $gestionAño = 2026; // Default fallback
             $celdaB7 = $sheet->getCell('B7')->getValue();
             if ($celdaB7 && preg_match('/\d{4}/', $celdaB7, $matches)) {
                 $gestionAño = $matches[0];
@@ -142,8 +142,8 @@ class RolExamenController extends Controller
 
             $rows = $sheet->toArray();
 
-            // Los registros inician en el registro 12 (indice 11)
-            $rowsProcessed = array_slice($rows, 11);
+            // Los registros inician en el registro 10 (indice 9)
+            $rowsProcessed = array_slice($rows, 9);
 
             $imported = 0;
             $errors = [];
@@ -152,7 +152,7 @@ class RolExamenController extends Controller
             DB::beginTransaction();
 
             foreach ($rowsProcessed as $index => $row) {
-                $rowNumber = $index + 12;
+                $rowNumber = $index + 10;
 
                 // C: Código Materia (indice 2)
                 $codigo = trim($row[2] ?? '');
@@ -160,7 +160,7 @@ class RolExamenController extends Controller
                 // E: Grupo (indice 4)
                 $grupo = trim($row[4] ?? '');
 
-                if (empty($codigo)) continue;
+                if (empty($codigo) || trim(strtoupper($codigo)) === '#REF!') continue;
 
                 // 1. Validar Materia
                 $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
@@ -173,8 +173,7 @@ class RolExamenController extends Controller
                 $bloques = [
                     ['1er Parcial', 6, 7],   // G, H
                     ['2do Parcial', 8, 9],   // I, J
-                    ['Final', 10, 11],       // K, L
-                    ['2da Instancia', 39, 40] // AN, AO
+                    ['Final', 10, 11]        // K, L
                 ];
 
                 foreach ($bloques as $bloque) {
@@ -205,7 +204,7 @@ class RolExamenController extends Controller
                         $validation = $this->validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipo);
 
                         if (!empty($validation['errors'])) {
-                            $errors[] = "Fila {$rowNumber} ({$tipo}): " . implode(', ', $validation['errors']);
+                            $errors[] = "Fila {$rowNumber} - Materia {$codigo} ({$tipo}): " . implode(', ', $validation['errors']);
                             continue;
                         }
 
@@ -217,7 +216,7 @@ class RolExamenController extends Controller
                         }
 
                         if (!empty($conflictos)) {
-                            $warnings[] = "Fila {$rowNumber} ({$tipo}): " . implode(', ', $conflictos);
+                            $warnings[] = "Fila {$rowNumber} - Materia {$codigo} ({$tipo}): " . implode(', ', $conflictos);
                         }
 
                         // Crear o actualizar
@@ -340,7 +339,7 @@ class RolExamenController extends Controller
                     if (!empty($diasClase) && !in_array($diaExamen, $diasClase)) {
                         $nombresDias = [1 => 'Lunes', 2 => 'Martes', 3 => 'Miércoles', 4 => 'Jueves', 5 => 'Viernes', 6 => 'Sábado', 7 => 'Domingo'];
                         $diaNombre = $nombresDias[$diaExamen] ?? $diaExamen;
-                        $result['warnings'][] = "El examen es el {$diaNombre}, pero el grupo no tiene clases ese día.";
+                        $result['warnings'][] = "El examen es el {$diaNombre}, pero el grupo no tiene horario teórico ese día.";
                     }
                 }
             }
@@ -394,8 +393,8 @@ class RolExamenController extends Controller
             'tipo_examen' => 'required|in:1er Parcial,2do Parcial,Final,2da Instancia',
             'semana' => 'required|integer|min:1|max:25',
             'fecha' => 'required|date',
-            'hora_inicio' => 'required|date_format:H:i',
-            'hora_fin' => 'required|date_format:H:i',
+            'hora_inicio' => 'required',
+            'hora_fin' => 'required',
         ]);
 
         if ($validator->fails()) {
@@ -421,8 +420,8 @@ class RolExamenController extends Controller
             'tipo_examen' => 'sometimes|in:1er Parcial,2do Parcial,Final,2da Instancia',
             'semana' => 'sometimes|integer|min:1|max:25',
             'fecha' => 'sometimes|date',
-            'hora_inicio' => 'sometimes|date_format:H:i',
-            'hora_fin' => 'sometimes|date_format:H:i',
+            'hora_inicio' => 'sometimes',
+            'hora_fin' => 'sometimes',
         ]);
 
         if ($validator->fails()) {
