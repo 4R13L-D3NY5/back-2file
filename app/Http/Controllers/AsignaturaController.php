@@ -313,12 +313,16 @@ class AsignaturaController extends Controller
             $response['carreras'] = $local->carreras; // Pass all careers for potential multi-sede logic
 
             // USER-SPECIFIC CONTEXT (GLOBAL FIX):
-            // Check if authenticated user is a teacher and has a specific group for this subject.
-            // If so, prioritize THAT group's Sede/Context over the generic subject context.
+            // Check if authenticated user is a teacher OR if a specific docente_id was requested (Director/Admin view)
             $currentUser = auth()->user();
+            $requestedDocenteId = $request->input('docente_id');
             $mySpecifiedGroup = null;
-            if ($currentUser && $currentUser->docente) {
-                // Find first group assigned to this teacher
+
+            if ($requestedDocenteId) {
+                // Priority: Use the requested docente context (for Director view)
+                $mySpecifiedGroup = $local->grupos->where('docente_id', $requestedDocenteId)->first();
+            } elseif ($currentUser && $currentUser->docente) {
+                // Fallback: Use authenticated teacher context
                 $mySpecifiedGroup = $local->grupos->where('docente_id', $currentUser->docente->id)->first();
             }
 

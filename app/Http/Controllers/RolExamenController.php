@@ -211,8 +211,14 @@ class RolExamenController extends Controller
                         $conflictos = $validation['warnings'] ?? [];
                         $conflictosData = [];
                         foreach ($conflictos as $w) {
-                            if (str_contains(strtolower($w), 'semana')) $conflictosData['semana'] = $w;
-                            if (str_contains(strtolower($w), 'clase') || str_contains(strtolower($w), 'dia')) $conflictosData['horario'] = $w;
+                            $wLower = mb_strtolower($w, 'UTF-8');
+                            if (str_contains($wLower, 'semana')) {
+                                $conflictosData['semana'] = $w;
+                            }
+                            // Detección insensible a acentos para "día" o "clase"
+                            if (str_contains($wLower, 'clase') || str_contains($wLower, 'dia') || str_contains($wLower, 'día')) {
+                                $conflictosData['horario'] = $w;
+                            }
                         }
 
                         if (!empty($conflictos)) {
