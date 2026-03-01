@@ -233,5 +233,6 @@ Route::middleware('auth:sanctum')->group(function () {
     // Auditoría de Backups (Comparación)
     Route::get('/backups/list', [\App\Http\Controllers\BackupComparisonController::class, 'listBackups']);
     Route::post('/backups/compare', [\App\Http\Controllers\BackupComparisonController::class, 'compareSubject']);
+    Route::post('/backups/restore', [\App\Http\Controllers\BackupComparisonController::class, 'restoreSegment']);
 
 });

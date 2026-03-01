@@ -127,7 +127,8 @@ class BackupComparisonController extends Controller
                     'contenido_conceptual', 
                     'contenido_procedimental', 
                     'contenido_actitudinal', 
-                    'resultado_aprendizaje'
+                    'resultado_aprendizaje',
+                    'contenido_items'
                 ];
 
                 foreach ($backupTemas as $bt) {
@@ -156,6 +157,29 @@ class BackupComparisonController extends Controller
                                 $isDifferent = true;
                             }
                         }
+
+                        // Bibliografías del tema
+                        $currentBib = DB::table('tema_bibliografia as tb')
+                            ->join('bibliografias as b', 'tb.bibliografia_id', '=', 'b.id')
+                            ->where('tb.tema_id', $ct->id)
+                            ->select(DB::raw("CONCAT(COALESCE(b.autor, ''), ' ', COALESCE(b.titulo, ''), ' ', COALESCE(b.edicion, '')) as info"))
+                            ->pluck('info')
+                            ->toArray();
+                        
+                        $backupBib = DB::table($backupDb . '.tema_bibliografia as tb')
+                            ->join($backupDb . '.bibliografias as b', 'tb.bibliografia_id', '=', 'b.id')
+                            ->where('tb.tema_id', $bt->id)
+                            ->select(DB::raw("CONCAT(COALESCE(b.autor, ''), ' ', COALESCE(b.titulo, ''), ' ', COALESCE(b.edicion, '')) as info"))
+                            ->pluck('info')
+                            ->toArray();
+
+                        if (count(array_diff($currentBib, $backupBib)) > 0 || count(array_diff($backupBib, $currentBib)) > 0) {
+                            $differences['bibliografias'] = [
+                                'current' => implode("\n", $currentBib),
+                                'backup' => implode("\n", $backupBib)
+                            ];
+                            $isDifferent = true;
+                        }
                     } else {
                         // Si no existe, todos los campos son diferencias (del backup)
                         foreach ($contentFields as $cf) {
@@ -168,6 +192,18 @@ class BackupComparisonController extends Controller
                                 'backup' => $valB
                             ];
                         }
+
+                        $backupBib = DB::table($backupDb . '.tema_bibliografia as tb')
+                            ->join($backupDb . '.bibliografias as b', 'tb.bibliografia_id', '=', 'b.id')
+                            ->where('tb.tema_id', $bt->id)
+                            ->select(DB::raw("CONCAT(COALESCE(b.autor, ''), ' ', COALESCE(b.titulo, ''), ' ', COALESCE(b.edicion, '')) as info"))
+                            ->pluck('info')
+                            ->toArray();
+                        
+                        $differences['bibliografias'] = [
+                            'current' => null,
+                            'backup' => implode("\n", $backupBib)
+                        ];
                     }
 
                     // Comparar Logros e Indicadores
@@ -251,6 +287,8 @@ class BackupComparisonController extends Controller
                             }
 
                             $personalComparison = [
+                                'current_id' => $currentPP->id ?? null,
+                                'backup_id' => $backupPP->id ?? null,
                                 'found_current' => !!$currentPP,
                                 'found_backup' => !!$backupPP,
                                 'differences' => $ppDiffs,
@@ -271,6 +309,8 @@ class BackupComparisonController extends Controller
                     }
 
                     $temasComp[] = [
+                        'current_id' => $ct->id ?? null,
+                        'backup_id' => $bt->id ?? null,
                         'titulo' => $bt->titulo,
                         'found_current' => !!$ct,
                         'different' => $isDifferent,
@@ -290,7 +330,72 @@ class BackupComparisonController extends Controller
                 ];
             }
 
+            // Comparar Cronogramas (Sesiones del semestre)
+            $cronogramasComparison = [];
+            $backupCronos = $backupData ? DB::table($backupDb . '.cronogramas')
+                ->where('asignatura_id', $backupData->id)
+                ->orderBy('numero_sesion')
+                ->get() : collect();
+
+            $currentCronos = $currentData ? DB::table('cronogramas')
+                ->where('asignatura_id', $currentData->id)
+                ->orderBy('numero_sesion')
+                ->get() : collect();
+
+            $allSessionsNumbers = $backupCronos->pluck('numero_sesion')
+                ->merge($currentCronos->pluck('numero_sesion'))
+                ->unique()
+                ->sort()
+                ->values();
+
+            foreach ($allSessionsNumbers as $num) {
+                $bc = $backupCronos->firstWhere('numero_sesion', $num);
+                $cc = $currentCronos->firstWhere('numero_sesion', $num);
+
+                $isSessionDifferent = false;
+                $sessionDifferences = [];
+                $cronFields = [
+                    'semana_academica', 'tipo_clase', 'contenido_conceptual',
+                    'contenido_procedimental', 'contenido_actitudinal',
+                    'criterios_desempeno', 'instrumentos_evaluacion'
+                ];
+
+                foreach ($cronFields as $cf) {
+                    $rawC = $cc ? ($cc->$cf ?? '') : '';
+                    $rawB = $bc ? ($bc->$cf ?? '') : '';
+
+                    // Normalizar contenido (quitar JSON si aplica)
+                    $decC = json_decode($rawC, true);
+                    $valC = is_array($decC) ? implode("\n", $decC) : trim($rawC);
+
+                    $decB = json_decode($rawB, true);
+                    $valB = is_array($decB) ? implode("\n", $decB) : trim($rawB);
+
+                    if ($valC !== $valB) {
+                        $sessionDifferences[$cf] = [
+                            'current' => $valC,
+                            'backup' => $valB
+                        ];
+                        $isSessionDifferent = true;
+                    }
+                }
+
+                $cronogramasComparison[] = [
+                    'numero_sesion' => $num,
+                    'current_id' => $cc->id ?? null,
+                    'backup_id' => $bc->id ?? null,
+                    'semana' => $cc->semana_academica ?? ($bc->semana_academica ?? '?'),
+                    'tipo_clase' => $cc->tipo_clase ?? ($bc->tipo_clase ?? '?'),
+                    'found_current' => !!$cc,
+                    'found_backup' => !!$bc,
+                    'different' => $isSessionDifferent,
+                    'differences' => $sessionDifferences
+                ];
+            }
+
             return response()->json([
+                'current_id' => $currentData->id ?? null,
+                'backup_id' => $backupData->id ?? null,
                 'codigo' => $codigo,
                 'current_db' => $currentDb,
                 'backup_db' => $backupDb,
@@ -298,6 +403,7 @@ class BackupComparisonController extends Controller
                 'docente_name' => $userId ? ($docentes->firstWhere('id', $userId)->name ?? 'Docente') : null,
                 'comparison' => $comparison,
                 'unidades' => $unidadesComparison,
+                'cronogramas' => $cronogramasComparison,
                 'found_current' => !!$currentData,
                 'found_backup' => !!$backupData
             ]);
@@ -305,6 +411,298 @@ class BackupComparisonController extends Controller
         } catch (\Exception $e) {
             Log::error("Error en comparación de backups: " . $e->getMessage());
             return response()->json(['error' => 'Error al acceder a la base de datos de backup. Verifique que exista y tenga los mismos permisos.'], 500);
+        }
+    }
+
+    public function restoreSegment(Request $request)
+    {
+        $type = $request->type;
+        $targetId = $request->target_id; // ID en DB actual
+        $backupId = $request->backup_id; // ID en DB backup
+        $backupDb = $request->backup_db;
+        $field = $request->field; // Campo específico opcional
+
+        if (!$backupDb) {
+            return response()->json(['error' => 'Debe especificar la base de datos de backup'], 400);
+        }
+
+        try {
+            switch ($type) {
+                case 'asignatura':
+                    // Campos que se comparan en compareSubject
+                    $allowedFields = [
+                        'nombre', 'descripcion', 'justificacion', 'proposito_general',
+                        'metodologia_general', 'sistema_evaluacion', 'contenido_minimo',
+                        'requisitos', 'competencia_asignatura', 'elementos_competencia'
+                    ];
+                    
+                    $backup = DB::table($backupDb . '.asignaturas')->where('id', $backupId)->first();
+                    if (!$backup) return response()->json(['error' => 'No se encontró el registro en el backup'], 404);
+                    
+                    $updateData = [];
+                    if ($field && in_array($field, $allowedFields)) {
+                        $updateData[$field] = $backup->$field;
+                    } else {
+                        foreach ($allowedFields as $f) {
+                            $updateData[$f] = $backup->$f;
+                        }
+                    }
+                    DB::table('asignaturas')->where('id', $targetId)->update($updateData);
+                    break;
+
+                case 'tema':
+                    $fields = ['contenido_conceptual', 'contenido_procedimental', 'contenido_actitudinal', 'resultado_aprendizaje', 'contenido_items'];
+                    $backup = DB::table($backupDb . '.temas')->where('id', $backupId)->first();
+                    if (!$backup) return response()->json(['error' => 'No se encontró el tema en el backup'], 404);
+                    
+                    $updateData = [];
+                    foreach ($fields as $f) {
+                        $updateData[$f] = $backup->$f;
+                    }
+                    DB::table('temas')->where('id', $targetId)->update($updateData);
+
+                    // Restaurar Bibliografías del Tema
+                    DB::table('tema_bibliografia')->where('tema_id', $targetId)->delete();
+                    $backupBibs = DB::table($backupDb . '.tema_bibliografia')->where('tema_id', $backupId)->get();
+                    foreach ($backupBibs as $bb) {
+                        $originalBib = DB::table($backupDb . '.bibliografias')->where('id', $bb->bibliografia_id)->first();
+                        if ($originalBib) {
+                            $currentBib = DB::table('bibliografias')
+                                ->where('titulo', $originalBib->titulo)
+                                ->where('autor', $originalBib->autor)
+                                ->where('edicion', $originalBib->edicion)
+                                ->first();
+                            
+                            if ($currentBib) {
+                                DB::table('tema_bibliografia')->insert([
+                                    'tema_id' => $targetId,
+                                    'bibliografia_id' => $currentBib->id,
+                                    'pagina_desde' => $bb->pagina_desde,
+                                    'pagina_hasta' => $bb->pagina_hasta,
+                                    'created_at' => now(),
+                                    'updated_at' => now()
+                                ]);
+                            }
+                        }
+                    }
+
+                    // Restaurar Logros e Indicadores
+                    // 1. Eliminar actuales (cascada manual)
+                    $currentLogrosIds = DB::table('logros_esperados')->where('tema_id', $targetId)->pluck('id');
+                    DB::table('indicadores')->whereIn('logro_esperado_id', $currentLogrosIds)->delete();
+                    DB::table('logros_esperados')->where('tema_id', $targetId)->delete();
+
+                    // 2. Copiar del Backup
+                    $backupLogros = DB::table($backupDb . '.logros_esperados')->where('tema_id', $backupId)->get();
+                    foreach ($backupLogros as $bl) {
+                        $newLogroId = DB::table('logros_esperados')->insertGetId([
+                            'tema_id' => $targetId,
+                            'descripcion' => $bl->descripcion,
+                            'tipo_logro' => $bl->tipo_logro,
+                            'periodo' => $bl->periodo,
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ]);
+
+                        $backupInds = DB::table($backupDb . '.indicadores')->where('logro_esperado_id', $bl->id)->get();
+                        foreach ($backupInds as $bi) {
+                            DB::table('indicadores')->insert([
+                                'logro_esperado_id' => $newLogroId,
+                                'descripcion' => $bi->descripcion,
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ]);
+                        }
+                    }
+                    break;
+
+                case 'cronograma':
+                    $fields = ['semana_academica', 'tipo_clase', 'contenido_conceptual', 'contenido_procedimental', 'contenido_actitudinal', 'criterios_desempeno', 'instrumentos_evaluacion'];
+                    $backup = DB::table($backupDb . '.cronogramas')->where('id', $backupId)->first();
+                    if (!$backup) return response()->json(['error' => 'No se encontró la sesión en el backup'], 404);
+                    
+                    $updateData = [];
+                    foreach ($fields as $f) {
+                        $updateData[$f] = $backup->$f;
+                    }
+                    DB::table('cronogramas')->where('id', $targetId)->update($updateData);
+                    break;
+
+                case 'cronograma_total':
+                    // Aquí targetId y backupId son los IDs de la ASIGNATURA
+                    $fields = ['numero_sesion', 'semana_academica', 'tipo_clase', 'contenido_conceptual', 'contenido_procedimental', 'contenido_actitudinal', 'criterios_desempeno', 'instrumentos_evaluacion'];
+                    
+                    $backupSessions = DB::table($backupDb . '.cronogramas')->where('asignatura_id', $backupId)->get();
+                    if ($backupSessions->isEmpty()) return response()->json(['error' => 'No se encontraron sesiones en el backup'], 404);
+                    
+                    DB::beginTransaction();
+                    try {
+                        // Limpiar cronograma actual
+                        DB::table('cronogramas')->where('asignatura_id', $targetId)->delete();
+                        
+                        foreach ($backupSessions as $bs) {
+                            $newData = ['asignatura_id' => $targetId];
+                            foreach ($fields as $f) {
+                                $newData[$f] = $bs->$f;
+                            }
+                            $newData['created_at'] = now();
+                            $newData['updated_at'] = now();
+                            DB::table('cronogramas')->insert($newData);
+                        }
+                        DB::commit();
+                    } catch (\Exception $e) {
+                        DB::rollBack();
+                        throw $e;
+                    }
+                    break;
+
+                case 'unidades_total':
+                    // Restauración masiva de Unidades, Temas, Logros, Indicadores y Bibliografía
+                    $backupUnits = DB::table($backupDb . '.unidades')->where('asignatura_id', $backupId)->get();
+                    if ($backupUnits->isEmpty()) return response()->json(['error' => 'No se encontraron unidades en el backup'], 404);
+
+                    DB::beginTransaction();
+                    try {
+                        // 1. Identificar IDs actuales para limpieza profunda
+                        $currentUnitsIds = DB::table('unidades')->where('asignatura_id', $targetId)->pluck('id');
+                        $currentTemasIds = DB::table('temas')->whereIn('unidad_id', $currentUnitsIds)->pluck('id');
+                        $currentLogrosIds = DB::table('logros_esperados')->whereIn('tema_id', $currentTemasIds)->pluck('id');
+
+                        // 2. Limpieza en orden de dependencias
+                        DB::table('tema_bibliografia')->whereIn('tema_id', $currentTemasIds)->delete();
+                        DB::table('indicadores')->whereIn('logro_esperado_id', $currentLogrosIds)->delete();
+                        DB::table('logros_esperados')->whereIn('tema_id', $currentTemasIds)->delete();
+                        DB::table('temas')->whereIn('unidad_id', $currentUnitsIds)->delete();
+                        DB::table('unidades')->where('asignatura_id', $targetId)->delete();
+
+                        // 3. Recrear desde Backup
+                        foreach ($backupUnits as $bu) {
+                            $newUnitId = DB::table('unidades')->insertGetId([
+                                'asignatura_id' => $targetId,
+                                'numero' => $bu->numero ?? ($bu->orden ?? null),
+                                'titulo' => $bu->titulo,
+                                'created_at' => now(),
+                                'updated_at' => now()
+                            ]);
+
+                            $backupTemas = DB::table($backupDb . '.temas')->where('unidad_id', $bu->id)->get();
+                            foreach ($backupTemas as $bt) {
+                                $newTemaId = DB::table('temas')->insertGetId([
+                                    'unidad_id' => $newUnitId,
+                                    'orden' => $bt->orden ?? ($bt->numero ?? null),
+                                    'titulo' => $bt->titulo,
+                                    'contenido_conceptual' => $bt->contenido_conceptual,
+                                    'contenido_procedimental' => $bt->contenido_procedimental,
+                                    'contenido_actitudinal' => $bt->contenido_actitudinal,
+                                    'resultado_aprendizaje' => $bt->resultado_aprendizaje,
+                                    'contenido_items' => $bt->contenido_items,
+                                    'created_at' => now(),
+                                    'updated_at' => now()
+                                ]);
+
+                                // Restaurar Bibliografía
+                                $backupBibLinks = DB::table($backupDb . '.tema_bibliografia')->where('tema_id', $bt->id)->get();
+                                foreach ($backupBibLinks as $bbl) {
+                                    $origBib = DB::table($backupDb . '.bibliografias')->where('id', $bbl->bibliografia_id)->first();
+                                    if ($origBib) {
+                                        $currBib = DB::table('bibliografias')
+                                            ->where('titulo', $origBib->titulo)
+                                            ->where('autor', $origBib->autor)
+                                            ->where('edicion', $origBib->edicion)
+                                            ->first();
+                                        if ($currBib) {
+                                            DB::table('tema_bibliografia')->insert([
+                                                'tema_id' => $newTemaId,
+                                                'bibliografia_id' => $currBib->id,
+                                                'pagina_desde' => $bbl->pagina_desde,
+                                                'pagina_hasta' => $bbl->pagina_hasta,
+                                                'created_at' => now(),
+                                                'updated_at' => now()
+                                            ]);
+                                        }
+                                    }
+                                }
+
+                                // Restaurar Logros e Indicadores
+                                $backupLogros = DB::table($backupDb . '.logros_esperados')->where('tema_id', $bt->id)->get();
+                                foreach ($backupLogros as $bl) {
+                                    $newLogroId = DB::table('logros_esperados')->insertGetId([
+                                        'tema_id' => $newTemaId,
+                                        'descripcion' => $bl->descripcion,
+                                        'created_at' => now(),
+                                        'updated_at' => now()
+                                    ]);
+
+                                    $backupInds = DB::table($backupDb . '.indicadores')->where('logro_esperado_id', $bl->id)->get();
+                                    foreach ($backupInds as $bi) {
+                                        DB::table('indicadores')->insert([
+                                            'logro_esperado_id' => $newLogroId,
+                                            'descripcion' => $bi->descripcion,
+                                            'created_at' => now(),
+                                            'updated_at' => now()
+                                        ]);
+                                    }
+                                }
+
+                                // Restaurar Planificaciones Personales
+                                $backupPPs = DB::table($backupDb . '.planificaciones_personales')->where('tema_id', $bt->id)->get();
+                                foreach ($backupPPs as $bpp) {
+                                    $bUser = DB::table($backupDb . '.users')->where('id', $bpp->user_id)->first();
+                                    if ($bUser) {
+                                        // Buscar usuario local por email (más confiable) o nombre
+                                        $cUser = DB::table('users')->where('email', $bUser->email)->first();
+                                        if (!$cUser) {
+                                            $cUser = DB::table('users')
+                                                ->where('nombre', $bUser->nombre)
+                                                ->where('apellido', $bUser->apellido)
+                                                ->first();
+                                        }
+
+                                        if ($cUser) {
+                                            DB::table('planificaciones_personales')->insert([
+                                                'tema_id' => $newTemaId,
+                                                'user_id' => $cUser->id,
+                                                'estrategias_metodologicas' => $bpp->estrategias_metodologicas,
+                                                'estrategias_aprendizaje' => $bpp->estrategias_aprendizaje,
+                                                'estrategias_recursos' => $bpp->estrategias_recursos,
+                                                'evaluacion_formativa' => $bpp->evaluacion_formativa,
+                                                'evaluacion_sumativa' => $bpp->evaluacion_sumativa,
+                                                'secuencia_didactica' => $bpp->secuencia_didactica,
+                                                'created_at' => now(),
+                                                'updated_at' => now()
+                                            ]);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        DB::commit();
+                    } catch (\Exception $e) {
+                        DB::rollBack();
+                        throw $e;
+                    }
+                    break;
+
+                case 'planificacion_personal':
+                    $fields = ['secuencia_didactica', 'estrategias_metodologicas', 'estrategias_aprendizaje', 'estrategias_recursos', 'evaluacion_formativa', 'evaluacion_sumativa'];
+                    $backup = DB::table($backupDb . '.planificaciones_personales')->where('id', $backupId)->first();
+                    if (!$backup) return response()->json(['error' => 'No se encontró la planificación en el backup'], 404);
+                    
+                    $updateData = [];
+                    foreach ($fields as $f) {
+                        $updateData[$f] = $backup->$f;
+                    }
+                    DB::table('planificaciones_personales')->where('id', $targetId)->update($updateData);
+                    break;
+                
+                default:
+                    return response()->json(['error' => 'Tipo de restauración no soportado'], 400);
+            }
+
+            return response()->json(['message' => 'Restauración completada correctamente']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Error en restauración: ' . $e->getMessage()], 500);
         }
     }
 }
