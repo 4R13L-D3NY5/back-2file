@@ -230,5 +230,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Auditorías
     Route::get('/auditorias', [\App\Http\Controllers\AuditoriaController::class, 'index']);
-    Route::post('/auditorias', [\App\Http\Controllers\AuditoriaController::class, 'store']);
+    // Auditoría de Backups (Comparación)
+    Route::get('/backups/list', [\App\Http\Controllers\BackupComparisonController::class, 'listBackups']);
+    Route::post('/backups/compare', [\App\Http\Controllers\BackupComparisonController::class, 'compareSubject']);
+
 });
