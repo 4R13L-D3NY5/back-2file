@@ -1341,6 +1341,7 @@ class AsignaturaController extends Controller
                     foreach ($parsedItems as $index => $pItem) {
                         if (isset($existingItems[$index])) {
                             $cronograma = $existingItems[$index];
+                            Log::debug("Actualizando sesion " . $cronograma->numero_sesion . " para semana $semana");
                             
                             // Actualizar campos
                             $cronograma->update([

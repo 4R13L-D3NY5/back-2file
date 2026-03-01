@@ -94,14 +94,22 @@ class CronogramaParserService
                 // Limpieza del valor de semana
                 // Fix: Extraer solo el número de semana (primeros digitos antes de cualquier otro caracter como / o salto de linea)
                 $semanaNum = -1;
-                if (preg_match('/^(\d+)/', trim((string)$semanaVal), $matches)) {
+                $trimmedVal = trim((string)$semanaVal);
+                if (preg_match('/^(\d+)/', $trimmedVal, $matches)) {
                     $semanaNum = (int)$matches[1];
                 }
+                
+                // Loguear para depuración
+                if ($trimmedVal !== '') {
+                    Log::debug("CronogramaParser: Fila $currentRow valor B='$trimmedVal' -> Semana Detectada: $semanaNum");
+                }
 
-                // 3. Limite de Semanas (Max 6)
+                // 3. Limite de Semanas (Removido para permitir Cronograma Total)
+                /*
                 if ($semanaNum > 6) {
                     break; // Detener parsing despues de la semana 6
                 }
+                */
 
                 if ($semanaNum > 0) {
                      // Iterar sobre las filas que componen esta "Semana"
@@ -171,6 +179,26 @@ class CronogramaParserService
                             'fila_excel' => $r,
                             'raw_sesion' => $sesionRaw
                         ];
+
+                        // Detección de Fila de Examen (Combinada o con texto de examen)
+                        // Si el título o el contenido conceptual contienen palabras clave, limpiamos los detalles
+                        $keywords = ['EXAMEN', 'PARCIAL', 'FINAL', 'INSTANCIA'];
+                        $isExamRow = false;
+                        foreach ($keywords as $kw) {
+                            if (stripos($contenidoFull, $kw) !== false || stripos((string)$conceptual, $kw) !== false) {
+                                $isExamRow = true;
+                                break;
+                            }
+                        }
+
+                        if ($isExamRow) {
+                            $lastIdx = count($sesiones) - 1;
+                            $sesiones[$lastIdx]['contenido_conceptual'] = '';
+                            $sesiones[$lastIdx]['contenido_procedimental'] = '';
+                            $sesiones[$lastIdx]['contenido_actitudinal'] = '';
+                            $sesiones[$lastIdx]['criterios_desempeno'] = '';
+                            // Mantenemos instrumentos_evaluacion o el contenido si es "EXAMEN ..."
+                        }
                     }
                 }
 
@@ -178,7 +206,7 @@ class CronogramaParserService
 
                 if (empty($semanaVal)) {
                      $emptyConsecutive++;
-                     if ($emptyConsecutive > 5) break; 
+                     if ($emptyConsecutive > 20) break; // Aumentado de 5 a 20 para saltar bloques vacios mas grandes
                 } else {
                     $emptyConsecutive = 0;
                 }
