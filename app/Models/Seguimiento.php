@@ -17,6 +17,9 @@ class Seguimiento extends Model
         'estado_cumplimiento',
         'observaciones',
         'pedagogico',
+        'es_examen',
+        'tipo_examen',
+        'georeferencia',
         'evidencias',
         'integracion_transversal',
     ];
@@ -25,8 +28,10 @@ class Seguimiento extends Model
         'pedagogico' => 'array',
         'evidencias' => 'array',
         'integracion_transversal' => 'array',
+        'georeferencia' => 'array',
         'cumplido' => 'boolean',
         'tema_cumplido' => 'boolean',
+        'es_examen' => 'boolean',
         'fecha' => 'date',
     ];
 

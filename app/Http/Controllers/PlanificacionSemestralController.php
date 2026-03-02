@@ -442,6 +442,13 @@ class PlanificacionSemestralController extends Controller
                 'estado_cumplimiento' => $estadoCumplimiento
             ]);
 
+            // Extraer las nuevas columnas y limpiar el JSON pedagogico
+            $esExamen = filter_var($completePedagogico['es_examen'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            $tipoExamen = $completePedagogico['tipo_examen'] ?? null;
+            $georeferencia = $completePedagogico['georeferencia'] ?? null;
+
+            unset($completePedagogico['es_examen'], $completePedagogico['tipo_examen'], $completePedagogico['georeferencia']);
+
             // Create or update the seguimiento record
             $seguimiento = Seguimiento::updateOrCreate(
                 [
@@ -456,6 +463,9 @@ class PlanificacionSemestralController extends Controller
                     'estado_cumplimiento' => $estadoCumplimiento,
                     'observaciones' => $request->input('observaciones'),
                     'pedagogico' => $completePedagogico,
+                    'es_examen' => $esExamen,
+                    'tipo_examen' => $tipoExamen,
+                    'georeferencia' => $georeferencia,
                     'evidencias' => $evidencias,
                     'integracion_transversal' => $integracionTransversal,
                 ]
