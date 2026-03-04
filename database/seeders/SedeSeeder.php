@@ -15,13 +15,13 @@ class SedeSeeder extends Seeder
         $sedes = [
             // Verified IDs from Planning API
             ['id' => 1,  'codigo' => 'CBA', 'nombre' => 'Cochabamba', 'ciudad' => 'Cochabamba'],
+            ['id' => 3,  'codigo' => 'COB', 'nombre' => 'Cobija', 'ciudad' => 'Pando'],
             ['id' => 6,  'codigo' => 'LPZ', 'nombre' => 'La Paz', 'ciudad' => 'La Paz'],
             ['id' => 9,  'codigo' => 'STC', 'nombre' => 'Santa Cruz', 'ciudad' => 'Santa Cruz'],
-            ['id' => 12, 'codigo' => 'GUA', 'nombre' => 'Guayaramerin', 'ciudad' => 'Guayaramerin'],
-            ['id' => 8,  'codigo' => 'PTO', 'nombre' => 'Puerto Quijarro', 'ciudad' => 'Puerto Quijarro'],
-            ['id' => 5,  'codigo' => 'IVI', 'nombre' => 'Ivirgarzama', 'ciudad' => 'Ivirgarzama'],
-            ['id' => 4,  'codigo' => 'EAL', 'nombre' => 'El Alto', 'ciudad' => 'El Alto'],
-            // TODO: Cobija - ID pendiente de confirmar desde Planning API
+            ['id' => 12, 'codigo' => 'GUA', 'nombre' => 'Guayaramerin', 'ciudad' => 'Beni'],
+            ['id' => 8,  'codigo' => 'PTO', 'nombre' => 'Puerto Quijarro', 'ciudad' => 'Santa Cruz'],
+            ['id' => 5,  'codigo' => 'IVI', 'nombre' => 'Ivirgarzama', 'ciudad' => 'Cochabamba'],
+            ['id' => 4,  'codigo' => 'EAL', 'nombre' => 'El Alto', 'ciudad' => 'La Paz'],
         ];
 
         foreach ($sedes as $sede) {

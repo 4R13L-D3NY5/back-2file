@@ -136,9 +136,12 @@ class SyncAcademicData extends Command
         $bar = $this->output->createProgressBar($totalTasks);
 
         foreach ($tasks as $task) {
+            $sede = \App\Models\Sede::find($task['sede']);
+            $apiSedeId = ($sede && $sede->id_api) ? $sede->id_api : $task['sede'];
+
             $params = [
                 'gestion' => $gestion,
-                'sede' => $task['sede'],
+                'sede' => $apiSedeId,
                 'carrera' => $task['carrera']
             ];
 
