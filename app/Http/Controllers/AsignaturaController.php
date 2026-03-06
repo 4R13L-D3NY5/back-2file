@@ -1330,10 +1330,17 @@ class AsignaturaController extends Controller
             $parsedByWeek = collect($sesionesParsed)->groupBy('semana');
 
             $updatedCount = 0;
+            $soloTeoricas = filter_var($request->input('solo_teoricas', true), FILTER_VALIDATE_BOOLEAN);
 
             foreach ($parsedByWeek as $semana => $parsedItems) {
                 if (isset($existingByWeek[$semana])) {
-                    $existingItems = $existingByWeek[$semana]->values(); // Reset keys to 0,1,2...
+                    $existingItems = $existingByWeek[$semana];
+                    
+                    if ($soloTeoricas) {
+                        $existingItems = $existingItems->where('tipo_clase', 'Teórica');
+                    }
+                    
+                    $existingItems = $existingItems->values(); // Reset keys to 0,1,2...
                     
                     Log::info("Semana $semana matching: Parsed=" . count($parsedItems) . " Existing=" . $existingItems->count());
 
