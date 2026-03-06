@@ -120,8 +120,11 @@ class PlanningSyncService
                         }
                     }
 
-                    $asignatura = Asignatura::updateOrCreate(
-                        ['codigo' => $codigoFinal],
+                    $asignatura = Asignatura::firstOrCreate(
+                        [
+                            'codigo' => $codigoFinal,
+                            'plan_estudios' => $dto->planEst
+                        ],
                         ['nombre' => $dto->materia]
                     );
                     $stats['asignaturas']++;

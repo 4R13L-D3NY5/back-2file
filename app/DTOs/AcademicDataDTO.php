@@ -23,7 +23,8 @@ class AcademicDataDTO
         public string $dia,     // Lunes
         public string $horaInicio,
         public string $horaFin,
-        public string $gestion // 1-2026
+        public string $gestion, // 1-2026
+        public ?string $planEst = null // N, A
     ) {}
 
     public static function fromArray(array $data): self
@@ -47,7 +48,8 @@ class AcademicDataDTO
             dia: trim($data['dia'] ?? ''),
             horaInicio: trim($data['horaInicio'] ?? '00:00'),
             horaFin: trim($data['horaFin'] ?? '00:00'),
-            gestion: trim($data['gestion'] ?? '')
+            gestion: trim($data['gestion'] ?? ''),
+            planEst: isset($data['planEst']) ? trim((string)$data['planEst']) : null
         );
     }
 }

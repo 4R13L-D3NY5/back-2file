@@ -14,6 +14,7 @@ class Asignatura extends Model
 
     protected $fillable = [
         'codigo',
+        'plan_estudios',
         'nombre',
         'estado',
         // semestre REMOVED - now in asignatura_carrera pivot
