@@ -120,13 +120,26 @@ class PlanningSyncService
                         }
                     }
 
-                    $asignatura = Asignatura::firstOrCreate(
-                        [
+                    // BUSQUEDA FLEXIBLE DE ASIGNATURA (Unificar por Código)
+                    // Buscamos cualquier registro con ese código (incluyendo eliminados)
+                    $asignatura = Asignatura::withTrashed()
+                        ->where('codigo', $codigoFinal)
+                        ->first();
+
+                    if ($asignatura) {
+                        // Actualizar datos informativos
+                        $asignatura->plan_estudios = $dto->planEst;
+                        $asignatura->nombre = $dto->materia ?: $asignatura->nombre;
+                        $asignatura->save();
+                        $asignatura->restore();
+                    } else {
+                        // Crear nueva si no existe nada con ese código
+                        $asignatura = Asignatura::create([
                             'codigo' => $codigoFinal,
-                            'plan_estudios' => $dto->planEst
-                        ],
-                        ['nombre' => $dto->materia]
-                    );
+                            'plan_estudios' => $dto->planEst,
+                            'nombre' => $dto->materia ?: 'Asignatura ' . $codigoFinal
+                        ]);
+                    }
                     $stats['asignaturas']++;
 
                     // SYNC PIVOT ASIGNATURA-CARRERA (Crucial for filters)
@@ -171,7 +184,27 @@ class PlanningSyncService
 
                     $docenteNombre = $dto->docente ?: 'Docente ' . $dto->ci;
 
-                    $docente = Docente::withTrashed()->firstOrNew(['ci' => $dto->ci]);
+                    // BUSQUEDA ROBUSTA DE DOCENTE
+                    // 1. Intentar por CI directo
+                    $docente = Docente::withTrashed()->where('ci', $dto->ci)->first();
+
+                    if (!$docente && $dto->ci) {
+                        // 2. Intentar encontrar un usuario que tenga este CI como username
+                        $userMatches = User::where('username', $dto->ci)->first();
+                        if ($userMatches) {
+                            // Si el usuario existe, buscamos el docente vinculado a él
+                            $docente = Docente::withTrashed()->where('user_id', $userMatches->id)->first();
+                            if ($docente) {
+                                // Asegurar que tenga el CI puesto
+                                $docente->ci = $dto->ci;
+                                $docente->save();
+                            }
+                        }
+                    }
+
+                    if (!$docente) {
+                        $docente = new Docente(['ci' => $dto->ci]);
+                    }
 
                     $docente->nombre_completo = $docenteNombre;
                     // Only set Sede if it's new or has no sede assignment

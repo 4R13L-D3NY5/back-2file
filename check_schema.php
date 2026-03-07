@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\DB;
 
 require __DIR__ . '/vendor/autoload.php';
@@ -7,19 +8,16 @@ $app = require_once __DIR__ . '/bootstrap/app.php';
 $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
 $kernel->bootstrap();
 
-echo "--- DATABASE SCHEMA CHECK ---\n";
+$tables = ['seguimientos', 'seguimiento_semanal', 'informe_semanals', 'auditorias'];
 
-$table = 'cronogramas';
-$columns = DB::select("SHOW COLUMNS FROM $table");
-
-foreach ($columns as $column) {
-    echo "Field: " . $column->Field . " | Type: " . $column->Type . "\n";
+foreach ($tables as $table) {
+    if (Schema::hasTable($table)) {
+        echo "Table: $table\n";
+        $columns = Schema::getColumnListing($table);
+        foreach ($columns as $column) {
+            echo "  - $column\n";
+        }
+    } else {
+        echo "Table: $table NOT FOUND\n";
+    }
 }
-
-echo "\n--- RAW DATA SAMPLE (85880, 85879) ---\n";
-$data = DB::table($table)->whereIn('id', [85880, 85879])->get();
-foreach ($data as $row) {
-    echo json_encode($row) . "\n";
-}
-
-echo "--- END ---\n";
