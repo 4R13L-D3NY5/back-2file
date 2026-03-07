@@ -405,7 +405,9 @@ class PlanificacionController extends Controller
 
             // 2. FALLBACK: Si el usuario logueado NO tiene datos personales,
             //    buscar los datos del docente asignado a esta asignatura
-            if (!$personal && !$request->has('docente_id')) {
+            //    RESTRICCIÓN: Solo para sede Cochabamba (ID 1)
+            $userAuth = auth()->user();
+            if (!$personal && !$request->has('docente_id') && ($userAuth && $userAuth->sede_id == 1)) {
                 // Obtener asignatura a través de tema -> unidad -> asignatura
                 $asignatura = $tema->unidad?->asignatura;
                 
