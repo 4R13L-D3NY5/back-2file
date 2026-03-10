@@ -412,6 +412,20 @@ class AsignaturaController extends Controller
                     ];
                 });
 
+            // === PROGRESO E INDICADORES DE DOCUMENTACIÓN ===
+            // Necesario para la vista "Mis Asignaturas" del docente.
+            // Se calcula *después* de haber cargado las relaciones unidades.temas.planificacionPersonal.
+            $progresoDocente = $targetUserId
+                ? $local->getProgresoPorDocente($targetUserId)
+                : $local->progreso;
+
+            $indicadoresDocente = $targetUserId
+                ? $local->getIndicadoresDocumentacionPorDocente($targetUserId)
+                : $local->indicadores_documentacion;
+
+            $response['progreso_documentacion']    = $progresoDocente;
+            $response['indicadores_documentacion'] = $indicadoresDocente;
+
             return response()->json($response);
         }
 

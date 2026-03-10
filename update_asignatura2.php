@@ -1,169 +1,25 @@
 <?php
+$filepath = 'f:/SISTEMA ACADEMICO/back-2file/app/Models/Asignatura.php';
+$lines = file($filepath);
 
-namespace App\Models;
-
-use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\SoftDeletes;
-
-class Asignatura extends Model
-{
-    use SoftDeletes;
-
-    protected $fillable = [
-        'codigo',
-        'plan_estudios',
-        'nombre',
-        'estado',
-        // semestre REMOVED - now in asignatura_carrera pivot
-        // carrera_id REMOVED - now many-to-many via asignatura_carrera
-        'creditos',
-        'area_desempenio',
-        'tipo_curso',
-        'modalidad',
-        'carga_horaria_total',
-        'horas_detalle',
-        'sesiones_semanales',
-        'horas_teoricas',
-        'horas_practicas',
-        'sesiones_semanales_teoricas',
-        'sesiones_semanales_practicas',
-        'requisitos',
-        'justificacion',
-        'descripcion',
-        'proposito_general',
-        'metodologia_general',
-        'sistema_evaluacion',
-        'contenido_minimo',
-        // docente_id REMOVED - Docentes are linked via grupos table
-        'elementos_competencia',
-        'competencia_asignatura',
-        'competencia_global_especifica',
-        'reglamento_normativa',
-        'organizacion_calendario',
-        'comun_token',
-        'comun_tipo',
-        'docente_formacion',
-        'docente_telefono',
-        'docente_email'
-    ];
-
-    protected $casts = [
-        'reglamento_normativa' => 'array',
-        'elementos_competencia' => 'array',
-        'metodologia_general' => 'array',
-        'sistema_evaluacion' => 'array'
-    ];
-
-    /**
-     * Carreras que ofrecen esta asignatura (Many-to-Many via pivot)
-     * Pivot contains: semestre, sede_id
-     */
-    public function carreras(): BelongsToMany
-    {
-        return $this->belongsToMany(Carrera::class, 'asignatura_carrera')
-            ->withPivot('semestre', 'sede_id')
-            ->withTimestamps();
+// Extract the content before 'public function calcularProgresoTemaBase'
+$prefixEndIndex = -1;
+for ($i = 0; $i < count($lines); $i++) {
+    if (strpos($lines[$i], 'public function calcularProgresoTemaBase(') !== false) {
+        // Step back one line to get the PHPDoc comment too
+        $prefixEndIndex = $i - 3;
+        break;
     }
+}
 
-    /**
-     * Docentes asignados a esta materia (a través de grupos)
-     */
-    public function docentes()
-    {
-        return $this->hasManyThrough(
-            Docente::class,
-            Grupo::class,
-            'asignatura_id', // FK en grupos
-            'id',            // FK en docentes
-            'id',            // PK en asignaturas
-            'docente_id'     // Local key en grupos
-        )->distinct();
-    }
+if ($prefixEndIndex === -1) {
+    echo "Could not find calcularProgresoTemaBase in Asignatura.php\n";
+    exit;
+}
 
-    /**
-     * Grupos de esta asignatura (nueva estructura normalizada)
-     */
-    public function grupos(): HasMany
-    {
-        return $this->hasMany(Grupo::class);
-    }
+$prefix = array_slice($lines, 0, $prefixEndIndex);
 
-    // Estructura
-    public function unidades(): HasMany
-    {
-        return $this->hasMany(Unidad::class);
-    }
-
-    public function temas()
-    {
-        return $this->hasManyThrough(Tema::class, Unidad::class);
-    }
-
-    public function bibliografias(): HasMany
-    {
-        return $this->hasMany(Bibliografia::class);
-    }
-
-    /**
-     * Horarios (a través de grupos)
-     */
-    public function horarios()
-    {
-        return $this->hasManyThrough(
-            Horario::class,
-            Grupo::class,
-            'asignatura_id',
-            'grupo_id'
-        );
-    }
-
-    public function cronogramas(): HasMany
-    {
-        return $this->hasMany(Cronograma::class);
-    }
-
-    public function matriculas(): HasMany
-    {
-        return $this->hasMany(Matricula::class);
-    }
-
-    public function auditorias(): HasMany
-    {
-        return $this->hasMany(Auditoria::class);
-    }
-
-    /**
-     * ACCESSORS
-     */
-    /**
-     * Helper compartido para verificar si un campo tiene contenido real
-     * (ignora HTML vacío, &nbsp;, espacios)
-     */
-    private function hasRealContent($data): bool
-    {
-        if (empty($data)) return false;
-
-        $processString = function ($html) {
-            if (!is_scalar($html)) return '';
-            return trim(strip_tags(str_replace(['&nbsp;', '\u00a0', ' '], '', (string) $html)));
-        };
-
-        if (is_array($data)) {
-            $text = '';
-            array_walk_recursive($data, function ($item) use (&$text, $processString) {
-                $text .= $processString($item);
-            });
-            return $text !== '';
-        }
-
-        return $processString($data) !== '';
-    }
-
-
-
+$newContent = <<<'EOD'
     /**
      * Calcula el porcentaje de progreso de un tema específico basado en el plan (idéntico al frontend)
      */
@@ -351,7 +207,6 @@ class Asignatura extends Model
             $pSecuencia = 100;
         }
         
-        echo "pRes:$pResultados, pCont:$pContenidos, pEst:$pEstrategias, pEval:$pEvaluacion, pSec:$pSecuencia\n";
         return (int) round(($pResultados + $pContenidos + $pEstrategias + $pEvaluacion + $pSecuencia) / 5);
     }
 
@@ -485,3 +340,9 @@ class Asignatura extends Model
         ];
     }
 }
+EOD;
+
+$finalContent = implode("", $prefix) . "\n" . $newContent;
+
+file_put_contents($filepath, $finalContent);
+echo "Success\n";

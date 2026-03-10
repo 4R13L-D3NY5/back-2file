@@ -267,7 +267,9 @@ class ReporteController extends Controller
             }
 
             $asignaturas = $query->withCount('temas')
-                ->with(['grupos' => function ($q) {
+                ->with(['grupos' => function ($q) use ($sedeId, $carreraId) {
+                    if ($sedeId) $q->where('sede_id', $sedeId);
+                    if ($carreraId) $q->where('carrera_id', $carreraId);
                     $q->with(['docente', 'cronogramas' => function ($cq) {
                         $cq->select('id', 'grupo_id', 'fecha', 'cumplido', 'tema_id')
                             ->withCount(['asistencias as total_asistencias', 'asistencias as presentes_asistencias' => function ($aq) {
@@ -408,11 +410,16 @@ class ReporteController extends Controller
 
     public function index(Request $request)
     {
+        $sedeId = $request->sede_id;
+        $carreraId = $request->carrera_id;
+
         // 1. Base Query: Get Asignaturas filtradas con relaciones optimizadas
         $query = Asignatura::query()
             ->withCount('temas')
             ->with([
-                'grupos' => function ($q) {
+                'grupos' => function ($q) use ($sedeId, $carreraId) {
+                    if ($sedeId) $q->where('sede_id', $sedeId);
+                    if ($carreraId) $q->where('carrera_id', $carreraId);
                     $q->with(['docente', 'cronogramas' => function ($cq) {
                         $cq->withCount('asistencias')
                             ->with(['asistencias' => function ($aq) {
@@ -424,7 +431,6 @@ class ReporteController extends Controller
 
         // Filter: Sede
         if ($request->filled('sede_id')) {
-            $sedeId = $request->sede_id;
             $query->whereHas('carreras', function ($q) use ($sedeId) {
                 $q->where('asignatura_carrera.sede_id', $sedeId);
             });
@@ -682,7 +688,9 @@ class ReporteController extends Controller
         \Log::info("Generando Reporte Semanal. Semana Académica: $weekNum, Rango: {$startDate->toDateString()} - {$endDate->toDateString()}");
 
         // 1. Obtener Grupos con relaciones filtradas
-        $grupos = Grupo::whereHas('asignatura.carreras', function ($q) use ($carreraId, $sedeId) {
+        $grupos = Grupo::where('sede_id', $sedeId)
+        ->where('carrera_id', $carreraId)
+        ->whereHas('asignatura.carreras', function ($q) use ($carreraId, $sedeId) {
             $q->where('carreras.id', $carreraId)
               ->where('asignatura_carrera.sede_id', $sedeId);
         })
