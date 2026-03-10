@@ -351,7 +351,6 @@ class Asignatura extends Model
             $pSecuencia = 100;
         }
         
-        echo "pRes:$pResultados, pCont:$pContenidos, pEst:$pEstrategias, pEval:$pEvaluacion, pSec:$pSecuencia\n";
         return (int) round(($pResultados + $pContenidos + $pEstrategias + $pEvaluacion + $pSecuencia) / 5);
     }
 
