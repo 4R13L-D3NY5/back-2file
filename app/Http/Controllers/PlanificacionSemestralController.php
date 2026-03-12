@@ -355,6 +355,15 @@ class PlanificacionSemestralController extends Controller
         try {
             \Log::info('updateSeguimiento (new table)', $request->all());
 
+            $request->validate([
+                'evidencia_aprendizaje' => 'nullable|file|max:2048',
+                'evidencia_evaluacion' => 'nullable|file|max:2048',
+                'evidencia_secuencia' => 'nullable|file|max:2048',
+                'evidencia_investigacion' => 'nullable|file|max:2048',
+                'evidencia_interaccion' => 'nullable|file|max:2048',
+                'evidencia_internalizacion' => 'nullable|file|max:2048',
+            ]);
+
             // Resolve the master cronograma record
             $cronogramaId = $request->input('cronograma_id');
             $grupoId = $request->input('grupo_id');
