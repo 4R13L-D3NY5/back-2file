@@ -201,6 +201,7 @@ Route::middleware('auth:sanctum')->group(function () {
     
     Route::get('/reportes/semanal/draft', [\App\Http\Controllers\ReporteController::class, 'getWeeklyReportDraft']);
     Route::post('/reportes/semanal', [\App\Http\Controllers\ReporteController::class, 'storeWeeklyReport']);
+    Route::post('/reportes/semanal/bulk-verdes', [\App\Http\Controllers\ReporteController::class, 'bulkStoreVerdes']);
 
     // Reportes Nivel 2: Director de Carrera
     Route::get('/reportes/docentes-sin-avance', [\App\Http\Controllers\ReporteController::class, 'docentesSinAvance']);
@@ -216,6 +217,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Reportes Nivel 4: Vicerrector
     Route::get('/reportes/sedes-criticas', [\App\Http\Controllers\ReporteController::class, 'sedesCriticas']);
     Route::get('/reportes/ranking-sedes', [\App\Http\Controllers\ReporteController::class, 'rankingSedes']);
+    Route::get('/reportes/director/resumen-carrera', [\App\Http\Controllers\ReporteController::class, 'getResumenCarreraSemanal']);
+    Route::get('/reportes/director/reincidentes', [\App\Http\Controllers\ReporteController::class, 'getReincidentesSemanal']);
+
     Route::get('/reportes/alertas-rojas', [\App\Http\Controllers\ReporteController::class, 'alertasRojas']);
     Route::get('/reportes/auditorias-vicerrector', [\App\Http\Controllers\ReporteController::class, 'auditoriasVicerrector']);
 
