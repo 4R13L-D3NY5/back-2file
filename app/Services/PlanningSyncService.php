@@ -85,59 +85,31 @@ class PlanningSyncService
                     $stats['carreras']++;
 
                     // 5. Asignatura
-                    // Matches DTO: siglaP (Code), materia (Name)
+                    // BÚSQUEDA POR CÓDIGO + PLAN
+                    // ENF-111 Plan N y ENF-111 Plan A son asignaturas distintas con el mismo código.
+                    // Se distinguen por el campo plan_estudios, no por el código.
+                    $planBuscar = $dto->planEst ?: 'N';
 
-                    // COLLISION DETECTION LOGIC
-                    // Problem: SON-123 is "Teoria Musical" in LPZ but "Programacion II" in CBA
-                    // Solution: Check if name differs significantly. If so, create branch-specific code.
-
-                    $codigoFinal = $dto->siglaP;
-
-                    // 1. Try to find precise match (Code + Name similarity)
-                    // We check if the BASE code exists first to detect collisions
-                    $asignaturaBase = Asignatura::where('codigo', $dto->siglaP)->first();
-
-                    if ($asignaturaBase) {
-                        // Calculate similarity between stored name and incoming name
-                        // This detects if "OPT-101" is "Acoustics" or "First Aid"
-                        similar_text(strtoupper($asignaturaBase->nombre), strtoupper($dto->materia), $percent);
-
-                        // If names are very different (< 50% similar), it's a COLLISION.
-                        // We must scope this subject to its specific Career/Sede to avoid mixing content.
-                        if ($percent < 50) {
-                            $sedeSuffix = strtoupper(substr($dto->nombreSede, 0, 3)); // CBA, LPZ, SCZ
-                            // Use Career suffix as well for finding the right owner
-                            $carreraSuffix = strtoupper(explode('-', $dto->carrera)[0] ?? 'GEN'); // CARSON -> CAR
-
-                            // Construct Scoped Code: CODE-SEDE-CARRERA (e.g. OPT-101-CBA-SON)
-                            // This ensures absolute uniqueness for this specific context
-                            $scopedCode = $dto->siglaP . '-' . $sedeSuffix . '-' . $dto->carrera;
-
-                            $codigoFinal = $scopedCode;
-
-                            // IMPORTANT: If this scoped subject doesn't exist, we create it.
-                            // If it DOES exist (from a previous sync), we update it.
-                        }
-                    }
-
-                    // BUSQUEDA FLEXIBLE DE ASIGNATURA (Unificar por Código)
-                    // Buscamos cualquier registro con ese código (incluyendo eliminados)
                     $asignatura = Asignatura::withTrashed()
-                        ->where('codigo', $codigoFinal)
+                        ->where('codigo', $dto->siglaP)
+                        ->where('plan_estudios', $planBuscar)
                         ->first();
 
                     if ($asignatura) {
-                        // Actualizar datos informativos
-                        $asignatura->plan_estudios = $dto->planEst;
-                        $asignatura->nombre = $dto->materia ?: $asignatura->nombre;
+                        // Actualizar nombre solo si es muy similar (corrección ortográfica)
+                        // para no sobreescribir con otro nombre completamente diferente
+                        similar_text(strtoupper($asignatura->nombre), strtoupper($dto->materia), $namePct);
+                        if ($namePct > 70) {
+                            $asignatura->nombre = $dto->materia ?: $asignatura->nombre;
+                        }
                         $asignatura->save();
                         $asignatura->restore();
                     } else {
-                        // Crear nueva si no existe nada con ese código
+                        // Crear registro nuevo para este código+plan si no existe
                         $asignatura = Asignatura::create([
-                            'codigo' => $codigoFinal,
-                            'plan_estudios' => $dto->planEst,
-                            'nombre' => $dto->materia ?: 'Asignatura ' . $codigoFinal
+                            'codigo'        => $dto->siglaP,
+                            'plan_estudios' => $planBuscar,
+                            'nombre'        => $dto->materia ?: 'Asignatura ' . $dto->siglaP,
                         ]);
                     }
                     $stats['asignaturas']++;
@@ -293,8 +265,9 @@ class PlanningSyncService
                             'sede_id' => $sede->id
                         ],
                         [
-                            'docente_id' => $docente->id,
-                            'estado' => 'ACTIVO'
+                            'docente_id'    => $docente->id,
+                            'plan_estudios' => $dto->planEst ?: 'N',
+                            'estado'        => 'ACTIVO'
                         ]
                     );
 

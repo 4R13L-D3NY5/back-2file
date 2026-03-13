@@ -107,10 +107,30 @@ class AsignaturaController extends Controller
         $asignaturas = $query->limit(500)->get();
         $sedesMap = \App\Models\Sede::pluck('nombre', 'id'); // Cache sedes map
 
-        return response()->json($asignaturas->map(function ($a) use ($sedesMap) {
+        return response()->json($asignaturas->map(function ($a) use ($sedesMap, $sedeId, $carreraId) {
             $context = $a->carreras->first(); // Contexto (filtrado o el primero)
 
             $docentes = $a->grupos->map(fn($g) => $g->docente)->filter()->unique('id');
+
+            // Fallback: si no hay docentes directos, buscar por grupos con asignatura de código variante
+            // Ej: subject DER-112 → grupos con asignatura DER-112-COC-CARDER en la misma sede/carrera
+            if ($docentes->isEmpty()) {
+                $codigoBase = $a->codigo;
+                $fallbackGrupos = \App\Models\Grupo::query()
+                    ->join('asignaturas', 'grupos.asignatura_id', '=', 'asignaturas.id')
+                    ->where('asignaturas.codigo', 'like', $codigoBase . '-%')
+                    ->when($sedeId, fn($q) => $q->where('grupos.sede_id', $sedeId))
+                    ->when($carreraId, fn($q) => $q->where('grupos.carrera_id', $carreraId))
+                    ->whereNull('grupos.deleted_at')
+                    ->whereNotNull('grupos.docente_id')
+                    ->with('docente')
+                    ->get();
+
+                $docentesFallback = $fallbackGrupos->map(fn($g) => $g->docente)->filter()->unique('id');
+                if ($docentesFallback->isNotEmpty()) {
+                    $docentes = $docentesFallback;
+                }
+            }
 
             // Calcular progreso de documentación usando el accesor centralizado del modelo (que incluye planes de clase)
             $progreso = $a->progreso;

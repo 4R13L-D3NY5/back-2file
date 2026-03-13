@@ -32,6 +32,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // Carreras
     Route::apiResource('carreras', CarreraController::class)->only(['index', 'update']);
 
+    // Mallas Curriculares
+    Route::get('/mallas-curriculares', [\App\Http\Controllers\MallaCurricularController::class, 'getMallas']);
+
     // Asignaturas
     Route::get('/asignaturas', [AsignaturaController::class, 'index']);
     Route::post('/asignaturas', [AsignaturaController::class, 'store']);
