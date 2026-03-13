@@ -42,6 +42,7 @@ $stats = [
     'sin_oficial'   => 0,
     'grupos_redir'  => 0,
     'grupos_del'    => 0,
+    'seguimientos'  => 0,
     'unidades'      => 0,
     'cronogramas'   => 0,
     'bibliografias' => 0,
@@ -77,7 +78,13 @@ foreach ($scopedAll as $scoped) {
 
     if (!$oficial) {
         echo "  [SIN OFICIAL] {$scoped->codigo} → eliminando sin migrar\n";
-        DB::table('grupos')->where('asignatura_id', $scoped->id)->delete();
+        // Limpiar FKs antes de eliminar grupos
+        $gids = DB::table('grupos')->where('asignatura_id', $scoped->id)->pluck('id');
+        if ($gids->isNotEmpty()) {
+            DB::table('seguimientos')->whereIn('grupo_id', $gids)->delete();
+            DB::table('horarios')->whereIn('grupo_id', $gids)->delete();
+            DB::table('grupos')->whereIn('id', $gids)->delete();
+        }
         DB::table('asignaturas')->where('id', $scoped->id)->delete();
         $stats['sin_oficial']++;
         continue;
@@ -92,7 +99,9 @@ foreach ($scopedAll as $scoped) {
             DB::table('grupos')->where('id', $g->id)->update(['asignatura_id' => $oficial->id]);
             $stats['grupos_redir']++;
         } catch (UniqueConstraintViolationException $e) {
-            // Duplicado — el grupo ya existe en la oficial, eliminar el scoped
+            // Duplicado — eliminar seguimientos y horarios PRIMERO, luego el grupo
+            $stats['seguimientos'] += DB::table('seguimientos')->where('grupo_id', $g->id)->delete();
+            DB::table('horarios')->where('grupo_id', $g->id)->delete();
             DB::table('grupos')->where('id', $g->id)->delete();
             $stats['grupos_del']++;
         }
@@ -125,6 +134,7 @@ echo str_pad('Asignaturas migradas:', 26)      . $stats['migradas']      . "\n";
 echo str_pad('Sin oficial (eliminadas):', 26)  . $stats['sin_oficial']   . "\n";
 echo str_pad('Grupos redirigidos:', 26)        . $stats['grupos_redir']  . "\n";
 echo str_pad('Grupos duplicados (borr.):', 26) . $stats['grupos_del']    . "\n";
+echo str_pad('Seguimientos eliminados:', 26)   . $stats['seguimientos']  . "\n";
 echo str_pad('Unidades redirigidas:', 26)      . $stats['unidades']      . "\n";
 echo str_pad('Cronogramas redirigidos:', 26)   . $stats['cronogramas']   . "\n";
 echo str_pad('Bibliografias redirigidas:', 26) . $stats['bibliografias'] . "\n";
