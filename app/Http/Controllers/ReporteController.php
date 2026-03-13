@@ -331,7 +331,7 @@ class ReporteController extends Controller
                         'semana_inicio' => $reportDraft['semana_inicio'],
                         'semana_fin' => $reportDraft['semana_fin'],
                         'criterios' => $reportDraft['criterios'],
-                        'observaciones' => 'Generado automáticamente (VERDE)',
+                        'observaciones' => 'CUMPLIDO',
                         'escala_alerta' => 'VERDE',
                         'cumplimiento_porcentaje' => $reportDraft['cumplimiento_porcentaje'],
                         'created_by' => auth()->id() // Director
@@ -1952,23 +1952,27 @@ class ReporteController extends Controller
         // Calcular Porcentajes
         $totalInformes = $informesThisWeek->count();
         $stats = [
-            'rojo' => 0,
+            'rojo'     => 0,
             'amarillo' => 0,
-            'verde' => 0,
-            'total' => $totalInformes
+            'verde'    => 0,
+            'total'    => $totalInformes,
+            // Docentes únicos por color (un docente puede tener múltiples informes si imparte varias materias)
+            'docentes_rojo'     => $informesThisWeek->where('escala_alerta', 'ROJO')->pluck('docente_id')->unique()->count(),
+            'docentes_amarillo' => $informesThisWeek->where('escala_alerta', 'AMARILLO')->pluck('docente_id')->unique()->count(),
+            'docentes_verde'    => $informesThisWeek->where('escala_alerta', 'VERDE')->pluck('docente_id')->unique()->count(),
         ];
 
         foreach ($informesThisWeek as $inf) {
-            $escala = strtolower($inf->escala_alerta); // rojo, amarillo, verde
+            $escala = strtolower($inf->escala_alerta);
             if (isset($stats[$escala])) {
                 $stats[$escala]++;
             }
         }
 
         $porcentajes = [
-            'rojo' => $totalInformes > 0 ? round(($stats['rojo'] / $totalInformes) * 100) : 0,
+            'rojo'     => $totalInformes > 0 ? round(($stats['rojo']     / $totalInformes) * 100) : 0,
             'amarillo' => $totalInformes > 0 ? round(($stats['amarillo'] / $totalInformes) * 100) : 0,
-            'verde' => $totalInformes > 0 ? round(($stats['verde'] / $totalInformes) * 100) : 0,
+            'verde'    => $totalInformes > 0 ? round(($stats['verde']    / $totalInformes) * 100) : 0,
         ];
 
         // 3. GRAFICO DIARIO: sesiones esperadas (horarios) vs marcadas (controles de clase) por día de semana
@@ -2006,28 +2010,71 @@ class ReporteController extends Controller
             'marcadas'  => $sesionesMarcadas,
         ];
 
-        // 4. DOCENTES POR COLOR (ROJO / AMARILLO / VERDE) para las listas clickeables
-        $buildDocentesList = function (string $escala) use ($informesThisWeek): array {
+        // 4. LISTAS POR COLOR — una fila por MATERIA
+        //    Fecha: Horario.dia → offset desde semana_inicio (PRIMARY)
+        //    Fallback: Cronograma.fecha si no hay horario cargado
+        $semanaInicioDate = $startDateThisWeek->toDateString();
+        $semanaFinDate    = $startDateThisWeek->copy()->endOfWeek()->toDateString();
+
+        // Normalizar dia: quitar acentos, minúsculas
+        $normalizarDia = fn(string $dia): string => mb_strtolower(
+            str_replace(['á','é','í','ó','ú','Á','É','Í','Ó','Ú'], ['a','e','i','o','u','a','e','i','o','u'], trim($dia))
+        );
+
+        $diasOffset = [
+            'lunes'     => 0,
+            'martes'    => 1,
+            'miercoles' => 2,
+            'jueves'    => 3,
+            'viernes'   => 4,
+            'sabado'    => 5,
+        ];
+
+        $buildListaPorMateria = function (string $escala) use ($informesThisWeek, $semanaInicioDate, $semanaFinDate, $startDateThisWeek, $diasOffset, $normalizarDia): array {
             $lista = [];
-            $grouped = $informesThisWeek->where('escala_alerta', $escala)->groupBy('docente_id');
-            foreach ($grouped as $informesDoc) {
-                $docente = $informesDoc->first()->docente;
+            $informesFiltrados = $informesThisWeek->where('escala_alerta', $escala);
+            foreach ($informesFiltrados as $inf) {
+                $docente = $inf->docente;
+                $materia = $inf->grupo->asignatura->nombre ?? 'Desconocida';
+                $obs     = !empty($inf->observaciones) ? $inf->observaciones : null;
                 if (!$docente) continue;
-                $materias      = $informesDoc->map(fn($i) => $i->grupo->asignatura->nombre ?? 'Desconocida')->unique()->values()->toArray();
-                $observaciones = $informesDoc->filter(fn($i) => !empty($i->observaciones))->pluck('observaciones')->toArray();
+
+                // PRIMARY: Horario del grupo → calcular fecha real dentro de la semana
+                $horarios = \App\Models\Horario::where('grupo_id', $inf->grupo_id)->get();
+                $fechas = $horarios->map(function ($h) use ($startDateThisWeek, $diasOffset, $normalizarDia) {
+                    $diaNorm = $normalizarDia($h->dia);
+                    $offset  = $diasOffset[$diaNorm] ?? null;
+                    if ($offset === null) return null;
+                    return $startDateThisWeek->copy()->addDays($offset)->format('d/m/Y');
+                })->filter()->unique()->sort()->values()->toArray();
+
+                // FALLBACK: Cronograma.fecha si no hay horario
+                if (empty($fechas)) {
+                    $fechas = \App\Models\Cronograma::where('grupo_id', $inf->grupo_id)
+                        ->whereBetween('fecha', [$semanaInicioDate, $semanaFinDate])
+                        ->pluck('fecha')
+                        ->unique()->sort()
+                        ->map(fn($f) => \Carbon\Carbon::parse($f)->format('d/m/Y'))
+                        ->values()->toArray();
+                }
+
+                $fecha = !empty($fechas) ? implode(' · ', $fechas) : $startDateThisWeek->format('d/m/Y');
+
                 $lista[] = [
                     'docente_id'      => $docente->id,
                     'nombre'          => $docente->nombre_completo ?? ($docente->nombres . ' ' . $docente->apellidos),
-                    'materias'        => $materias,
-                    'accion_director' => !empty($observaciones) ? implode(' | ', $observaciones) : null,
+                    'materia'         => $materia,
+                    'fecha'           => $fecha,
+                    'accion_director' => $obs,
                 ];
             }
+            usort($lista, fn($a, $b) => strcmp($a['nombre'], $b['nombre']));
             return $lista;
         };
 
-        $docentesRojosSemana    = $buildDocentesList('ROJO');
-        $docentesAmarilloSemana = $buildDocentesList('AMARILLO');
-        $docentesVerdeSemana    = $buildDocentesList('VERDE');
+        $docentesRojosSemana    = $buildListaPorMateria('ROJO');
+        $docentesAmarilloSemana = $buildListaPorMateria('AMARILLO');
+        $docentesVerdeSemana    = $buildListaPorMateria('VERDE');
 
         // 5. DETECTAR DOCENTES CRÍTICOS: ROJO 2 SEMANAS CONSECUTIVAS
         $docentesRojosThisWeekIds = $informesThisWeek->where('escala_alerta', 'ROJO')->pluck('docente_id')->unique()->toArray();
