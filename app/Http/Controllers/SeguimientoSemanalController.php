@@ -102,7 +102,7 @@ class SeguimientoSemanalController extends Controller
                 'alerta' => $alerta,
                 'sede_id' => $request->sede_id ?? 1,
                 'carrera_id' => $request->carrera_id,
-                'observaciones_generales' => 'Generado automáticamente por el Director de Carrera. Pendiente de acciones de mejora.',
+                'observaciones_generales' => 'CUMPLIDO',
                 'created_by' => Auth::id() ?? 1
             ]);
             $count++;
