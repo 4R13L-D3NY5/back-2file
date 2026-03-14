@@ -1195,8 +1195,11 @@ class ReporteController extends Controller
                 if ($carreraId) {
                     $q->where('carrera_id', $carreraId);
                 }
-                $q->with(['cronogramas', 'docente']); // Eager load cronogramas and docente inside filtered grupos
-            }, 'carreras']);
+                // Eager load seguimientos con estado_cumplimiento para avance real
+                $q->with(['cronogramas.seguimientos', 'docente']);
+            }, 'carreras', 'auditorias' => function($q) {
+                $q->orderBy('created_at', 'desc'); // Cargar auditorías ordenadas por fecha
+            }]);
 
         // Filtrar por sede y carrera en la relación principal y en grupos
         if ($sedeId || $carreraId) {
@@ -1221,11 +1224,27 @@ class ReporteController extends Controller
 
         $asignaturas = $query->get();
 
-        // Calcular semana actual del semestre (asumiendo inicio en enero)
-        $inicioSemestre = Carbon::create(2026, 1, 6); // Primer lunes de enero 2026
-        $semanasTranscurridas = max(1, Carbon::now()->diffInWeeks($inicioSemestre));
-        $semanasTotales = 20; // 20 semanas por semestre
-        
+        // ─── Calcular semana académica ───────────────────────────────────────
+        // Base fija del semestre: 9 de Febrero 2026
+        $baseDate = Carbon::create(2026, 2, 9)->startOfWeek();
+        $semanasTotales = 20;
+
+        if ($request->filled('semana_inicio')) {
+            // Si llega semana_inicio, calcular a esa semana
+            $targetDate = Carbon::parse($request->semana_inicio)->startOfWeek();
+            $semanaActual = max(1, $targetDate->diffInWeeks($baseDate) + 1);
+        } else {
+            // Semana actual del semestre
+            $hoy = Carbon::now();
+            if ($hoy->lt($baseDate)) {
+                $semanaActual = 1;
+            } else {
+                $semanaActual = min($semanasTotales, $hoy->diffInWeeks($baseDate) + 1);
+            }
+        }
+
+        $avancePlaneadoGlobal = min(100, round(($semanaActual / $semanasTotales) * 100));
+
         // Cargar Docentes mapping para verificar documentación
         $allUserIds = $asignaturas->pluck('grupos.*.docente.user_id')->flatten()->filter()->unique();
         $planningMap = [];
@@ -1242,20 +1261,48 @@ class ReporteController extends Controller
                 ->all();
         }
 
-        $matriz = $asignaturas->map(function ($asig) use ($semanasTranscurridas, $semanasTotales, $planningMap) {
+        $matriz = $asignaturas->map(function ($asig) use ($avancePlaneadoGlobal, $semanasTotales, $semanaActual, $planningMap) {
             $totalTemas = $asig->temas_count;
-            
-            // Avance real: temas avanzados / total temas
+
+            // ─── Avance Planeado ────────────────────────────────────────────
+            // Porcentaje que debería estar avanzado según la semana actual
+            $avancePlaneado = $avancePlaneadoGlobal;
+
+            // ─── Avance Real desde Seguimientos ────────────────────────────
+            // Contar seguimientos con cumplimiento TOTAL (peso 1.0) o PARCIAL (peso 0.5)
+            $puntajeCumplimiento = 0;
+            $totalSeguimientos = 0;
+
+            foreach ($asig->grupos as $grupo) {
+                foreach ($grupo->cronogramas as $crono) {
+                    foreach ($crono->seguimientos ?? [] as $seg) {
+                        // Ignorar exámenes
+                        if ($seg->es_examen || !empty($seg->tipo_examen)) continue;
+
+                        $estado = strtoupper($seg->estado_cumplimiento ?? '');
+                        if (in_array($estado, ['TOTAL', 'TOTALMENTE'])) {
+                            $puntajeCumplimiento += 1.0;
+                        } elseif (in_array($estado, ['PARCIAL', 'PARCIALMENTE'])) {
+                            $puntajeCumplimiento += 0.5;
+                        }
+                        // NO_CUMPLIDO suma 0
+                        $totalSeguimientos++;
+                    }
+                }
+            }
+
+            // Avance real: puntaje acumulado vs temas esperados para la semana actual
+            // Esperado: totalTemas * (semanaActual / semanasTotales)
+            $temasEsperadosHasta = $totalTemas > 0 ? max(1, round($totalTemas * ($semanaActual / $semanasTotales))) : 1;
+            $avanceReal = min(100, round(($puntajeCumplimiento / $temasEsperadosHasta) * 100));
+
+            // También calcular temas avanzados (cronogramas) para mostrar en tabla
             $temasAvanzados = $asig->grupos->sum(fn($g) => $g->cronogramas->count());
-            $avanceReal = $totalTemas > 0 ? min(100, round(($temasAvanzados / $totalTemas) * 100)) : 0;
-            
-            // Avance planeado: semanas transcurridas / semanas totales
-            $avancePlaneado = min(100, round(($semanasTranscurridas / $semanasTotales) * 100));
-            
-            // Calcular diferencia
+
+            // ─── Diferencia ─────────────────────────────────────────────────
             $diferencia = $avanceReal - $avancePlaneado;
-            
-            // Verificar si el docente asignado tiene planificación (PAC + Plan de Clase)
+
+            // ─── Verificar planificación ────────────────────────────────────
             $docentes = $asig->grupos->map(fn($g) => $g->docente)->filter();
             $userIds = $docentes->pluck('user_id')->filter()->unique();
             $hasPlanning = false;
@@ -1266,7 +1313,7 @@ class ReporteController extends Controller
                 }
             }
 
-            // Alertas
+            // ─── Alertas ────────────────────────────────────────────────────
             $alertas = [];
             if (!$hasPlanning) {
                 $alertas[] = 'Falta Plan de Clase';
@@ -1275,12 +1322,13 @@ class ReporteController extends Controller
                 $alertas[] = 'Atraso Crítico';
             }
 
-            // Auditoria temporalmente desactivada por falta de tabla en DB
-            $ultimaAuditoria = null;
-            $semaforoAuditoria = 'verde';
-            $accionesCorrectivas = null;
-            
-            // Determine Semáforo depending on Audit or difference
+            // Auditoria REAL cargada de la base de datos
+            $ultimaAuditoria = $asig->auditorias->first();
+            $semaforoAuditoria = $ultimaAuditoria ? strtolower($ultimaAuditoria->semaforo) : 'verde';
+            $accionesCorrectivas = $ultimaAuditoria ? $ultimaAuditoria->acciones_correctivas : null;
+
+            // ─── Semáforo ────────────────────────────────────────────────────
+            // Si hay auditoria en rojo/amarillo, o el avance es crítico, o falta planificación
             if ($semaforoAuditoria === 'rojo' || $diferencia < -25 || !$hasPlanning) {
                 $semaforo = 'negative';
                 $alertaLabel = 'Crítico';
@@ -1298,26 +1346,28 @@ class ReporteController extends Controller
             // Obtener carrera principal
             $carrera = $asig->carreras->first();
 
-            // Extraer nombre y un ID de docente (tomamos el primero asignado a la carrera)
+            // Extraer nombre y un ID de docente
             $docenteNombres = $docentes->pluck('nombre_completo')->unique()->implode(', ');
             $docenteId = $docentes->first() ? $docentes->first()->id : null;
 
             return [
-                'id' => $asig->id,
-                'asignatura' => $asig->nombre,
-                'codigo' => $asig->codigo,
-                'carrera' => $carrera ? $carrera->nombre : 'N/A',
-                'docente' => $docenteNombres ?: 'Sin asignar',
-                'docenteId' => $docenteId,
-                'avancePlaneado' => $avancePlaneado . '%',
-                'avanceReal' => $avanceReal . '%',
-                'diferencia' => ($diferencia >= 0 ? '+' : '') . $diferencia . '%',
-                'semaforo' => $semaforo,
-                'alertaLabel' => $alertaLabel,
-                'alertas' => count($alertas) > 0 ? implode(', ', $alertas) : 'Ninguna',
-                'acciones' => $acciones,
-                'temasTotal' => $totalTemas,
-                'temasAvanzados' => $temasAvanzados
+                'id'              => $asig->id,
+                'asignatura'      => $asig->nombre,
+                'codigo'          => $asig->codigo,
+                'carrera'         => $carrera ? $carrera->nombre : 'N/A',
+                'docente'         => $docenteNombres ?: 'Sin asignar',
+                'docenteId'       => $docenteId,
+                'avancePlaneado'  => $avancePlaneado . '%',
+                'avanceReal'      => $avanceReal . '%',
+                'diferencia'      => ($diferencia >= 0 ? '+' : '') . $diferencia . '%',
+                'semana'          => $semanaActual,
+                'semaforo'        => $semaforo,
+                'alertaLabel'     => $alertaLabel,
+                'alertas'         => count($alertas) > 0 ? implode(', ', $alertas) : 'Ninguna',
+                'acciones'        => $acciones,
+                'temasTotal'      => $totalTemas,
+                'temasAvanzados'  => $temasAvanzados,
+                'totalSeguimientos' => $totalSeguimientos,
             ];
         });
 
@@ -1327,6 +1377,7 @@ class ReporteController extends Controller
 
         return response()->json($matriz);
     }
+
 
     /**
      * Auditoría Semanal 25% (Nivel 3)
