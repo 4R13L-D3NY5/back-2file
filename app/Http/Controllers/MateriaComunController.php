@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Asignatura;
 use App\Models\Carrera;
+use App\Models\Grupo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -123,7 +124,12 @@ class MateriaComunController extends Controller
     }
 
     /**
-     * Get candidate subjects from other careers to link with.
+     * Busca materias candidatas para vincular como comunes.
+     * El director ya sabe qué es común con qué, por lo que puede buscar
+     * libremente por nombre o código en cualquier carrera de la misma sede.
+     *
+     * Se excluyen las materias de las propias carreras del director
+     * y la materia base seleccionada.
      */
     public function candidates(Request $request)
     {
@@ -132,26 +138,47 @@ class MateriaComunController extends Controller
             return response()->json(['error' => 'No autorizado'], 403);
         }
 
-        $sedeId = $user->director->sede_id;
-        $search = $request->input('search');
-        $carreraIdTarget = $request->input('carrera_id');
+        $director   = $user->director;
+        $sedeId     = $director->sede_id;
+        $search     = $request->input('search', '');
+        $excludeId  = $request->input('asignatura_id'); // Excluir la materia base
 
-        // Buscar asignaturas de OTRAS carreras en la MISMA sede
-        $query = Asignatura::whereHas('carreras', function ($q) use ($sedeId, $carreraIdTarget) {
-            $q->where('asignatura_carrera.sede_id', $sedeId);
-            if ($carreraIdTarget) {
-                $q->where('carreras.id', $carreraIdTarget);
-            }
+        // Carreras propias del director (para excluirlas de los resultados)
+        $misCarreraIds = Carrera::where('director_id', $director->id)->pluck('id')->toArray();
+        if (empty($misCarreraIds) && $director->carrera_id) {
+            $misCarreraIds[] = $director->carrera_id;
+        }
+
+        $query = Asignatura::whereHas('carreras', function ($q) use ($sedeId, $misCarreraIds) {
+            $q->where('asignatura_carrera.sede_id', $sedeId)
+              ->whereNotIn('carreras.id', $misCarreraIds);
         });
+
+        if ($excludeId) {
+            $query->where('id', '!=', $excludeId);
+        }
 
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('nombre', 'like', "%{$search}%")
-                    ->orWhere('codigo', 'like', "%{$search}%");
+                  ->orWhere('codigo', 'like', "%{$search}%");
             });
         }
 
-        $candidates = $query->distinct()->limit(50)->with('carreras')->get();
+        $candidates = $query->distinct()->limit(50)
+            ->with(['carreras' => function ($q) use ($sedeId) {
+                $q->where('asignatura_carrera.sede_id', $sedeId);
+            }])
+            ->orderBy('nombre')
+            ->get()
+            ->map(function ($a) {
+                return [
+                    'id'            => $a->id,
+                    'codigo'        => $a->codigo,
+                    'nombre'        => $a->nombre,
+                    'carrera_nombre' => $a->carreras->pluck('nombre')->unique()->join(', ') ?: 'Sin Carrera',
+                ];
+            });
 
         return response()->json($candidates);
     }
@@ -210,34 +237,30 @@ class MateriaComunController extends Controller
             }
         }
 
-        // AUTO-SYNC INICIAL BASADO EN EL MAYOR AVANCE
-        // Cuando se declaran como comunes, la que tenga más avance alimentará a las demás
+        // MERGE INTELIGENTE AL VINCULAR
+        // Fusiona campo por campo en vez de "el ganador lo toma todo".
+        // Resuelve el caso donde el docente llenó la documentación en una carpeta
+        // y la planificación personal en otra (por falta de horario en una de ellas).
         $tokenToSync = $source->comun_token;
         if ($tokenToSync) {
-            $asignaturasVinculadas = Asignatura::where('comun_token', $tokenToSync)->get();
-            
-            if ($asignaturasVinculadas->count() > 1) {
-                $syncService = app(\App\Services\MateriasComunesSyncService::class);
-                
-                $maxProgress = -1;
-                $bestSource = null;
-                
-                foreach ($asignaturasVinculadas as $asig) {
-                    $progress = $asig->progreso;
-                    if ($progress > $maxProgress) {
-                        $maxProgress = $progress;
-                        $bestSource = $asig;
-                    }
-                }
-                
-                // Si encontramos una ganadora y tiene al menos algo de progreso, forzamos sync
-                if ($bestSource && $maxProgress > 0) {
-                    $syncService->syncAllDocumentationToLinked($bestSource);
-                    $syncService->syncBibliografias($bestSource);
-                    
-                    if ($bestSource->comun_tipo === 'fusionada') {
-                        $syncService->syncCronogramasFusionada($bestSource);
-                    }
+            $syncService = app(\App\Services\MateriasComunesSyncService::class);
+            $syncService->mergeAndSyncOnLink($tokenToSync);
+
+            // Para tipo fusionada, sincronizar también el cronograma maestro
+            // usando la asignatura con más sesiones cronogramadas como origen
+            $source->refresh();
+            if ($source->comun_tipo === 'fusionada') {
+                $cronoMaster = Asignatura::where('comun_token', $tokenToSync)
+                    ->get()
+                    ->sortByDesc(function ($a) {
+                        return \App\Models\Cronograma::where('asignatura_id', $a->id)
+                            ->whereNull('grupo_id')
+                            ->count();
+                    })
+                    ->first();
+
+                if ($cronoMaster) {
+                    $syncService->syncCronogramasFusionada($cronoMaster);
                 }
             }
         }
