@@ -124,31 +124,74 @@ foreach ($gruposBackup as $gb) {
     }
     if (!$asignaturaElegida) continue;
 
-    $grupoActual = DB::table("$dbCurrent.grupos")
-        ->where('asignatura_id', $asignaturaElegida->id)
-        ->where('gestion', $gb->gestion)->where('sede_id', $gb->sede_id)->where('nombre', $gb->nombre)
-        ->first();
+    if (!$grupoActual) {
+        // RECONSTRUCCION DE GRUPO FALTANTE (v2 Self-Healing)
+        echo "  [RECUPERACIÓN] Recreando grupo '{$gb->nombre}' para {$asignaturaElegida->codigo}...\n";
+        
+        // 1. Asegurar Link Asignatura-Carrera (Para que sea visible en el panel del docente)
+        $linkExists = DB::table("$dbCurrent.asignatura_carrera")
+            ->where('asignatura_id', $asignaturaElegida->id)
+            ->where('carrera_id', $gb->carrera_id)
+            ->where('sede_id', $gb->sede_id)
+            ->exists();
 
-    if (!$grupoActual) continue;
+        if (!$linkExists) {
+            try {
+                DB::table("$dbCurrent.asignatura_carrera")->insert([
+                    'asignatura_id' => $asignaturaElegida->id,
+                    'carrera_id'    => $gb->carrera_id,
+                    'sede_id'       => $gb->sede_id,
+                    'semestre'      => 0, // Fallback
+                    'created_at'    => now(),
+                    'updated_at'    => now()
+                ]);
+            } catch (\Exception $e) { echo "    [!] Error vinculando carrera: " . $e->getMessage() . "\n"; }
+        }
 
-    if (empty($grupoActual->docente_id)) DB::table("$dbCurrent.grupos")->where('id', $grupoActual->id)->update(['docente_id' => $gb->docente_id]);
+        // 2. Crear el Grupo
+        try {
+            $newGroupId = DB::table("$dbCurrent.grupos")->insertGetId([
+                'gestion'       => $gb->gestion,
+                'asignatura_id' => $asignaturaElegida->id,
+                'carrera_id'    => $gb->carrera_id,
+                'nombre'        => $gb->nombre,
+                'tipo'          => $gb->tipo ?? 'TEORICO',
+                'sede_id'       => $gb->sede_id,
+                'docente_id'    => $gb->docente_id,
+                'plan_estudios' => $gb->plan_estudios ?? ($gb->asig_backup_plan ?: 'N'),
+                'estado'        => 'ACTIVO',
+                'created_at'    => now(),
+                'updated_at'    => now()
+            ]);
+            $grupoActualId = $newGroupId;
+        } catch (\Exception $e) {
+            echo "    [ERROR] No se pudo recrear grupo: " . $e->getMessage() . "\n";
+            continue;
+        }
+    } else {
+        $grupoActualId = $grupoActual->id;
+        // Restaurar docente si está vacío
+        if (empty($grupoActual->docente_id)) {
+            DB::table("$dbCurrent.grupos")->where('id', $grupoActualId)->update(['docente_id' => $gb->docente_id]);
+        }
+    }
 
-    // Restaurar subordinados con try-catch
+    // Restaurar subordinados con ID del grupo (nuevo o existente)
     $cronos = DB::table("$dbBackup.cronogramas")->where('grupo_id', $gb->id)->get();
     foreach ($cronos as $c) {
-        if (!DB::table("$dbCurrent.cronogramas")->where('grupo_id', $grupoActual->id)->where('fecha', $c->fecha)->where('numero_sesion', $c->numero_sesion)->exists()) {
-            try { $d = (array)$c; unset($d['id']); $d['grupo_id'] = $grupoActual->id; $d['asignatura_id'] = $asignaturaElegida->id; DB::table("$dbCurrent.cronogramas")->insert($d); } catch (\Exception $e) {}
+        if (!DB::table("$dbCurrent.cronogramas")->where('grupo_id', $grupoActualId)->where('fecha', $c->fecha)->where('numero_sesion', $c->numero_sesion)->exists()) {
+            try { $d = (array)$c; unset($d['id']); $d['grupo_id'] = $grupoActualId; $d['asignatura_id'] = $asignaturaElegida->id; DB::table("$dbCurrent.cronogramas")->insert($d); } catch (\Exception $e) {}
         }
     }
     $horarios = DB::table("$dbBackup.horarios")->where('grupo_id', $gb->id)->get();
     foreach ($horarios as $h) {
-        $ex = !empty($h->id_horario_api) ? DB::table("$dbCurrent.horarios")->where('id_horario_api', $h->id_horario_api)->exists() : DB::table("$dbCurrent.horarios")->where('grupo_id', $grupoActual->id)->where('dia', $h->dia)->where('hora_inicio', $h->hora_inicio)->exists();
-        if (!$ex) { try { $d = (array)$h; unset($d['id']); $d['grupo_id'] = $grupoActual->id; DB::table("$dbCurrent.horarios")->insert($d); } catch (\Exception $e) {} }
+        $ex = !empty($h->id_horario_api) ? DB::table("$dbCurrent.horarios")->where('id_horario_api', $h->id_horario_api)->exists() : DB::table("$dbCurrent.horarios")->where('grupo_id', $grupoActualId)->where('dia', $h->dia)->where('hora_inicio', $h->hora_inicio)->exists();
+        if (!$ex) { try { $d = (array)$h; unset($d['id']); $d['grupo_id'] = $grupoActualId; DB::table("$dbCurrent.horarios")->insert($d); } catch (\Exception $e) {} }
     }
     $segs = DB::table("$dbBackup.seguimientos")->where('grupo_id', $gb->id)->get();
     foreach ($segs as $s) {
-        if (!DB::table("$dbCurrent.seguimientos")->where('grupo_id', $grupoActual->id)->where('fecha', $s->fecha)->where('tema_cumplido', $s->tema_cumplido)->exists()) {
-            try { $d = (array)$s; unset($d['id']); $d['grupo_id'] = $grupoActual->id; DB::table("$dbCurrent.seguimientos")->insert($d); } catch (\Exception $e) {}
+        if (!DB::table("$dbCurrent.seguimientos")->where('grupo_id', $grupoActualId)->where('fecha', $s->fecha)->where('tema_cumplido', $s->tema_cumplido)->exists()) {
+            try { $d = (array)$s; unset($d['id']); $d['grupo_id'] = $grupoActualId; DB::table("$dbCurrent.seguimientos")->insert($d); } catch (\Exception $e) {}
         }
     }
 }
