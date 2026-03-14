@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Asignatura;
 use App\Models\Cronograma;
+use App\Models\Grupo;
 use App\Models\Horario;
 use App\Models\Seguimiento;
 use Illuminate\Http\Request;
@@ -482,6 +483,10 @@ class PlanificacionSemestralController extends Controller
 
             \Log::info('Seguimiento saved', ['id' => $seguimiento->id, 'cronograma_id' => $cronogramaId, 'grupo_id' => $grupoId]);
 
+            // Si la asignatura es parte de un grupo de materias comunes,
+            // propagar el seguimiento automáticamente a los grupos vinculados
+            $this->propagarSeguimientoAComunes($cronogramaId, $grupoId, $seguimiento);
+
             return response()->json([
                 'message' => 'Seguimiento guardado correctamente',
                 'seguimiento_id' => $seguimiento->id,
@@ -493,6 +498,80 @@ class PlanificacionSemestralController extends Controller
             \Log::error('Error in updateSeguimiento: ' . $e->getMessage());
             \Log::error($e->getTraceAsString());
             return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Propaga el seguimiento guardado a todos los grupos de asignaturas vinculadas
+     * como materias comunes (mismo comun_token, mismo docente).
+     *
+     * Esto permite que el docente registre el control de clase UNA SOLA VEZ
+     * y el sistema lo refleje automáticamente para todas las carreras vinculadas,
+     * evitando registros duplicados innecesarios.
+     */
+    private function propagarSeguimientoAComunes(int $cronogramaId, int $grupoId, Seguimiento $seguimiento): void
+    {
+        $cronograma = Cronograma::find($cronogramaId);
+        if (!$cronograma) return;
+
+        $asignatura = Asignatura::find($cronograma->asignatura_id);
+        if (!$asignatura || !$asignatura->comun_token) return;
+
+        $grupoSource = Grupo::find($grupoId);
+        if (!$grupoSource || !$grupoSource->docente_id) return;
+
+        $vinculadas = Asignatura::where('comun_token', $asignatura->comun_token)
+            ->where('id', '!=', $asignatura->id)
+            ->get();
+
+        foreach ($vinculadas as $vinculada) {
+            // Cronograma master equivalente en la asignatura vinculada (por numero_sesion)
+            $cronogramaVinculado = Cronograma::where('asignatura_id', $vinculada->id)
+                ->whereNull('grupo_id')
+                ->where('numero_sesion', $cronograma->numero_sesion)
+                ->first();
+
+            if (!$cronogramaVinculado) continue;
+
+            // Grupo correspondiente: mismo docente, misma asignatura vinculada
+            $grupoVinculado = Grupo::where('asignatura_id', $vinculada->id)
+                ->where('docente_id', $grupoSource->docente_id)
+                ->first();
+
+            if (!$grupoVinculado) continue;
+
+            // Solo crear/actualizar si el origen es más reciente que el destino existente
+            // (respeta si el docente ya registró directamente en la materia vinculada)
+            $existente = Seguimiento::where('cronograma_id', $cronogramaVinculado->id)
+                ->where('grupo_id', $grupoVinculado->id)
+                ->first();
+
+            if ($existente && $existente->updated_at > $seguimiento->updated_at) {
+                continue; // El destino ya tiene datos más recientes, no sobreescribir
+            }
+
+            Seguimiento::updateOrCreate(
+                [
+                    'cronograma_id' => $cronogramaVinculado->id,
+                    'grupo_id'      => $grupoVinculado->id,
+                ],
+                [
+                    'user_id'                 => $seguimiento->user_id,
+                    'fecha'                   => $seguimiento->fecha,
+                    'cumplido'                => $seguimiento->cumplido,
+                    'tema_cumplido'           => $seguimiento->tema_cumplido,
+                    'estado_cumplimiento'     => $seguimiento->estado_cumplimiento,
+                    'observaciones'           => $seguimiento->observaciones,
+                    'pedagogico'              => $seguimiento->pedagogico,
+                    'es_examen'               => $seguimiento->es_examen,
+                    'tipo_examen'             => $seguimiento->tipo_examen,
+                    'georeferencia'           => $seguimiento->georeferencia,
+                    'evidencias'              => $seguimiento->evidencias,
+                    'integracion_transversal' => $seguimiento->integracion_transversal,
+                ]
+            );
+
+            \Log::info("Seguimiento propagado a materia común: {$vinculada->codigo} grupo {$grupoVinculado->id}");
         }
     }
 
