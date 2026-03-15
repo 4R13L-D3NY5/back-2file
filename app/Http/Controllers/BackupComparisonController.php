@@ -35,27 +35,87 @@ class BackupComparisonController extends Controller
     }
 
     /**
+     * Buscar asignaturas en la DB de backup.
+     */
+    public function searchBackupSubjects(Request $request)
+    {
+        $backupDb = $request->backup_db;
+        $query = $request->query('q');
+
+        if (!$backupDb) return response()->json(['error' => 'Debe especificar la base de datos de backup'], 400);
+
+        try {
+            $subjects = DB::table($backupDb . '.asignaturas')
+                ->where(function($q) use ($query) {
+                    $q->where('codigo', 'LIKE', "%$query%")
+                      ->orWhere('nombre', 'LIKE', "%$query%");
+                })
+                ->limit(20)
+                ->get();
+
+            return response()->json($subjects);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Buscar asignaturas en la DB actual.
+     */
+    public function searchCurrentSubjects(Request $request)
+    {
+        $query = $request->query('q');
+
+        try {
+            $subjects = DB::table('asignaturas')
+                ->where(function($q) use ($query) {
+                    $q->where('codigo', 'LIKE', "%$query%")
+                      ->orWhere('nombre', 'LIKE', "%$query%");
+                })
+                ->whereNull('deleted_at')
+                ->limit(20)
+                ->get();
+
+            return response()->json($subjects);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Comparar una asignatura específica entre la DB actual y una seleccionada.
      */
     public function compareSubject(Request $request)
     {
         $request->validate([
-            'codigo' => 'required|string',
             'backup_db' => 'required|string',
+            'codigo' => 'nullable|string',
+            'current_id' => 'nullable|integer',
+            'backup_id' => 'nullable|integer',
             'user_id' => 'nullable|integer'
         ]);
 
         $codigo = $request->codigo;
         $backupDb = $request->backup_db;
+        $currentId = $request->current_id;
+        $backupId = $request->backup_id;
         $userId = $request->user_id;
         $currentDb = config('database.connections.mysql.database');
 
         try {
             // Obtener de la DB actual
-            $currentData = DB::table('asignaturas')->where('codigo', $codigo)->first();
+            if ($currentId) {
+                $currentData = DB::table('asignaturas')->find($currentId);
+            } else {
+                $currentData = DB::table('asignaturas')->where('codigo', $codigo)->whereNull('deleted_at')->first();
+            }
 
             // Obtener de la DB de backup
-            $backupData = DB::table($backupDb . '.asignaturas')->where('codigo', $codigo)->first();
+            if ($backupId) {
+                $backupData = DB::table($backupDb . '.asignaturas')->find($backupId);
+            } else {
+                $backupData = DB::table($backupDb . '.asignaturas')->where('codigo', $codigo)->first();
+            }
 
             if (!$currentData && !$backupData) {
                 return response()->json(['error' => 'No se encontró la asignatura en ninguna de las bases de datos.'], 404);
@@ -393,6 +453,34 @@ class BackupComparisonController extends Controller
                 ];
             }
 
+            // Comparar Seguimientos (Avance de Clase)
+            $backupSegs = $backupData ? DB::table($backupDb . '.seguimientos as s')
+                ->join($backupDb . '.grupos as g', 's.grupo_id', '=', 'g.id')
+                ->where('g.asignatura_id', $backupData->id)
+                ->select('s.*', 'g.nombre as grupo_nombre')
+                ->orderBy('s.fecha', 'desc')
+                ->get() : collect();
+
+            $currentSegs = $currentData ? DB::table('seguimientos as s')
+                ->join('grupos as g', 's.grupo_id', '=', 'g.id')
+                ->where('g.asignatura_id', $currentData->id)
+                ->select('s.*', 'g.nombre as grupo_nombre')
+                ->orderBy('s.fecha', 'desc')
+                ->get() : collect();
+
+            $seguimientosComparison = [
+                'backup_count' => $backupSegs->count(),
+                'current_count' => $currentSegs->count(),
+                'backup_sample' => $backupSegs->take(10)->map(function($s) {
+                    return [
+                        'fecha' => $s->fecha,
+                        'grupo' => $s->grupo_nombre,
+                        'tema' => $s->tema_cumplido,
+                        'cumplido' => $s->cumplido
+                    ];
+                })
+            ];
+
             return response()->json([
                 'current_id' => $currentData->id ?? null,
                 'backup_id' => $backupData->id ?? null,
@@ -404,6 +492,7 @@ class BackupComparisonController extends Controller
                 'comparison' => $comparison,
                 'unidades' => $unidadesComparison,
                 'cronogramas' => $cronogramasComparison,
+                'seguimientos' => $seguimientosComparison,
                 'found_current' => !!$currentData,
                 'found_backup' => !!$backupData
             ]);
@@ -694,6 +783,54 @@ class BackupComparisonController extends Controller
                         $updateData[$f] = $backup->$f;
                     }
                     DB::table('planificaciones_personales')->where('id', $targetId)->update($updateData);
+                    break;
+                
+                case 'seguimientos_total':
+                    // targetId y backupId son IDs de ASIGNATURA
+                    $gruposC = DB::table('grupos')->where('asignatura_id', $targetId)->get();
+                    $gruposB = DB::table($backupDb . '.grupos')->where('asignatura_id', $backupId)->get();
+
+                    DB::beginTransaction();
+                    try {
+                        foreach ($gruposC as $gc) {
+                            $gb = $gruposB->firstWhere('nombre', $gc->nombre);
+                            if (!$gb) continue;
+
+                            $seguimientosB = DB::table($backupDb . '.seguimientos')->where('grupo_id', $gb->id)->get();
+                            foreach ($seguimientosB as $sb) {
+                                $arr = (array)$sb; unset($arr['id']);
+                                $arr['grupo_id'] = $gc->id;
+                                
+                                // Intentar mapear cronograma_id si existe
+                                if ($sb->cronograma_id) {
+                                    $cb = DB::table($backupDb . '.cronogramas')->find($sb->cronograma_id);
+                                    if ($cb) {
+                                        $cc = DB::table('cronogramas')
+                                            ->where('grupo_id', $gc->id)
+                                            ->where('numero_sesion', $cb->numero_sesion)
+                                            ->first();
+                                        if ($cc) $arr['cronograma_id'] = $cc->id;
+                                        else $arr['cronograma_id'] = null;
+                                    }
+                                }
+
+                                // Evitar duplicados por grupo, fecha y tema cumplido
+                                $exists = DB::table('seguimientos')
+                                    ->where('grupo_id', $gc->id)
+                                    ->where('fecha', $sb->fecha)
+                                    ->where('tema_cumplido', $sb->tema_cumplido)
+                                    ->exists();
+                                
+                                if (!$exists) {
+                                    DB::table('seguimientos')->insert($arr);
+                                }
+                            }
+                        }
+                        DB::commit();
+                    } catch (\Exception $e) {
+                        DB::rollBack();
+                        throw $e;
+                    }
                     break;
                 
                 default:

@@ -124,11 +124,44 @@ foreach ($gruposBackup as $gb) {
     }
     if (!$asignaturaElegida) continue;
 
+    // 2.1 Identificar al Docente Correcto por CI (Robustez v3)
+    $docenteActualId = null;
+    $gbDocente = DB::table("$dbBackup.docentes")->where('id', $gb->docente_id)->first();
+    if ($gbDocente && $gbDocente->ci) {
+        $docenteActual = DB::table("$dbCurrent.docentes")->where('ci', $gbDocente->ci)->first();
+        if ($docenteActual) {
+            $docenteActualId = $docenteActual->id;
+        } else {
+            // Fallback: Intentar por username del usuario vinculado si existe
+            $gbUser = DB::table("$dbBackup.users")->where('id', $gbDocente->user_id)->first();
+            if ($gbUser) {
+                $uAct = DB::table("$dbCurrent.users")->where('username', $gbUser->username)->first();
+                $dAct = DB::table("$dbCurrent.docentes")->where('user_id', $uAct->id)->first();
+                $docenteActualId = $dAct?->id;
+            }
+        }
+    }
+    
+    if (!$docenteActualId) {
+        echo "  [SKIP] No se encontró al docente del backup en el sistema actual (CI/ID: {$gbDocente->ci})\n";
+        continue;
+    }
+
+    // 2.2 Buscar Grupo Actual
+    $grupoActual = DB::table("$dbCurrent.grupos")
+        ->where('asignatura_id', $asignaturaElegida->id)
+        ->where('gestion', $gb->gestion)
+        ->where('sede_id', $gb->sede_id)
+        ->where('nombre', $gb->nombre)
+        ->first();
+
+    $grupoActualId = null;
+
     if (!$grupoActual) {
-        // RECONSTRUCCION DE GRUPO FALTANTE (v2 Self-Healing)
-        echo "  [RECUPERACIÓN] Recreando grupo '{$gb->nombre}' para {$asignaturaElegida->codigo}...\n";
+        // RECONSTRUCCION DE GRUPO FALTANTE (v3 Self-Healing)
+        echo "  [RECUPERACIÓN] Recreando grupo '{$gb->nombre}' para {$asignaturaElegida->codigo} (Docente: $docenteActualId)...\n";
         
-        // 1. Asegurar Link Asignatura-Carrera (Para que sea visible en el panel del docente)
+        // Asegurar Link Asignatura-Carrera
         $linkExists = DB::table("$dbCurrent.asignatura_carrera")
             ->where('asignatura_id', $asignaturaElegida->id)
             ->where('carrera_id', $gb->carrera_id)
@@ -141,42 +174,39 @@ foreach ($gruposBackup as $gb) {
                     'asignatura_id' => $asignaturaElegida->id,
                     'carrera_id'    => $gb->carrera_id,
                     'sede_id'       => $gb->sede_id,
-                    'semestre'      => 0, // Fallback
+                    'semestre'      => 0,
                     'created_at'    => now(),
                     'updated_at'    => now()
                 ]);
-            } catch (\Exception $e) { echo "    [!] Error vinculando carrera: " . $e->getMessage() . "\n"; }
+            } catch (\Exception $e) {}
         }
 
-        // 2. Crear el Grupo
         try {
-            $newGroupId = DB::table("$dbCurrent.grupos")->insertGetId([
+            $grupoActualId = DB::table("$dbCurrent.grupos")->insertGetId([
                 'gestion'       => $gb->gestion,
                 'asignatura_id' => $asignaturaElegida->id,
                 'carrera_id'    => $gb->carrera_id,
                 'nombre'        => $gb->nombre,
                 'tipo'          => $gb->tipo ?? 'TEORICO',
                 'sede_id'       => $gb->sede_id,
-                'docente_id'    => $gb->docente_id,
-                'plan_estudios' => $gb->plan_estudios ?? ($gb->asig_backup_plan ?: 'N'),
+                'docente_id'    => $docenteActualId,
                 'estado'        => 'ACTIVO',
                 'created_at'    => now(),
                 'updated_at'    => now()
             ]);
-            $grupoActualId = $newGroupId;
         } catch (\Exception $e) {
             echo "    [ERROR] No se pudo recrear grupo: " . $e->getMessage() . "\n";
             continue;
         }
     } else {
         $grupoActualId = $grupoActual->id;
-        // Restaurar docente si está vacío
+        // Restaurar docente si está vacío o si es diferente (v3 es más agresivo con la restauración)
         if (empty($grupoActual->docente_id)) {
-            DB::table("$dbCurrent.grupos")->where('id', $grupoActualId)->update(['docente_id' => $gb->docente_id]);
+            DB::table("$dbCurrent.grupos")->where('id', $grupoActualId)->update(['docente_id' => $docenteActualId]);
         }
     }
 
-    // Restaurar subordinados con ID del grupo (nuevo o existente)
+    // 2.3 Restaurar subordinados
     $cronos = DB::table("$dbBackup.cronogramas")->where('grupo_id', $gb->id)->get();
     foreach ($cronos as $c) {
         if (!DB::table("$dbCurrent.cronogramas")->where('grupo_id', $grupoActualId)->where('fecha', $c->fecha)->where('numero_sesion', $c->numero_sesion)->exists()) {
@@ -207,6 +237,15 @@ $docentesEnActual = DB::table("$dbCurrent.grupos")
 $asignacionesABorrar = 0;
 
 foreach ($docentesEnActual as $docId) {
+    // Buscar el equivalente en backup por CI (v3 Robustez)
+    $curDocente = DB::table("$dbCurrent.docentes")->where('id', $docId)->first();
+    if (!$curDocente || !$curDocente->ci) continue;
+
+    $bakDocente = DB::table("$dbBackup.docentes")->where('ci', $curDocente->ci)->first();
+    if (!$bakDocente) continue;
+
+    $bakDocId = $bakDocente->id;
+
     // 1. Obtener grupos asignados a este docente
     $gsActual = DB::table("$dbCurrent.grupos as g")
         ->join("$dbCurrent.asignaturas as a", 'g.asignatura_id', '=', 'a.id')
@@ -229,7 +268,7 @@ foreach ($docentesEnActual as $docId) {
         // Hay colisión. Buscamos cuál de estas es la legítima consultando el backup
         $logicalBackup = DB::table("$dbBackup.grupos as g")
             ->join("$dbBackup.asignaturas as a", 'g.asignatura_id', '=', 'a.id')
-            ->where('g.docente_id', $docId)
+            ->where('g.docente_id', $bakDocId)
             ->where(function($q) use ($base) {
                 // Buscamos cualquier versión del código base en el backup
                 $q->where('a.codigo', 'LIKE', "$base%")

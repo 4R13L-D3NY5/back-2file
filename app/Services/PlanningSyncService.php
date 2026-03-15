@@ -236,7 +236,10 @@ class PlanningSyncService
                     // Calculate turno based on hour
                     $hora = (int) substr($dto->horaInicio, 0, 2);
                     $turno = ($hora < 12) ? 'MAÑANA' : (($hora < 18) ? 'TARDE' : 'NOCHE');
-                    $tipo = isset($dto->tipoClase) ? strtoupper($dto->tipoClase) : 'TEORICO';
+                    
+                    // NORMALIZACIÓN: Mapear 'REGULAR' a 'TEORICO' para evitar duplicados enviados por la API
+                    $tipoCrudo = isset($dto->tipoClase) ? strtoupper(trim($dto->tipoClase)) : 'TEORICO';
+                    $tipo = ($tipoCrudo === 'REGULAR') ? 'TEORICO' : $tipoCrudo;
 
                     // 7. GRUPO: Identificación puramente LOGICA
 
@@ -268,7 +271,6 @@ class PlanningSyncService
                         ],
                         [
                             'docente_id'    => $docenteId,
-                            'plan_estudios' => $dto->planEst ?: 'N',
                             'estado'        => 'ACTIVO'
                         ]
                     );

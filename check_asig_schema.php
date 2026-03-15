@@ -5,7 +5,5 @@ $app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
 
 use Illuminate\Support\Facades\Schema;
 
-echo "Seguimientos:\n";
-print_r(Schema::getColumnListing('seguimientos'));
-echo "\nEstudiantes:\n";
-print_r(Schema::getColumnListing('estudiantes'));
+echo "Asignaturas:\n";
+print_r(Schema::getColumnListing('asignaturas'));
