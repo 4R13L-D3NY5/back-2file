@@ -1105,4 +1105,75 @@ class MateriasComunesSyncService
         }
         return $synced;
     }
+
+    /**
+     * Determina la asignatura con el mejor cronograma entre las vinculadas por comun_token.
+     * 
+     * @param string $comunToken
+     * @return \App\Models\Asignatura|null
+     */
+    public function getBestCronogramaForComunToken(string $comunToken): ?\App\Models\Asignatura
+    {
+        $asignaturas = \App\Models\Asignatura::where('comun_token', $comunToken)
+            ->with(['cronogramas' => function ($query) {
+                $query->whereNull('grupo_id');
+            }])
+            ->get();
+
+        if ($asignaturas->isEmpty()) {
+            return null;
+        }
+
+        $bestScore = -1;
+        $bestAsignatura = null;
+
+        foreach ($asignaturas as $asignatura) {
+            $score = $this->scoreCronogramaCompleteness($asignatura);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestAsignatura = $asignatura;
+            }
+        }
+
+        // Si ninguna tiene cronogramas con contenido, fallback a la mejor documentación
+        if ($bestScore <= 0) {
+            $bestAsignatura = $this->findDocumentationMaster($asignaturas);
+        }
+
+        return $bestAsignatura;
+    }
+
+    /**
+     * Puntúa la completitud del cronograma de una asignatura.
+     * 
+     * @param \App\Models\Asignatura $asignatura
+     * @return int
+     */
+    private function scoreCronogramaCompleteness(\App\Models\Asignatura $asignatura): int
+    {
+        $score = 0;
+        $cronogramas = $asignatura->cronogramas;
+
+        if ($cronogramas->isEmpty()) {
+            return 0;
+        }
+
+        foreach ($cronogramas as $crono) {
+            // Cada sesión con contenido aporta puntos
+            $sessionScore = 0;
+            if (!$this->isFieldEmpty($crono->contenido_conceptual)) $sessionScore += 2;
+            if (!$this->isFieldEmpty($crono->contenido_procedimental)) $sessionScore += 2;
+            if (!$this->isFieldEmpty($crono->contenido_actitudinal)) $sessionScore += 2;
+            if (!$this->isFieldEmpty($crono->criterios_desempeno)) $sessionScore += 1;
+            if (!$this->isFieldEmpty($crono->instrumentos_evaluacion)) $sessionScore += 1;
+            if ($crono->tema_id) $sessionScore += 3; // Vinculación a tema es valioso
+            
+            $score += $sessionScore;
+        }
+
+        // Bonus por cantidad de sesiones (estructura completa)
+        $score += $cronogramas->count() * 1;
+
+        return $score;
+    }
 }

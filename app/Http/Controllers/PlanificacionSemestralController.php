@@ -48,9 +48,20 @@ class PlanificacionSemestralController extends Controller
             }
         }])->findOrFail($asignaturaId);
 
-        // 1. Fetch Master Records (Shared Planning Content)
+        // 1. Determinar asignatura fuente para cronogramas (para materias comunes fusionadas)
+        $asignaturaCronograma = $asignatura;
+        if ($asignatura->comun_token && $asignatura->comun_tipo === 'fusionada') {
+            $syncService = app(\App\Services\MateriasComunesSyncService::class);
+            $bestAsignatura = $syncService->getBestCronogramaForComunToken($asignatura->comun_token);
+            if ($bestAsignatura && $bestAsignatura->id !== $asignatura->id) {
+                $asignaturaCronograma = $bestAsignatura;
+                Log::info("PlanificacionSemestral: Usando cronograma de asignatura ID {$bestAsignatura->id} ({$bestAsignatura->codigo}) para materia común {$asignatura->codigo}");
+            }
+        }
+
+        // 2. Fetch Master Records (Shared Planning Content)
         // Master records have group_id = NULL
-        $masterCronogramas = Cronograma::where('asignatura_id', $asignaturaId)
+        $masterCronogramas = Cronograma::where('asignatura_id', $asignaturaCronograma->id)
             ->whereNull('grupo_id')
             ->with([
                 'temas',
@@ -66,7 +77,7 @@ class PlanificacionSemestralController extends Controller
             ->orderBy('numero_sesion')
             ->get();
 
-        // 2. Fetch Seguimientos for the specific group (from new seguimientos table)
+        // 3. Fetch Seguimientos for the specific group (from new seguimientos table)
         $seguimientosMap = collect();
         if ($grupoId) {
             $cronogramaIds = $masterCronogramas->pluck('id');
@@ -76,7 +87,7 @@ class PlanificacionSemestralController extends Controller
                 ->keyBy('cronograma_id');
         }
 
-        // 3. Map Master Records to the result, merging Seguimiento data if it exists
+        // 4. Map Master Records to the result, merging Seguimiento data if it exists
         $cronogramas = $masterCronogramas->map(function ($master) use ($seguimientosMap, $grupoId) {
             $seguimiento = $seguimientosMap->get($master->id);
 

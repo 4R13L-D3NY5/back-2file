@@ -193,7 +193,7 @@ class MateriaComunController extends Controller
         $request->validate([
             'asignatura_id' => 'required|exists:asignaturas,id',
             'target_asignatura_id' => 'required|exists:asignaturas,id',
-            'tipo' => 'nullable|string|in:fusionada,espejo'
+            'tipo' => 'nullable|string|in:fusionada'  // 'espejo' no implementado, usar solo 'fusionada'
         ]);
 
         $user = $request->user();
@@ -204,88 +204,137 @@ class MateriaComunController extends Controller
         // Validar permisos (Basicamente que source sea de una carrera del director)
         // Por brevedad omitimos check exhaustivo, asumimos que el frontend manda id correcto del director.
 
-        // Logica de Fusión
-        if (!$source->comun_token && !$target->comun_token) {
-            // Caso 1: Ninguno tiene grupo -> Crear nuevo
-            $token = (string) Str::uuid();
-            $source->comun_token = $token;
-            $source->comun_tipo = $tipo;
-            $target->comun_token = $token;
-            $target->comun_tipo = $tipo;
-            $source->save();
-            $target->save();
-        } elseif ($source->comun_token && !$target->comun_token) {
-            // Caso 2: Source tiene grupo, Target no -> Target se une a Source
-            $target->comun_token = $source->comun_token;
-            $target->comun_tipo = $source->comun_tipo;
-            $target->save();
-        } elseif (!$source->comun_token && $target->comun_token) {
-            // Caso 3: Target tiene grupo, Source no -> Source se une a Target
-            $source->comun_token = $target->comun_token;
-            $source->comun_tipo = $target->comun_tipo;
-            $source->save();
-        } else {
-            // Caso 4: Ambos tienen grupo -> FUSIONAR (Merge)
-            // Todos los del grupo de Target pasan al grupo de Source
-            $tokenSource = $source->comun_token;
-            $tokenTarget = $target->comun_token;
+        $warnings = [];
 
-            if ($tokenSource !== $tokenTarget) {
-                Asignatura::where('comun_token', $tokenTarget)
-                    ->update([
-                        'comun_token' => $tokenSource,
-                        'comun_tipo' => $source->comun_tipo
-                    ]);
-            }
-        }
+        try {
+            // Logica de Fusión - Guardar tokens primero
+            if (!$source->comun_token && !$target->comun_token) {
+                // Caso 1: Ninguno tiene grupo -> Crear nuevo
+                $token = (string) Str::uuid();
+                $source->comun_token = $token;
+                $source->comun_tipo = $tipo;
+                $target->comun_token = $token;
+                $target->comun_tipo = $tipo;
+                $source->save();
+                $target->save();
+            } elseif ($source->comun_token && !$target->comun_token) {
+                // Caso 2: Source tiene grupo, Target no -> Target se une a Source
+                $target->comun_token = $source->comun_token;
+                $target->comun_tipo = $source->comun_tipo;
+                $target->save();
+            } elseif (!$source->comun_token && $target->comun_token) {
+                // Caso 3: Target tiene grupo, Source no -> Source se une a Target
+                $source->comun_token = $target->comun_token;
+                $source->comun_tipo = $target->comun_tipo;
+                $source->save();
+            } else {
+                // Caso 4: Ambos tienen grupo -> FUSIONAR (Merge)
+                // Todos los del grupo de Target pasan al grupo de Source
+                $tokenSource = $source->comun_token;
+                $tokenTarget = $target->comun_token;
 
-        // MERGE INTELIGENTE AL VINCULAR
-        // Fusiona campo por campo en vez de "el ganador lo toma todo".
-        // Resuelve el caso donde el docente llenó la documentación en una carpeta
-        // y la planificación personal en otra (por falta de horario en una de ellas).
-        $tokenToSync = $source->comun_token;
-        if ($tokenToSync) {
-            // Backup de seguridad antes de fusión
-            try {
-                $backupService = app(\App\Services\FusionBackupService::class);
-                $backupId = $backupService->backupPreFusion($tokenToSync);
-                Log::info('Fusión de materias comunes - Backup creado', [
-                    'backup_id' => $backupId,
-                    'comun_token' => $tokenToSync,
-                    'source_id' => $source->id,
-                    'target_id' => $target->id,
-                ]);
-            } catch (\Exception $e) {
-                Log::error('Fusión de materias comunes - Error en backup', [
-                    'error' => $e->getMessage(),
-                    'comun_token' => $tokenToSync,
-                ]);
-                return response()->json(['error' => 'No se pudo crear backup de seguridad. Fusión cancelada.'], 500);
-            }
-            
-            $syncService = app(\App\Services\MateriasComunesSyncService::class);
-            $syncService->mergeAndSyncOnLink($tokenToSync);
-
-            // Para tipo fusionada, sincronizar también el cronograma maestro
-            // usando la asignatura con más sesiones cronogramadas como origen
-            $source->refresh();
-            if ($source->comun_tipo === 'fusionada') {
-                $cronoMaster = Asignatura::where('comun_token', $tokenToSync)
-                    ->get()
-                    ->sortByDesc(function ($a) {
-                        return \App\Models\Cronograma::where('asignatura_id', $a->id)
-                            ->whereNull('grupo_id')
-                            ->count();
-                    })
-                    ->first();
-
-                if ($cronoMaster) {
-                    $syncService->syncCronogramasFusionada($cronoMaster);
+                if ($tokenSource !== $tokenTarget) {
+                    Asignatura::where('comun_token', $tokenTarget)
+                        ->update([
+                            'comun_token' => $tokenSource,
+                            'comun_tipo' => $source->comun_tipo
+                        ]);
                 }
             }
+
+            // MERGE INTELIGENTE AL VINCULAR
+            // Fusiona campo por campo en vez de "el ganador lo toma todo".
+            // Resuelve el caso donde el docente llenó la documentación en una carpeta
+            // y la planificación personal en otra (por falta de horario en una de ellas).
+            $tokenToSync = $source->comun_token;
+            
+            if ($tokenToSync) {
+                // Backup de seguridad antes de fusión
+                try {
+                    $backupService = app(\App\Services\FusionBackupService::class);
+                    $backupId = $backupService->backupPreFusion($tokenToSync);
+                    Log::info('Fusión de materias comunes - Backup creado', [
+                        'backup_id' => $backupId,
+                        'comun_token' => $tokenToSync,
+                        'source_id' => $source->id,
+                        'target_id' => $target->id,
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('Fusión de materias comunes - Error en backup', [
+                        'error' => $e->getMessage(),
+                        'comun_token' => $tokenToSync,
+                    ]);
+                    $warnings[] = 'No se pudo crear backup de seguridad, pero la vinculación continuó.';
+                }
+                
+                // Servicio de sincronización (se usa en merge y cronogramas)
+                $syncService = app(\App\Services\MateriasComunesSyncService::class);
+                
+                // Sincronización inteligente (merge de documentación, planificación personal, etc.)
+                try {
+                    $syncService->mergeAndSyncOnLink($tokenToSync);
+                    Log::info('Fusión de materias comunes - Merge inteligente completado', [
+                        'comun_token' => $tokenToSync,
+                        'source_id' => $source->id,
+                        'target_id' => $target->id,
+                    ]);
+                } catch (\Exception $e) {
+                    Log::error('Fusión de materias comunes - Error en merge inteligente', [
+                        'error' => $e->getMessage(),
+                        'comun_token' => $tokenToSync,
+                    ]);
+                    $warnings[] = 'No se pudo sincronizar la documentación y planificación personal.';
+                }
+
+                // Para tipo fusionada, sincronizar también el cronograma maestro
+                $source->refresh();
+                if ($source->comun_tipo === 'fusionada') {
+                    try {
+                        $cronoMaster = Asignatura::where('comun_token', $tokenToSync)
+                            ->get()
+                            ->sortByDesc(function ($a) {
+                                return \App\Models\Cronograma::where('asignatura_id', $a->id)
+                                    ->whereNull('grupo_id')
+                                    ->count();
+                            })
+                            ->first();
+
+                        if ($cronoMaster) {
+                            $syncService->syncCronogramasFusionada($cronoMaster);
+                            Log::info('Fusión de materias comunes - Cronogramas sincronizados', [
+                                'comun_token' => $tokenToSync,
+                                'crono_master_id' => $cronoMaster->id,
+                            ]);
+                        }
+                    } catch (\Exception $e) {
+                        Log::error('Fusión de materias comunes - Error sincronizando cronogramas', [
+                            'error' => $e->getMessage(),
+                            'comun_token' => $tokenToSync,
+                        ]);
+                        $warnings[] = 'No se pudo sincronizar el cronograma entre materias vinculadas.';
+                    }
+                }
+            }
+        } catch (\Exception $e) {
+            Log::error('Fusión de materias comunes - Error inesperado en vinculación', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'source_id' => $source->id,
+                'target_id' => $target->id,
+            ]);
+            $warnings[] = 'Ocurrió un error inesperado durante la vinculación, pero los cambios básicos se aplicaron.';
         }
 
-        return response()->json(['message' => 'Vinculación exitosa']);
+        $response = ['message' => 'Vinculación exitosa'];
+        if (!empty($warnings)) {
+            $response['warnings'] = $warnings;
+            Log::warning('Fusión de materias comunes completada con advertencias', [
+                'comun_token' => $tokenToSync ?? null,
+                'warnings' => $warnings,
+            ]);
+        }
+        
+        return response()->json($response);
     }
 
     /**

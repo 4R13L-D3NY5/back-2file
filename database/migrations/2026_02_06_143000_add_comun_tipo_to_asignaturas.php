@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::table('asignaturas', function (Blueprint $table) {
             if (!Schema::hasColumn('asignaturas', 'comun_tipo')) {
-                $table->enum('comun_tipo', ['fusionada', 'espejo'])->nullable()->after('comun_token');
+                $table->enum('comun_tipo', ['fusionada', 'espejo'])->nullable()->after('comun_token'); // 'espejo' no implementado
             }
         });
     }
