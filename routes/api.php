@@ -240,7 +240,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/auditorias', [\App\Http\Controllers\AuditoriaController::class, 'index']);
     // Auditoría de Backups (Comparación)
     Route::get('/backups/list', [\App\Http\Controllers\BackupComparisonController::class, 'listBackups']);
+    Route::get('/backups/search', [\App\Http\Controllers\BackupComparisonController::class, 'searchBackupSubjects']);
+    Route::get('/backups/search-current', [\App\Http\Controllers\BackupComparisonController::class, 'searchCurrentSubjects']);
     Route::post('/backups/compare', [\App\Http\Controllers\BackupComparisonController::class, 'compareSubject']);
     Route::post('/backups/restore', [\App\Http\Controllers\BackupComparisonController::class, 'restoreSegment']);
+ 
+    // Manual Registration (API Planning)
+    Route::get('/manual-registration/fetch', [\App\Http\Controllers\ManualRegistrationController::class, 'fetchFromPlanning']);
+    Route::post('/manual-registration/store', [\App\Http\Controllers\ManualRegistrationController::class, 'storeManual']);
+    Route::put('/manual-registration/docente', [\App\Http\Controllers\ManualRegistrationController::class, 'updateDocente']);
 
 });
