@@ -199,9 +199,9 @@ class MateriasComunesSyncService
             $this->syncTemasStructure($sourceUnidad, $targetUnidad, $sharedUserIds);
         }
 
-        // Eliminar unidades huérfanas en destino (que ya no existen en origen)
+        // Eliminar unidades huérfanas en destino (que ya no existen en origen) - DESHABILITADO POR RIESGO DE PÉRDIDA DE DATOS
         $sourceNumeros = $sourceUnidades->pluck('numero')->toArray();
-        $target->unidades()->whereNotIn('numero', $sourceNumeros)->delete();
+        // $target->unidades()->whereNotIn('numero', $sourceNumeros)->delete();
     }
 
     /**
@@ -250,9 +250,9 @@ class MateriasComunesSyncService
             }
         }
 
-        // Eliminar temas huérfanos
+        // Eliminar temas huérfanos - DESHABILITADO POR RIESGO DE PÉRDIDA DE DATOS
         $sourceOrdenes = $sourceTemas->pluck('orden')->toArray();
-        $targetUnidad->temas()->whereNotIn('orden', $sourceOrdenes)->delete();
+        // $targetUnidad->temas()->whereNotIn('orden', $sourceOrdenes)->delete();
     }
 
     /**
@@ -707,14 +707,14 @@ class MateriasComunesSyncService
     {
         $score = 0;
 
-        // Campos PAC
-        if (!$this->isFieldEmpty($asig->justificacion))          $score += 3;
-        if (!$this->isFieldEmpty($asig->proposito_general))      $score += 3;
+        // Campos PAC - PESO ALTO PARA PRIORIZAR MATERIAS CON DOCUMENTACIÓN PAC COMPLETA
+        if (!$this->isFieldEmpty($asig->justificacion))          $score += 90;
+        if (!$this->isFieldEmpty($asig->proposito_general))      $score += 90;
         if (!$this->isFieldEmpty($asig->competencia_global_especifica)
-            || !$this->isFieldEmpty($asig->competencia_asignatura)) $score += 2;
-        if (!$this->isFieldEmpty($asig->metodologia_general))    $score += 1;
-        if (!$this->isFieldEmpty($asig->sistema_evaluacion))     $score += 1;
-        if (!$this->isFieldEmpty($asig->contenido_minimo))       $score += 1;
+            || !$this->isFieldEmpty($asig->competencia_asignatura)) $score += 60;
+        if (!$this->isFieldEmpty($asig->metodologia_general))    $score += 30;
+        if (!$this->isFieldEmpty($asig->sistema_evaluacion))     $score += 30;
+        if (!$this->isFieldEmpty($asig->contenido_minimo))       $score += 30;
 
         // Estructura analítica
         foreach ($asig->unidades as $unidad) {
@@ -1007,24 +1007,40 @@ class MateriasComunesSyncService
         
         try {
             DB::transaction(function () use ($source, $linked, &$synced) {
-                // Obtenemos el cronograma MASTER de la materia origen
+                // Obtenemos el cronograma MASTER de la materia origen, indexado por numero_sesion
                 $masterCronogramas = \App\Models\Cronograma::where('asignatura_id', $source->id)
                     ->whereNull('grupo_id')
                     ->orderBy('numero_sesion')
-                    ->get();
+                    ->get()
+                    ->keyBy('numero_sesion');
                     
                 foreach ($linked as $target) {
-                    // Borramos cronograma master del target
-                    \App\Models\Cronograma::where('asignatura_id', $target->id)
+                    // Obtenemos cronogramas existentes en el target, indexados por numero_sesion
+                    $existingCronogramas = \App\Models\Cronograma::where('asignatura_id', $target->id)
                         ->whereNull('grupo_id')
-                        ->delete();
-                        
-                    foreach($masterCronogramas as $mc) {
+                        ->get()
+                        ->keyBy('numero_sesion');
+                    
+                    // Para cada sesión del master, actualizar o crear en el target
+                    foreach ($masterCronogramas as $numeroSesion => $mc) {
                         /** @var \App\Models\Cronograma $mc */
-                        $newMaster = $mc->replicate(['id', 'asignatura_id', 'created_at', 'updated_at']);
-                        $newMaster->asignatura_id = $target->id;
+                        $targetCrono = $existingCronogramas->get($numeroSesion);
                         
-                        // Si está asignado a un tema, debemos mapearlo al tema homólogo en la materia target
+                        $cronoData = [
+                            'asignatura_id' => $target->id,
+                            'numero_sesion' => $mc->numero_sesion,
+                            'semana_academica' => $mc->semana_academica,
+                            'tipo_clase' => $mc->tipo_clase,
+                            'contenido_conceptual' => $mc->contenido_conceptual,
+                            'contenido_procedimental' => $mc->contenido_procedimental,
+                            'contenido_actitudinal' => $mc->contenido_actitudinal,
+                            'criterios_desempeno' => $mc->criterios_desempeno,
+                            'instrumentos_evaluacion' => $mc->instrumentos_evaluacion,
+                            'observaciones' => $mc->observaciones,
+                            'grupo_id' => null,
+                        ];
+                        
+                        // Mapear tema_id si corresponde
                         if ($mc->tema_id) {
                             $sourceTema = \App\Models\Tema::with('unidad')->find($mc->tema_id);
                             if ($sourceTema && $sourceTema->unidad) {
@@ -1032,15 +1048,30 @@ class MateriasComunesSyncService
                                 if ($targetUnidad) {
                                     $targetTema = $targetUnidad->temas()->where('orden', $sourceTema->orden)->first();
                                     if ($targetTema) {
-                                        $newMaster->tema_id = $targetTema->id;
+                                        $cronoData['tema_id'] = $targetTema->id;
+                                    } else {
+                                        $cronoData['tema_id'] = null;
                                     }
+                                } else {
+                                    $cronoData['tema_id'] = null;
                                 }
+                            } else {
+                                $cronoData['tema_id'] = null;
                             }
+                        } else {
+                            $cronoData['tema_id'] = null;
                         }
                         
-                        $newMaster->save();
+                        if ($targetCrono) {
+                            // Actualizar cronograma existente, preservando cualquier campo extra que no sea replicado
+                            $targetCrono->update($cronoData);
+                            $updatedCrono = $targetCrono;
+                        } else {
+                            // Crear nuevo cronograma
+                            $updatedCrono = \App\Models\Cronograma::create($cronoData);
+                        }
                         
-                        // Si manejaran el relations ManyToMany temas (cronograma_tema)
+                        // Sincronizar relación ManyToMany temas (cronograma_tema) si existe
                         $mcTemas = $mc->temas;
                         if ($mcTemas->isNotEmpty()) {
                             $targetTemaIds = [];
@@ -1057,10 +1088,15 @@ class MateriasComunesSyncService
                                 }
                             }
                             if (!empty($targetTemaIds)) {
-                                $newMaster->temas()->sync($targetTemaIds);
+                                $updatedCrono->temas()->sync($targetTemaIds);
                             }
                         }
                     }
+                    
+                    // NOTA: NO eliminamos cronogramas en target que no estén en source
+                    // para evitar pérdida de datos. En una fusión verdadera, el cronograma
+                    // debería ser único, pero es más seguro conservar sesiones extras.
+                    
                     $synced++;
                 }
             });

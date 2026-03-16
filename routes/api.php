@@ -188,6 +188,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/candidates', [\App\Http\Controllers\MateriaComunController::class, 'candidates']);
         Route::post('/link', [\App\Http\Controllers\MateriaComunController::class, 'link']);
         Route::post('/unlink/{id}', [\App\Http\Controllers\MateriaComunController::class, 'unlink']);
+        Route::get('/check-integrity/{token}', [\App\Http\Controllers\MateriaComunController::class, 'checkIntegrity']);
     });
     // Clas Monitoring (Control de Clase)
     Route::post('/cronogramas/find-or-create', [\App\Http\Controllers\CronogramaController::class, 'findOrCreate']);

@@ -10,6 +10,7 @@ use App\Models\Seguimiento;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class PlanificacionSemestralController extends Controller
 {
@@ -298,7 +299,7 @@ class PlanificacionSemestralController extends Controller
             }
 
             if (!empty($sesiones)) {
-                \Log::info('Generando Planificación Maestra. Primera Sesión:', $sesiones[0]);
+                Log::info('Generando Planificación Maestra. Primera Sesión:', $sesiones[0]);
                 Cronograma::insert($sesiones);
             }
         });
@@ -354,7 +355,8 @@ class PlanificacionSemestralController extends Controller
     public function updateSeguimiento(Request $request)
     {
         try {
-            \Log::info('updateSeguimiento (new table)', $request->all());
+            Log::info('updateSeguimiento (new table)', $request->all());
+            Log::info('comun_token from request', ['comun_token' => $request->input('comun_token')]);
 
             $request->validate([
                 'evidencia_aprendizaje' => 'nullable|file|max:2048',
@@ -393,14 +395,14 @@ class PlanificacionSemestralController extends Controller
             $pedagogicoInput = $request->input('pedagogico', '{}');
             $pedagogico = json_decode($pedagogicoInput, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                \Log::error('JSON Decode Error in pedagogico: ' . json_last_error_msg());
+                Log::error('JSON Decode Error in pedagogico: ' . json_last_error_msg());
                 $pedagogico = [];
             }
 
             $integracionInput = $request->input('integracion_transversal', '{}');
             $integracionTransversal = json_decode($integracionInput, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                \Log::error('JSON Decode Error in integracion_transversal: ' . json_last_error_msg());
+                Log::error('JSON Decode Error in integracion_transversal: ' . json_last_error_msg());
                 $integracionTransversal = [];
             }
 
@@ -478,10 +480,12 @@ class PlanificacionSemestralController extends Controller
                     'georeferencia' => $georeferencia,
                     'evidencias' => $evidencias,
                     'integracion_transversal' => $integracionTransversal,
+                    'es_propagado' => false,
+                    'propagado_de_id' => null,
                 ]
             );
 
-            \Log::info('Seguimiento saved', ['id' => $seguimiento->id, 'cronograma_id' => $cronogramaId, 'grupo_id' => $grupoId]);
+            Log::info('Seguimiento saved', ['id' => $seguimiento->id, 'cronograma_id' => $cronogramaId, 'grupo_id' => $grupoId]);
 
             // Si la asignatura es parte de un grupo de materias comunes,
             // propagar el seguimiento automáticamente a los grupos vinculados
@@ -495,8 +499,8 @@ class PlanificacionSemestralController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Error in updateSeguimiento: ' . $e->getMessage());
-            \Log::error($e->getTraceAsString());
+            Log::error('Error in updateSeguimiento: ' . $e->getMessage());
+            Log::error($e->getTraceAsString());
             return response()->json(['error' => $e->getMessage()], 500);
         }
     }
@@ -511,11 +515,22 @@ class PlanificacionSemestralController extends Controller
      */
     private function propagarSeguimientoAComunes(int $cronogramaId, int $grupoId, Seguimiento $seguimiento): void
     {
+        Log::info('Propagando seguimiento a comunes', ['cronograma_id' => $cronogramaId, 'grupo_id' => $grupoId]);
         $cronograma = Cronograma::find($cronogramaId);
-        if (!$cronograma) return;
+        if (!$cronograma) {
+            Log::info('Cronograma no encontrado, abortando propagación');
+            return;
+        }
 
         $asignatura = Asignatura::find($cronograma->asignatura_id);
-        if (!$asignatura || !$asignatura->comun_token) return;
+        if (!$asignatura) {
+            Log::info('Asignatura no encontrada, abortando propagación');
+            return;
+        }
+        if (!$asignatura->comun_token) {
+            Log::info('Asignatura no tiene comun_token, abortando propagación', ['asignatura_id' => $asignatura->id, 'codigo' => $asignatura->codigo]);
+            return;
+        }
 
         $grupoSource = Grupo::find($grupoId);
         if (!$grupoSource || !$grupoSource->docente_id) return;
@@ -523,6 +538,12 @@ class PlanificacionSemestralController extends Controller
         $vinculadas = Asignatura::where('comun_token', $asignatura->comun_token)
             ->where('id', '!=', $asignatura->id)
             ->get();
+
+        Log::info('Asignaturas vinculadas encontradas', [
+            'asignatura_origen_id' => $asignatura->id,
+            'comun_token' => $asignatura->comun_token,
+            'vinculadas_count' => $vinculadas->count()
+        ]);
 
         foreach ($vinculadas as $vinculada) {
             // Cronograma master equivalente en la asignatura vinculada (por numero_sesion)
@@ -568,10 +589,12 @@ class PlanificacionSemestralController extends Controller
                     'georeferencia'           => $seguimiento->georeferencia,
                     'evidencias'              => $seguimiento->evidencias,
                     'integracion_transversal' => $seguimiento->integracion_transversal,
+                    'es_propagado'            => true,
+                    'propagado_de_id'         => $seguimiento->id,
                 ]
             );
 
-            \Log::info("Seguimiento propagado a materia común: {$vinculada->codigo} grupo {$grupoVinculado->id}");
+            Log::info("Seguimiento propagado a materia común: {$vinculada->codigo} grupo {$grupoVinculado->id}");
         }
     }
 
@@ -636,7 +659,7 @@ class PlanificacionSemestralController extends Controller
         $planning = $planificacionPersonal ?? $tema;
 
         // Debug logging
-        \Log::info('Resolving pedagogico for tema_id: ' . $tema->id, [
+        Log::info('Resolving pedagogico for tema_id: ' . $tema->id, [
             'has_planificacion_personal' => !is_null($planificacionPersonal),
             'planning_type' => get_class($planning),
             'estrategias_recursos' => $planning->estrategias_recursos ?? 'null',

@@ -10,6 +10,8 @@ use App\Models\Sede;
 use App\Models\Carrera;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
 use App\Models\InformeSemanal;
 use App\Models\Cronograma;
@@ -49,14 +51,9 @@ class ReporteController extends Controller
             ->with(['tema', 'seguimientos'])
             ->get();
 
-        // 2. Seguimientos realizados en este rango de fechas real, EXCLUYENDO sesiones de examen/práctica especial
+        // 2. Seguimientos realizados en este rango de fechas real, INCLUYENDO sesiones de examen/práctica especial
         $seguimientos = $grupo->seguimientos()
             ->whereBetween('fecha', [$startDate->toDateString(), $endDate->toDateString()])
-            ->where(function($q) {
-                $q->whereNull('es_examen')
-                  ->orWhere('es_examen', false)
-                  ->orWhere('es_examen', 0);
-            })
             ->get();
 
         $executionMap = $seguimientos->keyBy('cronograma_id');
@@ -82,17 +79,27 @@ class ReporteController extends Controller
 
         foreach ($relevantCronoIds as $cronoId) {
             $session = $plannedSessions->firstWhere('id', $cronoId) ?? $extraCronosMap->get($cronoId);
-            // Get seguimiento from the filtered map; fallback to session's seguimientos but skip exam ones
-            $seguimiento = $executionMap->get($cronoId) ?? 
-                ($session ? $session->seguimientos->first(fn($s) => !$s->es_examen && empty($s->tipo_examen)) : null);
+            // Get seguimiento from the filtered map (only seguimientos dentro del rango de fechas)
+            $seguimiento = $executionMap->get($cronoId);
+            $evidencias = $seguimiento ? (is_string($seguimiento->evidencias) ? json_decode($seguimiento->evidencias, true) : ($seguimiento->evidencias ?? [])) : [];
 
             $isPlannedThisWeek = $session && $session->semana_academica == $weekNum;
             $isExecutedThisWeek = $seguimiento && Carbon::parse($seguimiento->fecha)->between($startDate, $endDate);
 
             if (!$isPlannedThisWeek && !$isExecutedThisWeek) continue;
 
-            // Saltar sesiones marcadas como examen o práctica especial (es_examen=true o tipo_examen definido)
-            if ($seguimiento && ($seguimiento->es_examen || !empty($seguimiento->tipo_examen))) continue;
+            // Sesiones marcadas como examen o práctica especial se cuentan como TOTALMENTE CUMPLIDAS
+            if ($seguimiento && ($seguimiento->es_examen || !empty($seguimiento->tipo_examen))) {
+                $criteriaStats['cumplimiento']['totalmente']++;
+                $criteriaStats['registro_oportuno']['en_hora_verde']++;
+                
+                // Contar evidencias si existen (exámenes también pueden tener evidencias)
+                if (!empty($evidencias['aprendizaje_activo'])) $criteriaStats['evidencia_tipos']['fotos_videos']++;
+                if (!empty($evidencias['evaluacion_formativa'])) $criteriaStats['evidencia_tipos']['link_evidencia']++;
+                if (!empty($evidencias['secuencia_didactica'])) $criteriaStats['evidencia_tipos']['archivos_secuencia']++;
+                
+                continue; // Saltar criterios pedagógicos, se considera cumplida automáticamente
+            }
 
             $pedagogico = $seguimiento ? (is_string($seguimiento->pedagogico) ? json_decode($seguimiento->pedagogico, true) : ($seguimiento->pedagogico ?? [])) : [];
             $integracion = $seguimiento ? (is_string($seguimiento->integracion_transversal) ? json_decode($seguimiento->integracion_transversal, true) : ($seguimiento->integracion_transversal ?? [])) : [];
@@ -163,7 +170,9 @@ class ReporteController extends Controller
                 'tema' => $session->tema->nombre ?? 'N/A',
                 'tipo' => $isExecutedThisWeek ? ($isPlannedThisWeek ? 'Programada' : 'Extra') : 'Pendiente',
                 'estado' => $seguimiento ? ($seguimiento->estado_cumplimiento ?? 'PENDIENTE') : 'PENDIENTE',
-                'evidencias' => $evidencias
+                'evidencias' => $evidencias,
+                'es_examen' => $seguimiento ? ($seguimiento->es_examen ?? false) : false,
+                'tipo_examen' => $seguimiento ? ($seguimiento->tipo_examen ?? null) : null
             ];
         }
 
@@ -269,6 +278,8 @@ class ReporteController extends Controller
      */
     public function storeWeeklyReport(Request $request)
     {
+        Log::info('Guardando informe semanal', ['request_data' => $request->all()]);
+        
         $request->validate([
             'grupo_id' => 'required|exists:grupos,id',
             'semana_inicio' => 'required|date',
@@ -276,30 +287,168 @@ class ReporteController extends Controller
             'escala_alerta' => 'required|in:VERDE,AMARILLO,ROJO'
         ]);
 
-        $startDate = Carbon::parse($request->semana_inicio)->startOfWeek();
-        $endDate = $startDate->copy()->endOfWeek();
+        try {
+            $startDate = Carbon::parse($request->semana_inicio)->startOfWeek();
+            $endDate = $startDate->copy()->endOfWeek();
 
-        $yesCount = collect($request->criterios)->where('cumple', true)->count();
-        $totalCriterios = count($request->criterios);
-        $percentage = $totalCriterios > 0 ? round(($yesCount / $totalCriterios) * 100) : 0;
+            // Obtener docente_id del grupo si no viene en la solicitud
+            $docenteId = $request->docente_id;
+            if (!$docenteId) {
+                $grupo = Grupo::find($request->grupo_id);
+                if ($grupo && $grupo->docente_id) {
+                    $docenteId = $grupo->docente_id;
+                } else {
+                    throw new \Exception('No se pudo determinar el docente para este grupo');
+                }
+            }
 
-        $report = InformeSemanal::updateOrCreate(
-            [
-                'grupo_id' => $request->grupo_id,
-                'semana_inicio' => $startDate->toDateString()
-            ],
-            [
-                'docente_id' => $request->docente_id,
+            $yesCount = collect($request->criterios)->where('cumple', true)->count();
+            $totalCriterios = count($request->criterios);
+            $percentage = $totalCriterios > 0 ? round(($yesCount / $totalCriterios) * 100) : 0;
+
+            // Datos base para el informe
+            $datos = [
+                'docente_id' => $docenteId,
                 'semana_fin' => $endDate->toDateString(),
                 'criterios' => $request->criterios,
                 'observaciones' => $request->observaciones,
                 'escala_alerta' => $request->escala_alerta,
                 'cumplimiento_porcentaje' => $percentage,
-                'created_by' => auth()->id() // Director
-            ]
-        );
+                'created_by' => Auth::id(), // Director
+            ];
 
-        return response()->json(['message' => 'Informe guardado correctamente', 'report' => $report]);
+            // Añadir campos de propagación solo si existen en la tabla
+            // Esto evita errores si las migraciones no se han ejecutado
+            try {
+                // Intentar verificar si la columna existe mediante una consulta de información del esquema
+                // Si falla, no añadimos los campos
+                $columnExists = \Illuminate\Support\Facades\Schema::hasColumn('informe_semanals', 'es_propagado');
+                if ($columnExists) {
+                    $datos['es_propagado'] = false;
+                    $datos['propagado_de_id'] = null;
+                }
+            } catch (\Exception $e) {
+                Log::warning('No se pudieron verificar columnas de propagación', ['error' => $e->getMessage()]);
+                // Continuar sin los campos
+            }
+
+            $report = InformeSemanal::updateOrCreate(
+                [
+                    'grupo_id' => $request->grupo_id,
+                    'semana_inicio' => $startDate->toDateString()
+                ],
+                $datos
+            );
+
+            // Refresh to get the latest attributes (like id if it was just created)
+            $report->refresh();
+
+            Log::info('Informe semanal guardado exitosamente', ['report_id' => $report->id]);
+
+            // Intentar propagar solo si las columnas de propagación existen
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasColumn('informe_semanals', 'es_propagado')) {
+                    $this->propagarInformeAComunes($request->grupo_id, $report);
+                } else {
+                    Log::info('Columnas de propagación no disponibles, omitiendo propagación automática');
+                }
+            } catch (\Exception $e) {
+                Log::warning('Error al intentar propagar informe', ['error' => $e->getMessage()]);
+                // Continuar sin propagación
+            }
+
+            return response()->json(['message' => 'Informe guardado correctamente', 'report' => $report]);
+        } catch (\Exception $e) {
+            Log::error('Error al guardar informe semanal', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request_data' => $request->all()
+            ]);
+            
+            return response()->json([
+                'error' => 'Error interno al guardar el informe',
+                'details' => env('APP_DEBUG') ? $e->getMessage() : 'Contacte al administrador'
+            ], 500);
+        }
+    }
+
+    /**
+     * Propaga el informe semanal guardado a todos los grupos de asignaturas vinculadas
+     * como materias comunes (mismo comun_token, mismo docente).
+     *
+     * Esto permite que el director registre el informe UNA SOLA VEZ
+     * y el sistema lo refleje automáticamente para todas las carreras vinculadas,
+     * evitando registros duplicados innecesarios.
+     */
+    private function propagarInformeAComunes(int $grupoId, InformeSemanal $informe): void
+    {
+        Log::info('Propagando informe semanal a comunes', ['grupo_id' => $grupoId, 'informe_id' => $informe->id]);
+        
+        $grupoSource = Grupo::with('asignatura')->find($grupoId);
+        if (!$grupoSource || !$grupoSource->asignatura) {
+            Log::info('Grupo o asignatura no encontrados, abortando propagación');
+            return;
+        }
+        
+        $asignatura = $grupoSource->asignatura;
+        if (!$asignatura->comun_token) {
+            Log::info('Asignatura no tiene comun_token, abortando propagación', ['asignatura_id' => $asignatura->id, 'codigo' => $asignatura->codigo]);
+            return;
+        }
+        
+        if (!$grupoSource->docente_id) {
+            Log::info('Grupo no tiene docente asignado, abortando propagación');
+            return;
+        }
+
+        $vinculadas = Asignatura::where('comun_token', $asignatura->comun_token)
+            ->where('id', '!=', $asignatura->id)
+            ->get();
+
+        Log::info('Asignaturas vinculadas encontradas', [
+            'asignatura_origen_id' => $asignatura->id,
+            'comun_token' => $asignatura->comun_token,
+            'vinculadas_count' => $vinculadas->count()
+        ]);
+
+        foreach ($vinculadas as $vinculada) {
+            // Grupo correspondiente: mismo docente, misma asignatura vinculada
+            $grupoVinculado = Grupo::where('asignatura_id', $vinculada->id)
+                ->where('docente_id', $grupoSource->docente_id)
+                ->first();
+
+            if (!$grupoVinculado) continue;
+
+            // Solo crear/actualizar si el origen es más reciente que el destino existente
+            // (respeta si ya existe un informe directamente en la materia vinculada)
+            $existente = InformeSemanal::where('grupo_id', $grupoVinculado->id)
+                ->where('semana_inicio', $informe->semana_inicio)
+                ->first();
+
+            if ($existente && $existente->updated_at > $informe->updated_at) {
+                continue; // El destino ya tiene datos más recientes, no sobreescribir
+            }
+
+            InformeSemanal::updateOrCreate(
+                [
+                    'grupo_id' => $grupoVinculado->id,
+                    'semana_inicio' => $informe->semana_inicio
+                ],
+                [
+                    'docente_id' => $informe->docente_id,
+                    'semana_fin' => $informe->semana_fin,
+                    'criterios' => $informe->criterios,
+                    'observaciones' => $informe->observaciones,
+                    'escala_alerta' => $informe->escala_alerta,
+                    'cumplimiento_porcentaje' => $informe->cumplimiento_porcentaje,
+                    'created_by' => $informe->created_by,
+                    'es_propagado' => true,
+                    'propagado_de_id' => $informe->id
+                ]
+            );
+
+            Log::info("Informe semanal propagado a materia común: {$vinculada->codigo} grupo {$grupoVinculado->id}");
+        }
     }
 
     /**
@@ -325,7 +474,7 @@ class ReporteController extends Controller
                 $reportDraft = $draftData['report'];
                 
                 if ($reportDraft['escala_alerta'] === 'VERDE') {
-                    InformeSemanal::create([
+                    $report = InformeSemanal::create([
                         'grupo_id' => $reportDraft['grupo_id'],
                         'docente_id' => $reportDraft['docente_id'],
                         'semana_inicio' => $reportDraft['semana_inicio'],
@@ -334,8 +483,15 @@ class ReporteController extends Controller
                         'observaciones' => 'CUMPLIDO',
                         'escala_alerta' => 'VERDE',
                         'cumplimiento_porcentaje' => $reportDraft['cumplimiento_porcentaje'],
-                        'created_by' => auth()->id() // Director
+                'created_by' => Auth::id(), // Director
+                        'es_propagado' => false,
+                        'propagado_de_id' => null
                     ]);
+                    
+                    // Si la asignatura es parte de un grupo de materias comunes,
+                    // propagar el informe automáticamente a los grupos vinculados
+                    $this->propagarInformeAComunes($grupoId, $report);
+                    
                     $count++;
                 }
             }
@@ -790,7 +946,7 @@ class ReporteController extends Controller
         $baseDate = Carbon::create(2026, 2, 9)->startOfWeek();
         $weekNum = $startDate->diffInWeeks($baseDate) + 1;
 
-        \Log::info("Generando Reporte Semanal. Semana Académica: $weekNum, Rango: {$startDate->toDateString()} - {$endDate->toDateString()}");
+        Log::info("Generando Reporte Semanal. Semana Académica: $weekNum, Rango: {$startDate->toDateString()} - {$endDate->toDateString()}");
 
         // 1. Obtener Grupos con relaciones filtradas
         $grupos = Grupo::where('sede_id', $sedeId)
@@ -853,7 +1009,9 @@ class ReporteController extends Controller
                     'criterios' => $officialReport->criterios,
                     'alerta' => $officialReport->escala_alerta,
                     'acciones' => 'Revisado',
-                    'estado' => 'Guardado'
+                    'estado' => 'Guardado',
+                    'es_propagado' => $officialReport->es_propagado ?? false,
+                    'propagado_de_id' => $officialReport->propagado_de_id ?? null
                 ];
                 continue;
             }
@@ -874,7 +1032,9 @@ class ReporteController extends Controller
                     'criterios' => [],
                     'alerta' => 'ROJO',
                     'acciones' => 'Sin Planificación',
-                    'estado' => 'Pendiente'
+                    'estado' => 'Pendiente',
+                    'es_propagado' => false,
+                    'propagado_de_id' => null
                 ];
                 continue; 
             }
@@ -900,8 +1060,19 @@ class ReporteController extends Controller
                 // Solo incluimos si pertenece a esta semana (por plan o por ejecución real)
                 if (!$isPlannedThisWeek && !$isExecutedThisWeek) continue;
 
-                // Saltar sesiones de examen o práctica especial
-                if ($seguimiento && ($seguimiento->es_examen || !empty($seguimiento->tipo_examen))) continue;
+                // Sesiones de examen o práctica especial se consideran TOTALMENTE CUMPLIDAS
+                if ($seguimiento && ($seguimiento->es_examen || !empty($seguimiento->tipo_examen))) {
+                    $checks[] = [
+                        'fecha' => $seguimiento ? (is_string($seguimiento->fecha) ? substr($seguimiento->fecha, 0, 10) : $seguimiento->fecha->format('Y-m-d')) : ($session->fecha ?? 'Pendiente'),
+                        'asistencia' => true,
+                        'contenido' => true,
+                        'planificacion' => true,
+                        'cumplido' => true,
+                        'tipo' => $isExecutedThisWeek ? ($isPlannedThisWeek ? 'Programada' : 'Extra') : 'Pendiente',
+                        'es_examen' => true
+                    ];
+                    continue;
+                }
 
                 $pedagogico = $seguimiento ? (is_string($seguimiento->pedagogico) ? json_decode($seguimiento->pedagogico, true) : ($seguimiento->pedagogico ?? [])) : [];
                 $evidencias = $seguimiento ? (is_string($seguimiento->evidencias) ? json_decode($seguimiento->evidencias, true) : ($seguimiento->evidencias ?? [])) : [];
@@ -958,7 +1129,9 @@ class ReporteController extends Controller
                 'criterios' => $checks,
                 'alerta' => $alertLevel,
                 'acciones' => $alertLevel === 'ROJO' ? 'Verificar' : 'Pendiente',
-                'estado' => count($checks) > 0 ? 'Borrador' : 'Pendiente'
+                'estado' => count($checks) > 0 ? 'Borrador' : 'Pendiente',
+                'es_propagado' => false,
+                'propagado_de_id' => null
             ];
         }
 
@@ -1276,8 +1449,12 @@ class ReporteController extends Controller
             foreach ($asig->grupos as $grupo) {
                 foreach ($grupo->cronogramas as $crono) {
                     foreach ($crono->seguimientos ?? [] as $seg) {
-                        // Ignorar exámenes
-                        if ($seg->es_examen || !empty($seg->tipo_examen)) continue;
+                        // Exámenes se consideran TOTALMENTE CUMPLIDOS
+                        if ($seg->es_examen || !empty($seg->tipo_examen)) {
+                            $puntajeCumplimiento += 1.0;
+                            $totalSeguimientos++;
+                            continue;
+                        }
 
                         $estado = strtoupper($seg->estado_cumplimiento ?? '');
                         if (in_array($estado, ['TOTAL', 'TOTALMENTE'])) {
@@ -1981,20 +2158,25 @@ class ReporteController extends Controller
     {
         $carreraId = $request->carrera_id;
         $semanaInicioStr = $request->semana_inicio;
+        $sedeId = $request->sede_id;
 
         if (!$carreraId || !$semanaInicioStr) {
             return response()->json(['error' => 'Falta carrera_id o semana_inicio'], 400);
+        }
+        if (!$sedeId) {
+            return response()->json(['error' => 'Falta sede_id'], 400);
         }
 
         // Determinar las fechas de la semana actual y la anterior
         $startDateThisWeek = Carbon::parse($semanaInicioStr)->startOfWeek();
         $startDateLastWeek = $startDateThisWeek->copy()->subWeek();
 
-        // 1. OBTENER INFORMES DE ESTA SEMANA PARA LA CARRERA
-        $informesThisWeek = InformeSemanal::whereHas('grupo', function ($q) use ($carreraId) {
-                $q->whereHas('asignatura.carreras', function($qc) use ($carreraId) {
-                    $qc->where('carreras.id', $carreraId);
-                });
+        // 1. OBTENER INFORMES DE ESTA SEMANA PARA LA CARRERA Y SEDE
+        $informesThisWeek = InformeSemanal::whereHas('grupo', function ($q) use ($carreraId, $sedeId) {
+                $q->where('sede_id', $sedeId)
+                  ->whereHas('asignatura.carreras', function($qc) use ($carreraId) {
+                      $qc->where('carreras.id', $carreraId);
+                  });
             })
             ->whereDate('semana_inicio', $startDateThisWeek->toDateString())
             ->with(['docente', 'grupo.asignatura']) // Para sacar los nombres luego
@@ -2036,17 +2218,19 @@ class ReporteController extends Controller
             $diaNombre = $diasSemana[$i]; // Ej: "Lunes"
             $diaDate   = $startDateThisWeek->copy()->addDays($i); // fecha real del día en la semana
 
-            // Esperadas: entradas en horarios para grupos de la carrera en ese día de semana
-            $esperadas = \App\Models\Horario::whereHas('grupo', function ($q) use ($carreraId) {
-                    $q->whereHas('asignatura.carreras', fn($qc) => $qc->where('carreras.id', $carreraId));
+            // Esperadas: entradas en horarios para grupos de la carrera y sede en ese día de semana
+            $esperadas = \App\Models\Horario::whereHas('grupo', function ($q) use ($carreraId, $sedeId) {
+                    $q->where('sede_id', $sedeId)
+                      ->whereHas('asignatura.carreras', fn($qc) => $qc->where('carreras.id', $carreraId));
                 })
                 ->where('dia', $diaNombre)
                 ->count();
 
             // Marcadas: cualquier control de clase creado en ese día (incluyendo prácticos/exámenes)
             // La exclusión de examen/práctica solo aplica al informe del director, no a este gráfico
-            $marcadas = \App\Models\Seguimiento::whereHas('grupo', function ($q) use ($carreraId) {
-                    $q->whereHas('asignatura.carreras', fn($qc) => $qc->where('carreras.id', $carreraId));
+            $marcadas = \App\Models\Seguimiento::whereHas('grupo', function ($q) use ($carreraId, $sedeId) {
+                    $q->where('sede_id', $sedeId)
+                      ->whereHas('asignatura.carreras', fn($qc) => $qc->where('carreras.id', $carreraId));
                 })
                 ->whereDate('fecha', $diaDate->toDateString())
                 ->count();
@@ -2192,19 +2376,24 @@ class ReporteController extends Controller
     {
         $carreraId = $request->carrera_id;
         $semanaInicioStr = $request->semana_inicio;
+        $sedeId = $request->sede_id;
 
         if (!$carreraId || !$semanaInicioStr) {
             return response()->json(['error' => 'Falta carrera_id o semana_inicio'], 400);
+        }
+        if (!$sedeId) {
+            return response()->json(['error' => 'Falta sede_id'], 400);
         }
 
         $startDateThisWeek = Carbon::parse($semanaInicioStr)->startOfWeek();
         $startDateLastWeek = $startDateThisWeek->copy()->subWeek();
 
-        // 1. OBTENER INFORMES DE ESTA SEMANA PARA LA CARRERA (ROJO O AMARILLO CON ACCIONES Y GUARDADOS)
-        $informesThisWeek = InformeSemanal::whereHas('grupo', function ($q) use ($carreraId) {
-                $q->whereHas('asignatura.carreras', function($qc) use ($carreraId) {
-                    $qc->where('carreras.id', $carreraId);
-                });
+        // 1. OBTENER INFORMES DE ESTA SEMANA PARA LA CARRERA Y SEDE (ROJO O AMARILLO CON ACCIONES Y GUARDADOS)
+        $informesThisWeek = InformeSemanal::whereHas('grupo', function ($q) use ($carreraId, $sedeId) {
+                $q->where('sede_id', $sedeId)
+                  ->whereHas('asignatura.carreras', function($qc) use ($carreraId) {
+                      $qc->where('carreras.id', $carreraId);
+                  });
             })
             ->whereDate('semana_inicio', $startDateThisWeek->toDateString())
             ->whereIn('escala_alerta', ['ROJO', 'AMARILLO'])
@@ -2217,14 +2406,15 @@ class ReporteController extends Controller
         $docentesReincidentes = [];
 
         if (!empty($docentesPotencialesThisWeekIds)) {
-            // 2. VERIFICAR SI ESTOS DOCENTES ESTUVIERON EN ROJO O AMARILLO LA SEMANA PASADA EN ALGUNA MATERIA DE LA CARRERA
+            // 2. VERIFICAR SI ESTOS DOCENTES ESTUVIERON EN ROJO O AMARILLO LA SEMANA PASADA EN ALGUNA MATERIA DE LA CARRERA Y SEDE
             $informesLastWeek = InformeSemanal::whereIn('docente_id', $docentesPotencialesThisWeekIds)
                 ->whereDate('semana_inicio', $startDateLastWeek->toDateString())
                 ->whereIn('escala_alerta', ['ROJO', 'AMARILLO'])
-                ->whereHas('grupo', function ($q) use ($carreraId) {
-                    $q->whereHas('asignatura.carreras', function($qc) use ($carreraId) {
-                        $qc->where('carreras.id', $carreraId);
-                    });
+                ->whereHas('grupo', function ($q) use ($carreraId, $sedeId) {
+                    $q->where('sede_id', $sedeId)
+                      ->whereHas('asignatura.carreras', function($qc) use ($carreraId) {
+                          $qc->where('carreras.id', $carreraId);
+                      });
                 })
                 ->get();
 

@@ -5,9 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\Asignatura;
 use App\Models\Carrera;
 use App\Models\Grupo;
+use App\Services\FusionBackupService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class MateriaComunController extends Controller
 {
@@ -243,6 +245,24 @@ class MateriaComunController extends Controller
         // y la planificación personal en otra (por falta de horario en una de ellas).
         $tokenToSync = $source->comun_token;
         if ($tokenToSync) {
+            // Backup de seguridad antes de fusión
+            try {
+                $backupService = app(\App\Services\FusionBackupService::class);
+                $backupId = $backupService->backupPreFusion($tokenToSync);
+                Log::info('Fusión de materias comunes - Backup creado', [
+                    'backup_id' => $backupId,
+                    'comun_token' => $tokenToSync,
+                    'source_id' => $source->id,
+                    'target_id' => $target->id,
+                ]);
+            } catch (\Exception $e) {
+                Log::error('Fusión de materias comunes - Error en backup', [
+                    'error' => $e->getMessage(),
+                    'comun_token' => $tokenToSync,
+                ]);
+                return response()->json(['error' => 'No se pudo crear backup de seguridad. Fusión cancelada.'], 500);
+            }
+            
             $syncService = app(\App\Services\MateriasComunesSyncService::class);
             $syncService->mergeAndSyncOnLink($tokenToSync);
 
@@ -270,15 +290,105 @@ class MateriaComunController extends Controller
 
     /**
      * Unlink a subject from its group.
+     * Reglas:
+     * - Si solo hay 2 materias en el grupo (incluyendo esta), ambas pierden el comun_token
+     * - Si hay 3 o más, solo esta materia pierde el comun_token
+     * - Si después de desvincular queda solo 1 materia con el token, esa también pierde el token
      */
     public function unlink(Request $request, $id)
     {
         $asignatura = Asignatura::findOrFail($id);
         // Validar propiedad...
+        
+        $comunToken = $asignatura->comun_token;
+        
+        if (!$comunToken) {
+            return response()->json(['message' => 'La materia no está vinculada'], 400);
+        }
+        
+        // Contar cuántas asignaturas tienen este comun_token
+        $asignaturasConToken = Asignatura::where('comun_token', $comunToken)->get();
+        $totalConToken = $asignaturasConToken->count();
+        
+        Log::info('Desvinculando materia común', [
+            'asignatura_id' => $asignatura->id,
+            'comun_token' => $comunToken,
+            'total_en_grupo' => $totalConToken
+        ]);
+        
+        if ($totalConToken === 2) {
+            // Caso 1: Solo 2 materias en el grupo - ambas pierden el token
+            $otraAsignatura = $asignaturasConToken->where('id', '!=', $asignatura->id)->first();
+            
+            DB::transaction(function () use ($asignatura, $otraAsignatura) {
+                $asignatura->comun_token = null;
+                $asignatura->save();
+                
+                if ($otraAsignatura) {
+                    $otraAsignatura->comun_token = null;
+                    $otraAsignatura->save();
+                    
+                    Log::info('Desvinculación completa - ambas materias', [
+                        'asignatura_1' => $asignatura->id,
+                        'asignatura_2' => $otraAsignatura->id
+                    ]);
+                }
+            });
+            
+            return response()->json(['message' => 'Desvinculación completa exitosa (ambas materias)']);
+            
+        } else {
+            // Caso 2: 3 o más materias - solo esta pierde el token
+            $asignatura->comun_token = null;
+            $asignatura->save();
+            
+            // Verificar si después de desvincular queda solo 1 materia con el token
+            $asignaturasRestantes = Asignatura::where('comun_token', $comunToken)->count();
+            
+            if ($asignaturasRestantes === 1) {
+                // Si queda solo 1, esa también pierde el token
+                $ultimaAsignatura = Asignatura::where('comun_token', $comunToken)->first();
+                if ($ultimaAsignatura) {
+                    $ultimaAsignatura->comun_token = null;
+                    $ultimaAsignatura->save();
+                    
+                    Log::info('Desvinculación automática - última materia del grupo', [
+                        'asignatura' => $ultimaAsignatura->id,
+                        'comun_token' => $comunToken
+                    ]);
+                }
+            }
+            
+            Log::info('Desvinculación parcial exitosa', [
+                'asignatura_desvinculada' => $asignatura->id,
+                'materias_restantes_con_token' => $asignaturasRestantes
+            ]);
+            
+            return response()->json(['message' => 'Desvinculación parcial exitosa']);
+        }
+    }
 
-        $asignatura->comun_token = null;
-        $asignatura->save();
+    /**
+     * Verifica la integridad de una fusión reciente comparando con el backup más reciente.
+     */
+    public function checkIntegrity(Request $request, string $token)
+    {
+        $user = $request->user();
+        if (!$user->director) {
+            return response()->json(['error' => 'No autorizado'], 403);
+        }
 
-        return response()->json(['message' => 'Desvinculación exitosa']);
+        $backupService = app(FusionBackupService::class);
+        $backups = $backupService->listBackups($token);
+
+        if (empty($backups)) {
+            return response()->json(['error' => 'No hay backups para este token'], 404);
+        }
+
+        // Tomar el backup más reciente
+        $latestBackup = $backups[0];
+        $report = $backupService->verifyIntegrity($latestBackup['id'], $token);
+
+        return response()->json($report);
     }
 }

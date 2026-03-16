@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Seguimiento extends Model
 {
@@ -22,6 +23,8 @@ class Seguimiento extends Model
         'georeferencia',
         'evidencias',
         'integracion_transversal',
+        'es_propagado',
+        'propagado_de_id',
     ];
 
     protected $casts = [
@@ -32,6 +35,7 @@ class Seguimiento extends Model
         'cumplido' => 'boolean',
         'tema_cumplido' => 'boolean',
         'es_examen' => 'boolean',
+        'es_propagado' => 'boolean',
         'fecha' => 'date',
     ];
 
@@ -48,5 +52,15 @@ class Seguimiento extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function propagadoDe(): BelongsTo
+    {
+        return $this->belongsTo(Seguimiento::class, 'propagado_de_id');
+    }
+
+    public function propagados(): HasMany
+    {
+        return $this->hasMany(Seguimiento::class, 'propagado_de_id');
     }
 }
