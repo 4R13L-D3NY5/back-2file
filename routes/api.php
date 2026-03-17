@@ -22,6 +22,58 @@ Route::post('/register', [AuthController::class, 'register']);
 Route::get('/programas-analiticos', [\App\Http\Controllers\AsignaturaController::class, 'programasAnaliticos']);
 Route::get('/reportes/semanal/print', [\App\Http\Controllers\ReporteController::class, 'exportWeeklyReportHtml']);
 Route::get('/asignaturas/{id}/template-personal', [AsignaturaController::class, 'templatePersonal']);
+
+// Debug endpoint for checking API data (temporary)
+Route::get('/debug/plan-n-data', function (Illuminate\Http\Request $request) {
+    $gestion = $request->input('gestion', '1-2026');
+    $carrera = $request->input('carrera', 'carenl');
+    $sede = (int) $request->input('sede', 1);
+    $codigo = $request->input('codigo');
+    
+    $service = app()->make('App\Services\GruposExternoService');
+    $data = $service->listarMateriasPlanN($gestion, $carrera, $sede);
+    
+    $filtered = array_map(function ($m) {
+        return [
+            'codigo' => $m['codigo'],
+            'nombre' => $m['nombre'],
+            'semestre' => $m['semestre'],
+            'plan_estudios' => $m['plan_estudios'],
+            'docentes' => $m['docentes']
+        ];
+    }, $data);
+    
+    return response()->json([
+        'success' => true,
+        'params' => compact('gestion', 'carrera', 'sede', 'codigo'),
+        'total' => count($data),
+        'data' => $filtered,
+        'search_result' => $codigo ? array_filter($data, fn($m) => $m['codigo'] === $codigo) : null
+    ]);
+});
+
+// Debug endpoint to force refresh cache and get raw data
+Route::get('/debug/force-refresh', function (Illuminate\Http\Request $request) {
+    $gestion = $request->input('gestion', '1-2026');
+    $carrera = $request->input('carrera', 'carenl');
+    $sede = (int) $request->input('sede', 1);
+    
+    $service = app()->make('App\Services\GruposExternoService');
+    $service->limpiarCache($gestion, $carrera, $sede);
+    
+    // Bypass cache and directly fetch from API
+    $cacheKey = "grupos_externos_plan_n_{$gestion}_{$carrera}_{$sede}";
+    \Illuminate\Support\Facades\Cache::forget($cacheKey);
+    
+    $data = $service->listarMateriasPlanN($gestion, $carrera, $sede);
+    
+    return response()->json([
+        'success' => true,
+        'params' => compact('gestion', 'carrera', 'sede'),
+        'total' => count($data),
+        'data' => $data
+    ]);
+});
 Route::middleware('auth:sanctum')->group(function () {
     // Auth
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -62,10 +114,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('grupos-externo', [GruposExternoController::class, 'index']);
     Route::get('grupos-externo/plan-n', [GruposExternoController::class, 'planN']);
     Route::get('grupos-externo/comparar-asignatura', [GruposExternoController::class, 'compararAsignatura']);
+    Route::get('grupos-externo/buscar-carpeta', [GruposExternoController::class, 'buscarCarpeta']);
+    Route::get('grupos-externo/detalle-con-horarios', [GruposExternoController::class, 'detalleConHorarios']);
     Route::post('grupos-externo/refresh', [GruposExternoController::class, 'refresh']);
     // Gestión de grupos locales
     Route::post('grupos-externo/quitar-grupo-docente', [GruposExternoController::class, 'quitarGrupoDocente']);
     Route::post('grupos-externo/asignar-grupo-docente', [GruposExternoController::class, 'asignarGrupoDocente']);
+    Route::post('grupos-externo/importar-desde-planning', [GruposExternoController::class, 'importarDesdePlanning']);
 
     // Stats
     Route::get('admin/stats', [DashboardController::class, 'index']);
@@ -254,5 +309,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/manual-registration/fetch', [\App\Http\Controllers\ManualRegistrationController::class, 'fetchFromPlanning']);
     Route::post('/manual-registration/store', [\App\Http\Controllers\ManualRegistrationController::class, 'storeManual']);
     Route::put('/manual-registration/docente', [\App\Http\Controllers\ManualRegistrationController::class, 'updateDocente']);
+
+    // Planning Cache (sincronización y lectura de datos API Planning guardados en BD)
+    Route::post('/planning/sincronizar-cochabamba', [\App\Http\Controllers\PlanningCacheController::class, 'sincronizarCochabamba']);
+    Route::get('/planning/cache', [\App\Http\Controllers\PlanningCacheController::class, 'getCache']);
+    Route::get('/planning/sync-status', [\App\Http\Controllers\PlanningCacheController::class, 'syncStatus']);
 
 });

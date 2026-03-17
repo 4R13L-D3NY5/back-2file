@@ -221,12 +221,26 @@ class GruposExternoService
     {
         $data = $this->listarMateriasPlanN($gestion, $carrera, $sede);
         
+        Log::debug('GruposExternoService.obtenerAsignaturaDetalle - Buscando asignatura', [
+            'gestion' => $gestion,
+            'carrera' => $carrera,
+            'sede' => $sede,
+            'codigo_buscado' => $codigoAsignatura,
+            'total_materias' => count($data),
+            'codigos_disponibles' => array_map(function ($m) { return $m['codigo']; }, $data)
+        ]);
+        
         foreach ($data as $materia) {
             if ($materia['codigo'] === $codigoAsignatura) {
+                Log::debug('GruposExternoService.obtenerAsignaturaDetalle - Asignatura encontrada', [
+                    'codigo' => $materia['codigo'],
+                    'nombre' => $materia['nombre']
+                ]);
                 return $materia;
             }
         }
         
+        Log::debug('GruposExternoService.obtenerAsignaturaDetalle - Asignatura NO encontrada');
         return null;
     }
 

@@ -396,6 +396,374 @@ class GruposExternoController extends Controller
     }
 
     /**
+     * Buscar carpeta (asignatura local) por código y plan_estudios = N
+     * Retorna todas las coincidencias con su info detallada: unidades, temas, cronogramas
+     */
+    public function buscarCarpeta(Request $request): JsonResponse
+    {
+        $codigo = $request->input('codigo');
+
+        if (!$codigo) {
+            return response()->json([
+                'success' => false,
+                'message' => 'El código de asignatura es requerido'
+            ], 400);
+        }
+
+        $asignaturas = Asignatura::withTrashed()
+            ->where('codigo', $codigo)
+            ->where('plan_estudios', 'N')
+            ->with([
+                'carreras',
+                'unidades' => function ($q) {
+                    // Unidad no usa SoftDeletes, no llamar withTrashed()
+                    $q->orderBy('orden')->with(['temas' => function ($qt) {
+                        $qt->orderBy('orden')->select('id', 'unidad_id', 'titulo');
+                    }]);
+                },
+                'grupos' => function ($q) {
+                    // Grupo sí usa SoftDeletes
+                    $q->withTrashed()->with('docente');
+                },
+                'cronogramas' => function ($q) {
+                    $q->select('id', 'asignatura_id', 'fecha', 'tema_ejecutado')->limit(10);
+                },
+            ])
+            ->get();
+
+        if ($asignaturas->isEmpty()) {
+            return response()->json([
+                'success' => true,
+                'encontrado' => false,
+                'data' => [],
+                'message' => 'No se encontró ninguna carpeta con ese código y plan N'
+            ]);
+        }
+
+        $data = $asignaturas->map(function ($asig) {
+            $totalTemas = $asig->unidades->sum(fn($u) => $u->temas->count());
+            $totalCronogramas = $asig->cronogramas->count();
+            $docentes = $asig->grupos
+                ->filter(fn($g) => $g->docente)
+                ->map(fn($g) => [
+                    'id' => $g->docente->id,
+                    'nombre_completo' => $g->docente->nombre_completo,
+                    'grupo' => $g->nombre,
+                ])
+                ->unique('id')
+                ->values();
+
+            return [
+                'id' => $asig->id,
+                'codigo' => $asig->codigo,
+                'nombre' => $asig->nombre,
+                'plan_estudios' => $asig->plan_estudios,
+                'eliminada' => !is_null($asig->deleted_at),
+                'deleted_at' => $asig->deleted_at,
+                'estado' => $asig->estado ?? null,
+                'creditos' => $asig->creditos,
+                'horas_teoricas' => $asig->horas_teoricas,
+                'horas_practicas' => $asig->horas_practicas,
+                'carreras' => $asig->carreras->map(fn($c) => [
+                    'id' => $c->id,
+                    'nombre' => $c->nombre,
+                    'semestre' => $c->pivot->semestre ?? null,
+                ]),
+                'unidades_count' => $asig->unidades->count(),
+                'temas_count' => $totalTemas,
+                'cronogramas_count' => $totalCronogramas,
+                'docentes_count' => $docentes->count(),
+                'docentes' => $docentes,
+                'unidades' => $asig->unidades->map(fn($u) => [
+                    'id' => $u->id,
+                    'titulo' => $u->titulo ?? $u->nombre,
+                    'temas_count' => $u->temas->count(),
+                    'temas' => $u->temas->map(fn($t) => [
+                        'id' => $t->id,
+                        'titulo' => $t->titulo,
+                    ]),
+                ]),
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'encontrado' => true,
+            'total' => $asignaturas->count(),
+            'data' => $data,
+        ]);
+    }
+
+    /**
+     * Obtener detalle completo de grupos y horarios desde la API de Planning
+     * para una asignatura específica
+     */
+    public function detalleConHorarios(Request $request): JsonResponse
+    {
+        $gestion = $request->input('gestion', '1-2026');
+        $carrera = $request->input('carrera', 'carsis');
+        $sede    = (int) $request->input('sede', 1);
+        $codigo  = $request->input('codigo');
+
+        if (!$codigo) {
+            return response()->json([
+                'success' => false,
+                'message' => 'El código de asignatura es requerido'
+            ], 400);
+        }
+
+        // Convertir sede: si llega id_api buscar el sede interno
+        $sedeModel = \App\Models\Sede::where('id_api', $sede)->first()
+            ?? \App\Models\Sede::find($sede);
+
+        // Convertir carrera: código API a modelo local
+        $carreraModel = is_numeric($carrera)
+            ? \App\Models\Carrera::find($carrera)
+            : \App\Models\Carrera::where('codigo', $carrera)->first();
+
+        // Obtener todos los grupos/horarios crudos desde el servicio (transformarDatos)
+        $rawGrupos = $this->service->listarGrupos($gestion, $carrera, $sede);
+
+        // Filtrar la asignatura específica
+        $materiaEncontrada = null;
+        foreach ($rawGrupos as $materia) {
+            if (trim($materia['codigo']) === trim($codigo)) {
+                $materiaEncontrada = $materia;
+                break;
+            }
+        }
+
+        if (!$materiaEncontrada) {
+            return response()->json([
+                'success' => true,
+                'encontrado' => false,
+                'data' => null,
+                'message' => 'No se encontró la asignatura en la API de Planning para estos parámetros'
+            ]);
+        }
+
+        // Agrupar horarios por docente+grupo
+        $docentesGrupos = [];
+        foreach ($materiaEncontrada['grupos'] as $slot) {
+            $docenteNombre = $slot['docente'] ?? 'Sin docente';
+            $docenteCI     = $slot['docente_ci'] ?? null;
+            $grupoNombre   = (string) ($slot['grupo'] ?? '');
+            $key           = $docenteNombre . '|||' . $grupoNombre;
+
+            if (!isset($docentesGrupos[$key])) {
+                // Verificar si el docente ya existe localmente
+                $docenteLocal = null;
+                if ($docenteNombre !== 'Sin docente') {
+                    // Buscar primero por CI, luego por nombre
+                    if ($docenteCI) {
+                        $docenteLocal = \App\Models\Docente::where('ci', $docenteCI)->first();
+                    }
+                    if (!$docenteLocal) {
+                        $docenteLocal = \App\Models\Docente::where('nombre_completo', 'like', '%' . $docenteNombre . '%')
+                            ->when($sedeModel, fn($q) => $q->where('sede_id', $sedeModel->id))
+                            ->first();
+                    }
+                }
+
+                $docentesGrupos[$key] = [
+                    'docente_nombre' => $docenteNombre,
+                    'docente_ci'     => $docenteCI,
+                    'grupo_nombre'   => $grupoNombre,
+                    'existe_local'   => !is_null($docenteLocal),
+                    'docente_local_id' => $docenteLocal?->id,
+                    'docente_local_nombre' => $docenteLocal?->nombre_completo,
+                    'horarios'       => [],
+                ];
+            }
+
+            $docentesGrupos[$key]['horarios'][] = [
+                'id_horario_api' => $slot['id_horario'],
+                'tipo_clase'     => $slot['tipo_clase'],
+                'dia'            => $slot['dia'],
+                'hora_inicio'    => $slot['hora_inicio'],
+                'hora_fin'       => $slot['hora_fin'],
+                'aula'           => $slot['aula'],
+                'bloque'         => $slot['bloque'],
+            ];
+        }
+
+        return response()->json([
+            'success'    => true,
+            'encontrado' => true,
+            'asignatura' => [
+                'codigo'  => $materiaEncontrada['codigo'],
+                'nombre'  => $materiaEncontrada['nombre'],
+                'semestre' => $materiaEncontrada['semestre'],
+                'plan_estudios' => $materiaEncontrada['plan_estudios'],
+            ],
+            'sede_id'    => $sedeModel?->id,
+            'carrera_id' => $carreraModel?->id,
+            'data'       => array_values($docentesGrupos),
+        ]);
+    }
+
+    /**
+     * Importar docentes, grupos y horarios desde la API de Planning al sistema local
+     */
+    public function importarDesdePlanning(Request $request): JsonResponse
+    {
+        $request->validate([
+            'asignatura_id' => 'required|integer|exists:asignaturas,id',
+            'sede_id'       => 'required|integer|exists:sedes,id',
+            'carrera_id'    => 'required|integer|exists:carreras,id',
+            'gestion'       => 'required|string',
+            'items'         => 'required|array|min:1',
+            'items.*.docente_nombre' => 'required|string',
+            'items.*.docente_ci'     => 'nullable|string',
+            'items.*.grupo_nombre'   => 'required|string',
+            'items.*.horarios'       => 'required|array|min:1',
+            'items.*.horarios.*.id_horario_api' => 'required|integer',
+            'items.*.horarios.*.tipo_clase'     => 'required|string',
+            'items.*.horarios.*.dia'            => 'required|string',
+            'items.*.horarios.*.hora_inicio'    => 'required|string',
+            'items.*.horarios.*.hora_fin'       => 'required|string',
+            'items.*.horarios.*.aula'           => 'nullable|string',
+            'items.*.horarios.*.bloque'         => 'nullable|string',
+        ]);
+
+        $asignaturaId = $request->asignatura_id;
+        $sedeId       = $request->sede_id;
+        $carreraId    = $request->carrera_id;
+        $gestion      = $request->gestion;
+
+        $results = [
+            'docentes_creados' => 0,
+            'docentes_existentes' => 0,
+            'grupos_creados' => 0,
+            'grupos_actualizados' => 0,
+            'horarios_creados' => 0,
+            'errores' => [],
+        ];
+
+        DB::beginTransaction();
+        try {
+            foreach ($request->items as $idx => $item) {
+                // 1. Buscar o crear docente
+                $docente = null;
+                if (!empty($item['docente_ci'])) {
+                    $docente = \App\Models\Docente::where('ci', $item['docente_ci'])->first();
+                }
+                if (!$docente) {
+                    $docente = \App\Models\Docente::where('nombre_completo', 'like', '%' . $item['docente_nombre'] . '%')
+                        ->where('sede_id', $sedeId)
+                        ->first();
+                }
+
+                if ($docente) {
+                    $results['docentes_existentes']++;
+                } else {
+                    // Crear nuevo docente con datos mínimos
+                    $docente = \App\Models\Docente::create([
+                        'nombre_completo' => $item['docente_nombre'],
+                        'ci'              => $item['docente_ci'] ?? null,
+                        'sede_id'         => $sedeId,
+                        'estado'          => true,
+                    ]);
+                    $results['docentes_creados']++;
+                }
+
+                // 2. Buscar o crear grupo
+                $grupo = \App\Models\Grupo::where('asignatura_id', $asignaturaId)
+                    ->where('carrera_id', $carreraId)
+                    ->where('sede_id', $sedeId)
+                    ->where('nombre', $item['grupo_nombre'])
+                    ->first();
+
+                if ($grupo) {
+                    // Actualizar docente asignado (puede ser null o diferente)
+                    $grupo->docente_id = $docente->id;
+                    $grupo->save();
+                    $results['grupos_actualizados']++;
+                } else {
+                    // Crear nuevo grupo
+                    $grupo = \App\Models\Grupo::create([
+                        'asignatura_id' => $asignaturaId,
+                        'carrera_id'    => $carreraId,
+                        'sede_id'       => $sedeId,
+                        'docente_id'    => $docente->id,
+                        'nombre'        => $item['grupo_nombre'],
+                        'gestion'       => $gestion,
+                        'plan_estudios' => 'N',
+                        'tipo'          => $this->inferirTipoGrupo($item['horarios']),
+                        'turno'         => $this->inferirTurno($item['horarios']),
+                        'estado'        => true,
+                    ]);
+                    $results['grupos_creados']++;
+                }
+
+                // 3. Crear horarios (eliminar existentes y crear nuevos)
+                \App\Models\Horario::where('grupo_id', $grupo->id)->delete();
+                foreach ($item['horarios'] as $horarioData) {
+                    \App\Models\Horario::create([
+                        'id_horario_api' => $horarioData['id_horario_api'],
+                        'grupo_id'       => $grupo->id,
+                        'dia'            => $horarioData['dia'],
+                        'hora_inicio'    => $horarioData['hora_inicio'],
+                        'hora_fin'       => $horarioData['hora_fin'],
+                    ]);
+                    $results['horarios_creados']++;
+                }
+            }
+
+            DB::commit();
+            return response()->json([
+                'success' => true,
+                'message' => 'Importación completada exitosamente',
+                'data'    => $results,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Error importando desde Planning', [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'request' => $request->all(),
+            ]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al importar datos: ' . $e->getMessage(),
+                'data'    => null,
+            ], 500);
+        }
+    }
+
+    /**
+     * Inferir tipo de grupo (TEORIA, PRACTICA, LABORATORIO) a partir de horarios
+     */
+    private function inferirTipoGrupo(array $horarios): string
+    {
+        $tipos = array_map(fn($h) => strtoupper($h['tipo_clase']), $horarios);
+        if (in_array('PRACTICA', $tipos)) return 'PRACTICA';
+        if (in_array('LABORATORIO', $tipos)) return 'LABORATORIO';
+        return 'TEORIA';
+    }
+
+    /**
+     * Inferir turno (MAÑANA, TARDE, NOCHE) a partir de horarios
+     */
+    private function inferirTurno(array $horarios): string
+    {
+        $totalHoras = 0;
+        $count = 0;
+        foreach ($horarios as $h) {
+            $hora = substr($h['hora_inicio'], 0, 2);
+            if (is_numeric($hora)) {
+                $totalHoras += (int) $hora;
+                $count++;
+            }
+        }
+        if ($count === 0) return 'MAÑANA';
+        $promedio = $totalHoras / $count;
+        if ($promedio < 12) return 'MAÑANA';
+        if ($promedio < 18) return 'TARDE';
+        return 'NOCHE';
+    }
+
+    /**
      * Quitar grupo a docente (remover asignación)
      */
     public function quitarGrupoDocente(Request $request): JsonResponse
