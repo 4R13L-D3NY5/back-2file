@@ -91,9 +91,9 @@ class AsignaturaController extends Controller
                 }
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
-            }, 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias']);
+            }, 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes']);
         } else {
-            $query->with(['carreras', 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias']);
+            $query->with(['carreras', 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes']);
         }
 
         if ($request->filled('search')) {

@@ -1,17 +1,14 @@
 <?php
 /**
- * merge_scoped_to_oficial.php
+ * merge_scoped_to_oficial.php (v5 - Ultra Robusto)
  * ─────────────────────────────────────────────────────────────
- * Migra el contenido de asignaturas con código "scoped"
- *   ej: ENF-112-EL -CARENL, DER-113-COC-CARDER
- * hacia la asignatura oficial correspondiente
- *   ej: ENF-112, DER-113  (mismo plan_estudios)
- *
- * Redirige: grupos, unidades, cronogramas, bibliografias.
- * Duplicados en grupos se eliminan (no se pueden duplicar).
- * Al final elimina definitivamente los registros scoped.
- *
- * USO: php merge_scoped_to_oficial.php
+ * Migra contenido de códigos "scoped" (ej: ENF-112-COC-CARENL)
+ * hacia sus versiones "oficiales" (ej: ENF-112).
+ * 
+ * MEJORA v5: 
+ * - Si hay colisión de grupos (ya existe el oficial), TRANSFIERE la data
+ *   (docente, cronogramas, horarios, seguimientos) del scoped al oficial
+ *   antes de borrar el duplicado.
  * ─────────────────────────────────────────────────────────────
  */
 
@@ -20,122 +17,110 @@ $app = require __DIR__ . '/bootstrap/app.php';
 $app->make('Illuminate\Contracts\Console\Kernel')->bootstrap();
 
 use Illuminate\Support\Facades\DB;
-use Illuminate\Database\UniqueConstraintViolationException;
 
-echo "=== Migración: Scoped → Oficial ===\n\n";
+echo "=== Iniciando Unificación de Asignaturas (v5 - Transferencia de Grupos) ===\n";
 
-// Buscar todas las asignaturas scoped (incluyendo soft-deleted)
-// Patrón scoped: código con sufijo ej. ENF-112-COC-CARENL
-$scopedAll = DB::table('asignaturas')
-    ->whereRaw("codigo REGEXP '^[A-Z]{2,5}-[0-9]{3}-.+'")
-    ->get(['id', 'codigo', 'nombre', 'plan_estudios', 'deleted_at']);
+$scopedAsigs = DB::table('asignaturas')
+    ->where(function($q) {
+        $q->where('codigo', 'LIKE', '%-%-%')
+          ->orWhere('codigo', 'REGEXP', '-[A-Z][A-Z]+$');
+    })
+    ->whereNull('deleted_at')
+    ->get();
 
-echo "Asignaturas scoped encontradas: " . $scopedAll->count() . "\n\n";
+echo "Asignaturas 'scoped' encontradas: " . $scopedAsigs->count() . "\n";
 
-if ($scopedAll->isEmpty()) {
-    echo "Nada que migrar.\n";
-    exit(0);
-}
+$stats = ['migradas' => 0, 'errores' => 0];
 
-$stats = [
-    'migradas'      => 0,
-    'sin_oficial'   => 0,
-    'grupos_redir'  => 0,
-    'grupos_del'    => 0,
-    'seguimientos'  => 0,
-    'unidades'      => 0,
-    'cronogramas'   => 0,
-    'bibliografias' => 0,
-];
-
-foreach ($scopedAll as $scoped) {
-    // Extraer código base: ENF-112-EL-CARENL → ENF-112
-    if (!preg_match('/^([A-Z]{2,5}-[0-9]{3})-.+/', $scoped->codigo, $m)) {
-        echo "  [SKIP] No se puede extraer base de: {$scoped->codigo}\n";
-        DB::table('asignaturas')->where('id', $scoped->id)->delete();
+foreach ($scopedAsigs as $scoped) {
+    if (!preg_match('/^([A-Z]{2,5}-[0-9]{1,4})(-.+)?/', $scoped->codigo, $matches)) {
         continue;
     }
 
-    $codigoBase = $m[1];
-    $plan       = $scoped->plan_estudios ?: 'N';
+    $codigoBase = $matches[1];
+    $plan = $scoped->plan_estudios ?: 'N';
 
-    // Buscar la asignatura oficial (mismo código base + mismo plan, no eliminada)
-    $oficial = DB::table('asignaturas')
+    $candidatos = DB::table('asignaturas')
         ->where('codigo', $codigoBase)
-        ->where('plan_estudios', $plan)
+        ->where('id', '!=', $scoped->id)
         ->whereNull('deleted_at')
         ->where('estado', '!=', 'cancelado')
-        ->first();
+        ->get();
 
-    // Fallback: sin filtro de plan
-    if (!$oficial) {
-        $oficial = DB::table('asignaturas')
-            ->where('codigo', $codigoBase)
-            ->whereNull('deleted_at')
-            ->where('estado', '!=', 'cancelado')
-            ->first();
+    $oficial = null;
+
+    if ($candidatos->count() == 1) {
+        $oficial = $candidatos->first();
+    } elseif ($candidatos->count() > 1) {
+        $bestScore = -1;
+        foreach ($candidatos as $cand) {
+            similar_text(strtoupper($scoped->nombre), strtoupper($cand->nombre), $percent);
+            if (($cand->plan_estudios ?: 'N') == $plan) { $percent += 10; }
+            if ($percent > $bestScore) {
+                $bestScore = $percent;
+                $oficial = $cand;
+            }
+        }
     }
 
     if (!$oficial) {
-        echo "  [SIN OFICIAL] {$scoped->codigo} → eliminando sin migrar\n";
-        // Limpiar FKs antes de eliminar grupos
-        $gids = DB::table('grupos')->where('asignatura_id', $scoped->id)->pluck('id');
-        if ($gids->isNotEmpty()) {
-            DB::table('seguimientos')->whereIn('grupo_id', $gids)->delete();
-            DB::table('horarios')->whereIn('grupo_id', $gids)->delete();
-            DB::table('grupos')->whereIn('id', $gids)->delete();
-        }
-        DB::table('asignaturas')->where('id', $scoped->id)->delete();
-        $stats['sin_oficial']++;
+        echo "[SIN OFICIAL] {$scoped->codigo} ({$scoped->nombre})\n";
         continue;
     }
 
-    echo "  MERGE [{$scoped->id}] {$scoped->codigo} → [{$oficial->id}] {$oficial->codigo}\n";
+    echo "Migrando: {$scoped->codigo} -> {$oficial->codigo} (IDs: {$scoped->id} -> {$oficial->id})\n";
 
-    // ─── Grupos: fila por fila con try/catch ───
-    $gruposScoped = DB::table('grupos')->where('asignatura_id', $scoped->id)->get(['id']);
-    foreach ($gruposScoped as $g) {
-        try {
-            DB::table('grupos')->where('id', $g->id)->update(['asignatura_id' => $oficial->id]);
-            $stats['grupos_redir']++;
-        } catch (UniqueConstraintViolationException $e) {
-            // Duplicado — eliminar seguimientos y horarios PRIMERO, luego el grupo
-            $stats['seguimientos'] += DB::table('seguimientos')->where('grupo_id', $g->id)->delete();
-            DB::table('horarios')->where('grupo_id', $g->id)->delete();
-            DB::table('grupos')->where('id', $g->id)->delete();
-            $stats['grupos_del']++;
+    DB::beginTransaction();
+    try {
+        DB::table('asignatura_carrera')->where('asignatura_id', $scoped->id)->update(['asignatura_id' => $oficial->id]);
+        DB::table('unidades')->where('asignatura_id', $scoped->id)->update(['asignatura_id' => $oficial->id]);
+        DB::table('bibliografias')->where('asignatura_id', $scoped->id)->update(['asignatura_id' => $oficial->id]);
+
+        $gruposScoped = DB::table('grupos')->where('asignatura_id', $scoped->id)->get();
+        foreach ($gruposScoped as $gs) {
+            $grupoOficial = DB::table('grupos')
+                ->where('asignatura_id', $oficial->id)
+                ->where('nombre',     $gs->nombre)
+                ->where('gestion',    $gs->gestion)
+                ->where('sede_id',    $gs->sede_id)
+                ->first();
+
+            if ($grupoOficial) {
+                echo "  - Colisión en grupo {$gs->nombre}: Transfiriendo data a Oficial ID {$grupoOficial->id}...\n";
+                
+                // 1. Transferir Docente si el oficial está vacío
+                if (empty($grupoOficial->docente_id) && !empty($gs->docente_id)) {
+                    DB::table('grupos')->where('id', $grupoOficial->id)->update(['docente_id' => $gs->docente_id]);
+                }
+                
+                // 2. Transferir Carrera si el oficial está vacío
+                if (empty($grupoOficial->carrera_id) && !empty($gs->carrera_id)) {
+                    DB::table('grupos')->where('id', $grupoOficial->id)->update(['carrera_id' => $gs->carrera_id]);
+                }
+
+                // 3. Mover Seguimientos, Horarios, Cronogramas (si no existen en oficial)
+                DB::table('seguimientos')->where('grupo_id', $gs->id)->update(['grupo_id' => $grupoOficial->id]);
+                DB::table('horarios')->where('grupo_id', $gs->id)->update(['grupo_id' => $grupoOficial->id]);
+                DB::table('cronogramas')->where('grupo_id', $gs->id)->update(['grupo_id' => $grupoOficial->id]);
+
+                // Borrar el grupo scoped que ya quedó vacío
+                DB::table('grupos')->where('id', $gs->id)->delete();
+            } else {
+                DB::table('grupos')->where('id', $gs->id)->update(['asignatura_id' => $oficial->id]);
+            }
         }
+
+        DB::table('asignaturas')->where('id', $scoped->id)->delete();
+        DB::commit();
+        $stats['migradas']++;
+    } catch (\Exception $e) {
+        DB::rollBack();
+        echo "  [ERROR] " . $e->getMessage() . "\n";
+        $stats['errores']++;
     }
-
-    // ─── Unidades ───
-    $stats['unidades'] += DB::table('unidades')
-        ->where('asignatura_id', $scoped->id)
-        ->update(['asignatura_id' => $oficial->id]);
-
-    // ─── Cronogramas ───
-    $stats['cronogramas'] += DB::table('cronogramas')
-        ->where('asignatura_id', $scoped->id)
-        ->update(['asignatura_id' => $oficial->id]);
-
-    // ─── Bibliografias ───
-    $stats['bibliografias'] += DB::table('bibliografias')
-        ->where('asignatura_id', $scoped->id)
-        ->update(['asignatura_id' => $oficial->id]);
-
-    // ─── Limpiar pivot y eliminar scoped definitivamente ───
-    DB::table('asignatura_carrera')->where('asignatura_id', $scoped->id)->delete();
-    DB::table('asignaturas')->where('id', $scoped->id)->delete();
-
-    $stats['migradas']++;
 }
 
 echo "\n=== Resumen ===\n";
-echo str_pad('Asignaturas migradas:', 26)      . $stats['migradas']      . "\n";
-echo str_pad('Sin oficial (eliminadas):', 26)  . $stats['sin_oficial']   . "\n";
-echo str_pad('Grupos redirigidos:', 26)        . $stats['grupos_redir']  . "\n";
-echo str_pad('Grupos duplicados (borr.):', 26) . $stats['grupos_del']    . "\n";
-echo str_pad('Seguimientos eliminados:', 26)   . $stats['seguimientos']  . "\n";
-echo str_pad('Unidades redirigidas:', 26)      . $stats['unidades']      . "\n";
-echo str_pad('Cronogramas redirigidos:', 26)   . $stats['cronogramas']   . "\n";
-echo str_pad('Bibliografias redirigidas:', 26) . $stats['bibliografias'] . "\n";
-echo "\n=== Completado ===\n";
+echo "Migradas: " . $stats['migradas'] . "\n";
+echo "Errores:  " . $stats['errores'] . "\n";
+echo "=== Fin ===\n";

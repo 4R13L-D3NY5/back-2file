@@ -147,94 +147,99 @@ class PlanningSyncService
                         continue;
                     }
 
-                    // DATA QUALITY FILTER: Skip if docente name is invalid
-                    if (empty($dto->docente) || trim($dto->docente) === '' || stripos($dto->docente, 'Sin Asignar') !== false) {
-                        $stats['errors']++; // Track skipped items
-                        Log::warning("Skipping Group Sync: Invalid Docente Name '{$dto->docente}' for CI {$dto->ci}");
-                        continue; // Skip this item entirely (don't create group either)
-                    }
+                    // DATA QUALITY FILTER: Handle 'Sin Asignar' or empty docente name
+                    $isValidDocente = !empty($dto->docente) && trim($dto->docente) !== '' && stripos($dto->docente, 'Sin Asignar') === false;
+                    $docenteId = null;
 
-                    $docenteNombre = $dto->docente ?: 'Docente ' . $dto->ci;
+                    if ($isValidDocente) {
+                        $docenteNombre = $dto->docente ?: 'Docente ' . $dto->ci;
 
-                    // BUSQUEDA ROBUSTA DE DOCENTE
-                    // 1. Intentar por CI directo
-                    $docente = Docente::withTrashed()->where('ci', $dto->ci)->first();
+                        // BUSQUEDA ROBUSTA DE DOCENTE
+                        // 1. Intentar por CI directo
+                        $docente = Docente::withTrashed()->where('ci', $dto->ci)->first();
 
-                    if (!$docente && $dto->ci) {
-                        // 2. Intentar encontrar un usuario que tenga este CI como username
-                        $userMatches = User::where('username', $dto->ci)->first();
-                        if ($userMatches) {
-                            // Si el usuario existe, buscamos el docente vinculado a él
-                            $docente = Docente::withTrashed()->where('user_id', $userMatches->id)->first();
-                            if ($docente) {
-                                // Asegurar que tenga el CI puesto
-                                $docente->ci = $dto->ci;
+                        if (!$docente && $dto->ci) {
+                            // 2. Intentar encontrar un usuario que tenga este CI como username
+                            $userMatches = User::where('username', $dto->ci)->first();
+                            if ($userMatches) {
+                                // Si el usuario existe, buscamos el docente vinculado a él
+                                $docente = Docente::withTrashed()->where('user_id', $userMatches->id)->first();
+                                if ($docente) {
+                                    // Asegurar que tenga el CI puesto
+                                    $docente->ci = $dto->ci;
+                                    $docente->save();
+                                }
+                            }
+                        }
+
+                        if (!$docente) {
+                            $docente = new Docente(['ci' => $dto->ci]);
+                        }
+
+                        $docente->nombre_completo = $docenteNombre;
+                        // Only set Sede if it's new or has no sede assignment
+                        if (!$docente->exists || !$docente->sede_id) {
+                            $docente->sede_id = $sede->id;
+                        }
+                        $docente->save();
+
+                        if ($docente->trashed()) {
+                            $docente->restore();
+                        }
+                        $stats['docentes']++;
+
+                        // Create User for Docente if not exists or if checking users
+                        if ($dto->ci && !$docente->user_id) {
+                            try {
+                                // Ensure Unique Username (CI)
+                                $user = User::where('username', $dto->ci)->first();
+
+                                if (!$user) {
+                                    // Split Name into Nombre/Apellido
+                                    $parts = explode(' ', $docenteNombre, 2);
+                                    $nombre = $parts[0] ?? $docenteNombre;
+                                    $apellido = $parts[1] ?? 'Doe';
+
+                                    // Create new User with EXTENDED fields
+                                    $user = User::create([
+                                        // 'name' column does not exist in DB, using nombre/apellido below
+                                        'email' => strtolower($dto->ci) . '@unitepc.edu.bo', // Dummy email based on CI
+                                        'username' => $dto->ci,
+                                        'password' => Hash::make($dto->ci), // Def pw: CI
+                                        'rol_id' => $docenteRoleId,
+                                        'estado' => 1, // 1 = ACTIVO
+                                        'password_change_required' => false,
+                                        // Required Extra Fields
+                                        'nombre' => $nombre,
+                                        'apellido' => $apellido,
+                                        'ci' => $dto->ci,
+                                        'carrera' => $dto->carrera,
+                                        'telefono' => $dto->celular ?? ''
+                                    ]);
+                                    $stats['users_created']++;
+                                }
+
+                                // Link Docente -> User
+                                $docente->user_id = $user->id;
                                 $docente->save();
+                            } catch (\Exception $e) {
+                                Log::error("Failed to create/link user for Docente CI {$dto->ci}: " . $e->getMessage());
+                                $stats['last_error'] = $e->getMessage();
                             }
                         }
-                    }
-
-                    if (!$docente) {
-                        $docente = new Docente(['ci' => $dto->ci]);
-                    }
-
-                    $docente->nombre_completo = $docenteNombre;
-                    // Only set Sede if it's new or has no sede assignment
-                    if (!$docente->exists || !$docente->sede_id) {
-                        $docente->sede_id = $sede->id;
-                    }
-                    $docente->save();
-
-                    if ($docente->trashed()) {
-                        $docente->restore();
-                    }
-                    $stats['docentes']++;
-
-                    // Create User for Docente if not exists or if checking users
-                    if ($dto->ci && !$docente->user_id) {
-                        try {
-                            // Ensure Unique Username (CI)
-                            $user = User::where('username', $dto->ci)->first();
-
-                            if (!$user) {
-                                // Split Name into Nombre/Apellido
-                                $parts = explode(' ', $docenteNombre, 2);
-                                $nombre = $parts[0] ?? $docenteNombre;
-                                $apellido = $parts[1] ?? 'Doe';
-
-                                // Create new User with EXTENDED fields
-                                $user = User::create([
-                                    // 'name' column does not exist in DB, using nombre/apellido below
-                                    'email' => strtolower($dto->ci) . '@unitepc.edu.bo', // Dummy email based on CI
-                                    'username' => $dto->ci,
-                                    'password' => Hash::make($dto->ci), // Def pw: CI
-                                    'rol_id' => $docenteRoleId,
-                                    'estado' => 1, // 1 = ACTIVO
-                                    'password_change_required' => false,
-                                    // Required Extra Fields
-                                    'nombre' => $nombre,
-                                    'apellido' => $apellido,
-                                    'ci' => $dto->ci,
-                                    'carrera' => $dto->carrera,
-                                    'telefono' => $dto->celular ?? ''
-                                ]);
-                                $stats['users_created']++;
-                            }
-
-                            // Link Docente -> User
-                            $docente->user_id = $user->id;
-                            $docente->save();
-                        } catch (\Exception $e) {
-                            Log::error("Failed to create/link user for Docente CI {$dto->ci}: " . $e->getMessage());
-                            $stats['last_error'] = $e->getMessage();
-                        }
+                        $docenteId = $docente->id;
+                    } else {
+                        // Log::warning("Group has no assigned docente: {$dto->materia} ({$dto->grupo})");
                     }
 
                     // 7. Grupo
                     // Calculate turno based on hour
                     $hora = (int) substr($dto->horaInicio, 0, 2);
                     $turno = ($hora < 12) ? 'MAÑANA' : (($hora < 18) ? 'TARDE' : 'NOCHE');
-                    $tipo = isset($dto->tipoClase) ? strtoupper($dto->tipoClase) : 'TEORICO';
+                    
+                    // NORMALIZACIÓN: Mapear 'REGULAR' a 'TEORICO' para evitar duplicados enviados por la API
+                    $tipoCrudo = isset($dto->tipoClase) ? strtoupper(trim($dto->tipoClase)) : 'TEORICO';
+                    $tipo = ($tipoCrudo === 'REGULAR') ? 'TEORICO' : $tipoCrudo;
 
                     // 7. GRUPO: Identificación puramente LOGICA
 
@@ -265,8 +270,7 @@ class PlanningSyncService
                             'sede_id' => $sede->id
                         ],
                         [
-                            'docente_id'    => $docente->id,
-                            'plan_estudios' => $dto->planEst ?: 'N',
+                            'docente_id'    => $docenteId,
                             'estado'        => 'ACTIVO'
                         ]
                     );

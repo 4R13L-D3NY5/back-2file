@@ -4,11 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\Asignatura;
 use App\Models\Cronograma;
+use App\Models\Grupo;
 use App\Models\Horario;
 use App\Models\Seguimiento;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class PlanificacionSemestralController extends Controller
 {
@@ -46,9 +48,20 @@ class PlanificacionSemestralController extends Controller
             }
         }])->findOrFail($asignaturaId);
 
-        // 1. Fetch Master Records (Shared Planning Content)
+        // 1. Determinar asignatura fuente para cronogramas (para materias comunes fusionadas)
+        $asignaturaCronograma = $asignatura;
+        if ($asignatura->comun_token && $asignatura->comun_tipo === 'fusionada') {
+            $syncService = app(\App\Services\MateriasComunesSyncService::class);
+            $bestAsignatura = $syncService->getBestCronogramaForComunToken($asignatura->comun_token);
+            if ($bestAsignatura && $bestAsignatura->id !== $asignatura->id) {
+                $asignaturaCronograma = $bestAsignatura;
+                Log::info("PlanificacionSemestral: Usando cronograma de asignatura ID {$bestAsignatura->id} ({$bestAsignatura->codigo}) para materia común {$asignatura->codigo}");
+            }
+        }
+
+        // 2. Fetch Master Records (Shared Planning Content)
         // Master records have group_id = NULL
-        $masterCronogramas = Cronograma::where('asignatura_id', $asignaturaId)
+        $masterCronogramas = Cronograma::where('asignatura_id', $asignaturaCronograma->id)
             ->whereNull('grupo_id')
             ->with([
                 'temas',
@@ -64,7 +77,7 @@ class PlanificacionSemestralController extends Controller
             ->orderBy('numero_sesion')
             ->get();
 
-        // 2. Fetch Seguimientos for the specific group (from new seguimientos table)
+        // 3. Fetch Seguimientos for the specific group (from new seguimientos table)
         $seguimientosMap = collect();
         if ($grupoId) {
             $cronogramaIds = $masterCronogramas->pluck('id');
@@ -74,7 +87,7 @@ class PlanificacionSemestralController extends Controller
                 ->keyBy('cronograma_id');
         }
 
-        // 3. Map Master Records to the result, merging Seguimiento data if it exists
+        // 4. Map Master Records to the result, merging Seguimiento data if it exists
         $cronogramas = $masterCronogramas->map(function ($master) use ($seguimientosMap, $grupoId) {
             $seguimiento = $seguimientosMap->get($master->id);
 
@@ -309,7 +322,7 @@ class PlanificacionSemestralController extends Controller
             }
 
             if (!empty($sesiones)) {
-                \Log::info('Generando Planificación Maestra. Primera Sesión:', $sesiones[0]);
+                Log::info('Generando Planificación Maestra. Primera Sesión:', $sesiones[0]);
                 Cronograma::insert($sesiones);
             }
         });
@@ -365,7 +378,8 @@ class PlanificacionSemestralController extends Controller
     public function updateSeguimiento(Request $request)
     {
         try {
-            \Log::info('updateSeguimiento (new table)', $request->all());
+            Log::info('updateSeguimiento (new table)', $request->all());
+            Log::info('comun_token from request', ['comun_token' => $request->input('comun_token')]);
 
             $request->validate([
                 'evidencia_aprendizaje' => 'nullable|file|max:2048',
@@ -404,14 +418,14 @@ class PlanificacionSemestralController extends Controller
             $pedagogicoInput = $request->input('pedagogico', '{}');
             $pedagogico = json_decode($pedagogicoInput, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                \Log::error('JSON Decode Error in pedagogico: ' . json_last_error_msg());
+                Log::error('JSON Decode Error in pedagogico: ' . json_last_error_msg());
                 $pedagogico = [];
             }
 
             $integracionInput = $request->input('integracion_transversal', '{}');
             $integracionTransversal = json_decode($integracionInput, true);
             if (json_last_error() !== JSON_ERROR_NONE) {
-                \Log::error('JSON Decode Error in integracion_transversal: ' . json_last_error_msg());
+                Log::error('JSON Decode Error in integracion_transversal: ' . json_last_error_msg());
                 $integracionTransversal = [];
             }
 
@@ -489,10 +503,16 @@ class PlanificacionSemestralController extends Controller
                     'georeferencia' => $georeferencia,
                     'evidencias' => $evidencias,
                     'integracion_transversal' => $integracionTransversal,
+                    'es_propagado' => false,
+                    'propagado_de_id' => null,
                 ]
             );
 
-            \Log::info('Seguimiento saved', ['id' => $seguimiento->id, 'cronograma_id' => $cronogramaId, 'grupo_id' => $grupoId]);
+            Log::info('Seguimiento saved', ['id' => $seguimiento->id, 'cronograma_id' => $cronogramaId, 'grupo_id' => $grupoId]);
+
+            // Si la asignatura es parte de un grupo de materias comunes,
+            // propagar el seguimiento automáticamente a los grupos vinculados
+            $this->propagarSeguimientoAComunes($cronogramaId, $grupoId, $seguimiento);
 
             return response()->json([
                 'message' => 'Seguimiento guardado correctamente',
@@ -502,9 +522,102 @@ class PlanificacionSemestralController extends Controller
             ]);
 
         } catch (\Exception $e) {
-            \Log::error('Error in updateSeguimiento: ' . $e->getMessage());
-            \Log::error($e->getTraceAsString());
+            Log::error('Error in updateSeguimiento: ' . $e->getMessage());
+            Log::error($e->getTraceAsString());
             return response()->json(['error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Propaga el seguimiento guardado a todos los grupos de asignaturas vinculadas
+     * como materias comunes (mismo comun_token, mismo docente).
+     *
+     * Esto permite que el docente registre el control de clase UNA SOLA VEZ
+     * y el sistema lo refleje automáticamente para todas las carreras vinculadas,
+     * evitando registros duplicados innecesarios.
+     */
+    private function propagarSeguimientoAComunes(int $cronogramaId, int $grupoId, Seguimiento $seguimiento): void
+    {
+        Log::info('Propagando seguimiento a comunes', ['cronograma_id' => $cronogramaId, 'grupo_id' => $grupoId]);
+        $cronograma = Cronograma::find($cronogramaId);
+        if (!$cronograma) {
+            Log::info('Cronograma no encontrado, abortando propagación');
+            return;
+        }
+
+        $asignatura = Asignatura::find($cronograma->asignatura_id);
+        if (!$asignatura) {
+            Log::info('Asignatura no encontrada, abortando propagación');
+            return;
+        }
+        if (!$asignatura->comun_token) {
+            Log::info('Asignatura no tiene comun_token, abortando propagación', ['asignatura_id' => $asignatura->id, 'codigo' => $asignatura->codigo]);
+            return;
+        }
+
+        $grupoSource = Grupo::find($grupoId);
+        if (!$grupoSource || !$grupoSource->docente_id) return;
+
+        $vinculadas = Asignatura::where('comun_token', $asignatura->comun_token)
+            ->where('id', '!=', $asignatura->id)
+            ->get();
+
+        Log::info('Asignaturas vinculadas encontradas', [
+            'asignatura_origen_id' => $asignatura->id,
+            'comun_token' => $asignatura->comun_token,
+            'vinculadas_count' => $vinculadas->count()
+        ]);
+
+        foreach ($vinculadas as $vinculada) {
+            // Cronograma master equivalente en la asignatura vinculada (por numero_sesion)
+            $cronogramaVinculado = Cronograma::where('asignatura_id', $vinculada->id)
+                ->whereNull('grupo_id')
+                ->where('numero_sesion', $cronograma->numero_sesion)
+                ->first();
+
+            if (!$cronogramaVinculado) continue;
+
+            // Grupo correspondiente: mismo docente, misma asignatura vinculada
+            $grupoVinculado = Grupo::where('asignatura_id', $vinculada->id)
+                ->where('docente_id', $grupoSource->docente_id)
+                ->first();
+
+            if (!$grupoVinculado) continue;
+
+            // Solo crear/actualizar si el origen es más reciente que el destino existente
+            // (respeta si el docente ya registró directamente en la materia vinculada)
+            $existente = Seguimiento::where('cronograma_id', $cronogramaVinculado->id)
+                ->where('grupo_id', $grupoVinculado->id)
+                ->first();
+
+            if ($existente && $existente->updated_at > $seguimiento->updated_at) {
+                continue; // El destino ya tiene datos más recientes, no sobreescribir
+            }
+
+            Seguimiento::updateOrCreate(
+                [
+                    'cronograma_id' => $cronogramaVinculado->id,
+                    'grupo_id'      => $grupoVinculado->id,
+                ],
+                [
+                    'user_id'                 => $seguimiento->user_id,
+                    'fecha'                   => $seguimiento->fecha,
+                    'cumplido'                => $seguimiento->cumplido,
+                    'tema_cumplido'           => $seguimiento->tema_cumplido,
+                    'estado_cumplimiento'     => $seguimiento->estado_cumplimiento,
+                    'observaciones'           => $seguimiento->observaciones,
+                    'pedagogico'              => $seguimiento->pedagogico,
+                    'es_examen'               => $seguimiento->es_examen,
+                    'tipo_examen'             => $seguimiento->tipo_examen,
+                    'georeferencia'           => $seguimiento->georeferencia,
+                    'evidencias'              => $seguimiento->evidencias,
+                    'integracion_transversal' => $seguimiento->integracion_transversal,
+                    'es_propagado'            => true,
+                    'propagado_de_id'         => $seguimiento->id,
+                ]
+            );
+
+            Log::info("Seguimiento propagado a materia común: {$vinculada->codigo} grupo {$grupoVinculado->id}");
         }
     }
 
@@ -569,7 +682,7 @@ class PlanificacionSemestralController extends Controller
         $planning = $planificacionPersonal ?? $tema;
 
         // Debug logging
-        \Log::info('Resolving pedagogico for tema_id: ' . $tema->id, [
+        Log::info('Resolving pedagogico for tema_id: ' . $tema->id, [
             'has_planificacion_personal' => !is_null($planificacionPersonal),
             'planning_type' => get_class($planning),
             'estrategias_recursos' => $planning->estrategias_recursos ?? 'null',

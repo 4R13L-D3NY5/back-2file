@@ -199,9 +199,9 @@ class MateriasComunesSyncService
             $this->syncTemasStructure($sourceUnidad, $targetUnidad, $sharedUserIds);
         }
 
-        // Eliminar unidades huérfanas en destino (que ya no existen en origen)
+        // Eliminar unidades huérfanas en destino (que ya no existen en origen) - DESHABILITADO POR RIESGO DE PÉRDIDA DE DATOS
         $sourceNumeros = $sourceUnidades->pluck('numero')->toArray();
-        $target->unidades()->whereNotIn('numero', $sourceNumeros)->delete();
+        // $target->unidades()->whereNotIn('numero', $sourceNumeros)->delete();
     }
 
     /**
@@ -250,9 +250,9 @@ class MateriasComunesSyncService
             }
         }
 
-        // Eliminar temas huérfanos
+        // Eliminar temas huérfanos - DESHABILITADO POR RIESGO DE PÉRDIDA DE DATOS
         $sourceOrdenes = $sourceTemas->pluck('orden')->toArray();
-        $targetUnidad->temas()->whereNotIn('orden', $sourceOrdenes)->delete();
+        // $targetUnidad->temas()->whereNotIn('orden', $sourceOrdenes)->delete();
     }
 
     /**
@@ -613,6 +613,309 @@ class MateriasComunesSyncService
         return $deleted;
     }
 
+    // =========================================================================
+    // MERGE INTELIGENTE AL VINCULAR
+    // =========================================================================
+
+    /**
+     * Merge inteligente al declarar materias comunes.
+     *
+     * En vez de "el ganador lo toma todo" basado en % progreso, hace:
+     *  - Campos PAC (justificación, propósito, etc.): toma el mejor valor por campo
+     *  - Estructura unidades/temas: usa la carpeta con más contenido documentado
+     *  - PlanificacionPersonal: recolecta de TODAS y redistribuye a TODAS (bidireccional)
+     *  - Bibliografía: usa la que tiene más entradas
+     *
+     * Esto resuelve el caso donde un docente llenó la documentación en una carpeta
+     * y la planificación personal en otra (porque solo una tenía horario).
+     */
+    public function mergeAndSyncOnLink(string $comunToken): int
+    {
+        if (self::$isSyncing) return 0;
+
+        $asignaturas = Asignatura::where('comun_token', $comunToken)
+            ->with([
+                'unidades.temas.logros.indicadores',
+                'bibliografias',
+            ])
+            ->get();
+
+        if ($asignaturas->count() < 2) return 0;
+
+        self::$isSyncing = true;
+        $synced = 0;
+
+        try {
+            DB::transaction(function () use ($asignaturas, &$synced) {
+                // PASO 1: Recolectar TODAS las planificaciones personales ANTES de cualquier cambio
+                // (indexadas por user_id → unidad.numero → tema.orden)
+                $planificaciones = $this->collectAllPlanificaciones($asignaturas);
+
+                // PASO 2: Determinar master de documentación (PAC + programa analítico más completo)
+                $docMaster = $this->findDocumentationMaster($asignaturas);
+
+                // PASO 3: Campos de nivel asignatura: mejor valor de cada campo entre todas
+                $mergedFields = $this->buildMergedAsignaturaFields($asignaturas, $docMaster);
+
+                // PASO 4: Master de bibliografía (la que tiene más entradas)
+                $bibMaster = $asignaturas->sortByDesc(fn($a) => $a->bibliografias->count())->first();
+
+                // PASO 5: Aplicar a todas
+                foreach ($asignaturas as $asignatura) {
+                    // 5a. Sincronizar estructura unidades/temas desde el docMaster
+                    if ($asignatura->id !== $docMaster->id) {
+                        $sharedUserIds = $this->getSharedTeacherUserIds($docMaster, $asignatura);
+                        $this->syncUnidadesStructure($docMaster, $asignatura, $sharedUserIds);
+                    }
+
+                    // 5b. Aplicar campos mergeados (complementa lo que syncUnidadesStructure no toca)
+                    $asignatura->update($mergedFields);
+
+                    // 5c. Bibliografía desde el master si la propia está vacía o es menor
+                    if ($asignatura->id !== $bibMaster->id) {
+                        $asignatura->bibliografias()->delete();
+                        foreach ($bibMaster->bibliografias as $bib) {
+                            $asignatura->bibliografias()->create($bib->only([
+                                'titulo', 'autor', 'editorial', 'edicion', 'anio',
+                                'tipo', 'isbn', 'paginas', 'descripcion',
+                            ]));
+                        }
+                    }
+
+                    $synced++;
+                }
+
+                // PASO 6: Redistribuir planificaciones a TODAS las asignaturas
+                // Se hace DESPUÉS del sync de estructura para que los tema_ids sean frescos
+                foreach ($asignaturas as $asignatura) {
+                    $this->applyCollectedPlanificaciones($asignatura, $planificaciones);
+                }
+            });
+        } finally {
+            self::$isSyncing = false;
+        }
+
+        Log::info("MateriasComunesSync: Merge inteligente completado para token {$comunToken}, {$synced} asignaturas procesadas.");
+        return $synced;
+    }
+
+    /**
+     * Puntúa una asignatura por la completitud de su documentación
+     * (PAC + programa analítico), sin contar planificación personal.
+     */
+    private function scoreDocumentation(Asignatura $asig): int
+    {
+        $score = 0;
+
+        // Campos PAC - PESO ALTO PARA PRIORIZAR MATERIAS CON DOCUMENTACIÓN PAC COMPLETA
+        if (!$this->isFieldEmpty($asig->justificacion))          $score += 90;
+        if (!$this->isFieldEmpty($asig->proposito_general))      $score += 90;
+        if (!$this->isFieldEmpty($asig->competencia_global_especifica)
+            || !$this->isFieldEmpty($asig->competencia_asignatura)) $score += 60;
+        if (!$this->isFieldEmpty($asig->metodologia_general))    $score += 30;
+        if (!$this->isFieldEmpty($asig->sistema_evaluacion))     $score += 30;
+        if (!$this->isFieldEmpty($asig->contenido_minimo))       $score += 30;
+
+        // Estructura analítica
+        foreach ($asig->unidades as $unidad) {
+            $score += 1;
+            foreach ($unidad->temas as $tema) {
+                if (!$this->isFieldEmpty($tema->resultado_aprendizaje))   $score += 2;
+                if (!$this->isFieldEmpty($tema->contenido_conceptual)
+                    || !$this->isFieldEmpty($tema->contenido_procedimental)) $score += 2;
+                if ($tema->logros->count() > 0) $score += 1;
+            }
+        }
+
+        // Bibliografía
+        $score += $asig->bibliografias->count() * 2;
+
+        return $score;
+    }
+
+    /**
+     * Devuelve la asignatura con mayor puntaje documental.
+     */
+    private function findDocumentationMaster(Collection $asignaturas): Asignatura
+    {
+        $bestScore = -1;
+        $best = $asignaturas->first();
+
+        foreach ($asignaturas as $asig) {
+            $score = $this->scoreDocumentation($asig);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $best = $asig;
+            }
+        }
+
+        return $best;
+    }
+
+    /**
+     * Construye los campos de nivel asignatura tomando el mejor valor de cada campo
+     * (parte del docMaster; si está vacío, busca en las demás).
+     */
+    private function buildMergedAsignaturaFields(Collection $asignaturas, Asignatura $docMaster): array
+    {
+        $fields = [
+            'descripcion', 'justificacion', 'proposito_general', 'contenido_minimo',
+            'requisitos', 'competencia_global_especifica', 'competencia_asignatura',
+            'reglamento_normativa', 'organizacion_calendario',
+            'metodologia_general', 'sistema_evaluacion', 'elementos_competencia',
+        ];
+
+        $merged = [];
+
+        foreach ($fields as $field) {
+            $best = $docMaster->$field;
+
+            if ($this->isFieldEmpty($best)) {
+                foreach ($asignaturas as $asig) {
+                    if ($asig->id !== $docMaster->id && !$this->isFieldEmpty($asig->$field)) {
+                        $best = $asig->$field;
+                        break;
+                    }
+                }
+            }
+
+            $merged[$field] = $best;
+        }
+
+        return $merged;
+    }
+
+    /**
+     * Verifica si un campo está vacío: null, '', [], o solo HTML/espacios vacíos.
+     */
+    private function isFieldEmpty($value): bool
+    {
+        if (is_null($value)) return true;
+        if (is_array($value)) return empty($value);
+        if (is_string($value)) {
+            $stripped = trim(strip_tags(str_replace(['&nbsp;', '\u00a0'], '', $value)));
+            return $stripped === '';
+        }
+        return false;
+    }
+
+    /**
+     * Recolecta TODAS las planificaciones personales de todas las asignaturas.
+     * Estructura: [user_id][unidad_numero][tema_orden] = array de datos del plan.
+     */
+    private function collectAllPlanificaciones(Collection $asignaturas): array
+    {
+        $collected = [];
+
+        foreach ($asignaturas as $asignatura) {
+            foreach ($asignatura->unidades as $unidad) {
+                $temas = $unidad->temas()->get();
+                foreach ($temas as $tema) {
+                    $planes = PlanificacionPersonal::where('tema_id', $tema->id)->get();
+                    foreach ($planes as $plan) {
+                        if (!$this->planHasContent($plan)) continue;
+
+                        $uid = $plan->user_id;
+                        $num = $unidad->numero;
+                        $ord = $tema->orden;
+
+                        if (isset($collected[$uid][$num][$ord])) {
+                            // Si hay colisión (mismo docente llenó en ambas carpetas),
+                            // fusionar campo por campo, prefiriendo el no vacío
+                            $collected[$uid][$num][$ord] = $this->mergePlanData(
+                                $collected[$uid][$num][$ord],
+                                $plan->toArray()
+                            );
+                        } else {
+                            $collected[$uid][$num][$ord] = [
+                                'user_id'                   => $uid,
+                                'estrategias_metodologicas' => $plan->estrategias_metodologicas,
+                                'estrategias_aprendizaje'   => $plan->estrategias_aprendizaje,
+                                'estrategias_recursos'      => $plan->estrategias_recursos,
+                                'evaluacion_formativa'      => $plan->evaluacion_formativa,
+                                'evaluacion_sumativa'       => $plan->evaluacion_sumativa,
+                                'secuencia_didactica'       => $plan->secuencia_didactica,
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+
+        return $collected;
+    }
+
+    /**
+     * Aplica las planificaciones recolectadas a una asignatura,
+     * buscando cada tema por unidad.numero + tema.orden.
+     */
+    private function applyCollectedPlanificaciones(Asignatura $asignatura, array $planificaciones): void
+    {
+        if (empty($planificaciones)) return;
+
+        $unidades = $asignatura->unidades()->with('temas')->get();
+
+        foreach ($unidades as $unidad) {
+            foreach ($unidad->temas as $tema) {
+                $num = $unidad->numero;
+                $ord = $tema->orden;
+
+                foreach ($planificaciones as $userId => $unidadMap) {
+                    if (!isset($unidadMap[$num][$ord])) continue;
+
+                    $planData = $unidadMap[$num][$ord];
+
+                    PlanificacionPersonal::updateOrCreate(
+                        ['tema_id' => $tema->id, 'user_id' => $userId],
+                        [
+                            'estrategias_metodologicas' => $planData['estrategias_metodologicas'],
+                            'estrategias_aprendizaje'   => $planData['estrategias_aprendizaje'],
+                            'estrategias_recursos'      => $planData['estrategias_recursos'],
+                            'evaluacion_formativa'      => $planData['evaluacion_formativa'],
+                            'evaluacion_sumativa'       => $planData['evaluacion_sumativa'],
+                            'secuencia_didactica'       => $planData['secuencia_didactica'],
+                        ]
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * Verifica si una PlanificacionPersonal tiene al menos un campo con contenido.
+     */
+    private function planHasContent(PlanificacionPersonal $plan): bool
+    {
+        return !$this->isFieldEmpty($plan->estrategias_metodologicas)
+            || !$this->isFieldEmpty($plan->estrategias_aprendizaje)
+            || !$this->isFieldEmpty($plan->evaluacion_formativa)
+            || !$this->isFieldEmpty($plan->evaluacion_sumativa)
+            || !$this->isFieldEmpty($plan->secuencia_didactica);
+    }
+
+    /**
+     * Fusiona dos arrays de datos de planificación campo por campo,
+     * prefiriendo el valor no vacío. El existente tiene prioridad en caso de empate.
+     */
+    private function mergePlanData(array $existing, array $incoming): array
+    {
+        $fields = [
+            'estrategias_metodologicas', 'estrategias_aprendizaje', 'estrategias_recursos',
+            'evaluacion_formativa', 'evaluacion_sumativa', 'secuencia_didactica',
+        ];
+
+        $merged = $existing;
+        foreach ($fields as $field) {
+            if ($this->isFieldEmpty($existing[$field] ?? null) && !$this->isFieldEmpty($incoming[$field] ?? null)) {
+                $merged[$field] = $incoming[$field];
+            }
+        }
+
+        return $merged;
+    }
+
+    // =========================================================================
+
     /**
      * Calcula el porcentaje de progreso de documentación de una asignatura
      */
@@ -704,24 +1007,40 @@ class MateriasComunesSyncService
         
         try {
             DB::transaction(function () use ($source, $linked, &$synced) {
-                // Obtenemos el cronograma MASTER de la materia origen
+                // Obtenemos el cronograma MASTER de la materia origen, indexado por numero_sesion
                 $masterCronogramas = \App\Models\Cronograma::where('asignatura_id', $source->id)
                     ->whereNull('grupo_id')
                     ->orderBy('numero_sesion')
-                    ->get();
+                    ->get()
+                    ->keyBy('numero_sesion');
                     
                 foreach ($linked as $target) {
-                    // Borramos cronograma master del target
-                    \App\Models\Cronograma::where('asignatura_id', $target->id)
+                    // Obtenemos cronogramas existentes en el target, indexados por numero_sesion
+                    $existingCronogramas = \App\Models\Cronograma::where('asignatura_id', $target->id)
                         ->whereNull('grupo_id')
-                        ->delete();
-                        
-                    foreach($masterCronogramas as $mc) {
+                        ->get()
+                        ->keyBy('numero_sesion');
+                    
+                    // Para cada sesión del master, actualizar o crear en el target
+                    foreach ($masterCronogramas as $numeroSesion => $mc) {
                         /** @var \App\Models\Cronograma $mc */
-                        $newMaster = $mc->replicate(['id', 'asignatura_id', 'created_at', 'updated_at']);
-                        $newMaster->asignatura_id = $target->id;
+                        $targetCrono = $existingCronogramas->get($numeroSesion);
                         
-                        // Si está asignado a un tema, debemos mapearlo al tema homólogo en la materia target
+                        $cronoData = [
+                            'asignatura_id' => $target->id,
+                            'numero_sesion' => $mc->numero_sesion,
+                            'semana_academica' => $mc->semana_academica,
+                            'tipo_clase' => $mc->tipo_clase,
+                            'contenido_conceptual' => $mc->contenido_conceptual,
+                            'contenido_procedimental' => $mc->contenido_procedimental,
+                            'contenido_actitudinal' => $mc->contenido_actitudinal,
+                            'criterios_desempeno' => $mc->criterios_desempeno,
+                            'instrumentos_evaluacion' => $mc->instrumentos_evaluacion,
+                            'observaciones' => $mc->observaciones,
+                            'grupo_id' => null,
+                        ];
+                        
+                        // Mapear tema_id si corresponde
                         if ($mc->tema_id) {
                             $sourceTema = \App\Models\Tema::with('unidad')->find($mc->tema_id);
                             if ($sourceTema && $sourceTema->unidad) {
@@ -729,15 +1048,30 @@ class MateriasComunesSyncService
                                 if ($targetUnidad) {
                                     $targetTema = $targetUnidad->temas()->where('orden', $sourceTema->orden)->first();
                                     if ($targetTema) {
-                                        $newMaster->tema_id = $targetTema->id;
+                                        $cronoData['tema_id'] = $targetTema->id;
+                                    } else {
+                                        $cronoData['tema_id'] = null;
                                     }
+                                } else {
+                                    $cronoData['tema_id'] = null;
                                 }
+                            } else {
+                                $cronoData['tema_id'] = null;
                             }
+                        } else {
+                            $cronoData['tema_id'] = null;
                         }
                         
-                        $newMaster->save();
+                        if ($targetCrono) {
+                            // Actualizar cronograma existente, preservando cualquier campo extra que no sea replicado
+                            $targetCrono->update($cronoData);
+                            $updatedCrono = $targetCrono;
+                        } else {
+                            // Crear nuevo cronograma
+                            $updatedCrono = \App\Models\Cronograma::create($cronoData);
+                        }
                         
-                        // Si manejaran el relations ManyToMany temas (cronograma_tema)
+                        // Sincronizar relación ManyToMany temas (cronograma_tema) si existe
                         $mcTemas = $mc->temas;
                         if ($mcTemas->isNotEmpty()) {
                             $targetTemaIds = [];
@@ -754,10 +1088,15 @@ class MateriasComunesSyncService
                                 }
                             }
                             if (!empty($targetTemaIds)) {
-                                $newMaster->temas()->sync($targetTemaIds);
+                                $updatedCrono->temas()->sync($targetTemaIds);
                             }
                         }
                     }
+                    
+                    // NOTA: NO eliminamos cronogramas en target que no estén en source
+                    // para evitar pérdida de datos. En una fusión verdadera, el cronograma
+                    // debería ser único, pero es más seguro conservar sesiones extras.
+                    
                     $synced++;
                 }
             });
@@ -765,5 +1104,76 @@ class MateriasComunesSyncService
              self::$isSyncing = false;
         }
         return $synced;
+    }
+
+    /**
+     * Determina la asignatura con el mejor cronograma entre las vinculadas por comun_token.
+     * 
+     * @param string $comunToken
+     * @return \App\Models\Asignatura|null
+     */
+    public function getBestCronogramaForComunToken(string $comunToken): ?\App\Models\Asignatura
+    {
+        $asignaturas = \App\Models\Asignatura::where('comun_token', $comunToken)
+            ->with(['cronogramas' => function ($query) {
+                $query->whereNull('grupo_id');
+            }])
+            ->get();
+
+        if ($asignaturas->isEmpty()) {
+            return null;
+        }
+
+        $bestScore = -1;
+        $bestAsignatura = null;
+
+        foreach ($asignaturas as $asignatura) {
+            $score = $this->scoreCronogramaCompleteness($asignatura);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestAsignatura = $asignatura;
+            }
+        }
+
+        // Si ninguna tiene cronogramas con contenido, fallback a la mejor documentación
+        if ($bestScore <= 0) {
+            $bestAsignatura = $this->findDocumentationMaster($asignaturas);
+        }
+
+        return $bestAsignatura;
+    }
+
+    /**
+     * Puntúa la completitud del cronograma de una asignatura.
+     * 
+     * @param \App\Models\Asignatura $asignatura
+     * @return int
+     */
+    private function scoreCronogramaCompleteness(\App\Models\Asignatura $asignatura): int
+    {
+        $score = 0;
+        $cronogramas = $asignatura->cronogramas;
+
+        if ($cronogramas->isEmpty()) {
+            return 0;
+        }
+
+        foreach ($cronogramas as $crono) {
+            // Cada sesión con contenido aporta puntos
+            $sessionScore = 0;
+            if (!$this->isFieldEmpty($crono->contenido_conceptual)) $sessionScore += 2;
+            if (!$this->isFieldEmpty($crono->contenido_procedimental)) $sessionScore += 2;
+            if (!$this->isFieldEmpty($crono->contenido_actitudinal)) $sessionScore += 2;
+            if (!$this->isFieldEmpty($crono->criterios_desempeno)) $sessionScore += 1;
+            if (!$this->isFieldEmpty($crono->instrumentos_evaluacion)) $sessionScore += 1;
+            if ($crono->tema_id) $sessionScore += 3; // Vinculación a tema es valioso
+            
+            $score += $sessionScore;
+        }
+
+        // Bonus por cantidad de sesiones (estructura completa)
+        $score += $cronogramas->count() * 1;
+
+        return $score;
     }
 }
