@@ -27,7 +27,8 @@ class Cronograma extends Model
         'contenido_items_seleccionados', // Array de items seleccionados "temaId:itemIndex"
         'cumplido',
         'pedagogico',
-        'tipo_clase' // Added for master planning
+        'tipo_clase',   // Added for master planning
+        'indice_tipo',  // Posición ordinal dentro del tipo en la semana (1ra teórica=1, 2da=2…)
     ];
 
     protected $casts = [
