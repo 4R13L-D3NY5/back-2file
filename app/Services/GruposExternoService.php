@@ -51,12 +51,194 @@ class GruposExternoService
     }
 
     /**
+     * Listar materias del Plan N (filtradas y aplanadas)
+     */
+    public function listarMateriasPlanN(string $gestion, string $carrera, int $sede): array
+    {
+        $cacheKey = "grupos_externos_plan_n_{$gestion}_{$carrera}_{$sede}";
+
+        return Cache::remember($cacheKey, 300, function () use ($gestion, $carrera, $sede) {
+            try {
+                Log::debug('GruposExternoService: Fetching Plan N data', [
+                    'gestion' => $gestion,
+                    'carrera' => $carrera,
+                    'sede' => $sede,
+                    'baseUrl' => $this->baseUrl
+                ]);
+
+                $response = Http::timeout(30)->get("{$this->baseUrl}/api/Grupos/listar/", [
+                    'gestion' => $gestion,
+                    'carrera' => $carrera,
+                    'sede' => $sede
+                ]);
+
+                if ($response->successful()) {
+                    $rawData = $response->json();
+                    Log::debug('GruposExternoService: Raw data count', ['count' => count($rawData)]);
+                    $filteredData = $this->transformarMateriasPlanN($rawData, $sede);
+                    Log::debug('GruposExternoService: Filtered data count', ['count' => count($filteredData)]);
+                    return $filteredData;
+                }
+
+                Log::warning('GruposExternoService: API response not successful', [
+                    'status' => $response->status(),
+                    'body' => $response->body()
+                ]);
+
+                return [];
+            } catch (\Exception $e) {
+                Log::error('GruposExternoService: Error fetching data', [
+                    'error' => $e->getMessage()
+                ]);
+                return [];
+            }
+        });
+    }
+
+    /**
+     * Transformar datos raw a materias del Plan N (aplanadas)
+     */
+    protected function transformarMateriasPlanN(array $rawData, int $sede): array
+    {
+        Log::debug('GruposExternoService: Transforming Plan N data', [
+            'raw_count' => count($rawData),
+            'sede_filter' => $sede
+        ]);
+
+        // Filtrar solo Plan N y sede específica (doble verificación)
+        $filteredData = array_filter($rawData, function ($item) use ($sede) {
+            $planEst = $item['planEst'] ?? 'N';
+            $idSede = $item['idSede'] ?? null;
+            $passes = $planEst === 'N' && $idSede == $sede;
+            if (!$passes) {
+                Log::debug('GruposExternoService: Item filtered out', [
+                    'siglaP' => $item['siglaP'] ?? null,
+                    'planEst' => $planEst,
+                    'idSede' => $idSede,
+                    'sede_filter' => $sede
+                ]);
+            }
+            return $passes;
+        });
+
+        Log::debug('GruposExternoService: After filtering', ['filtered_count' => count($filteredData)]);
+
+        // Agrupar por materia (sigla + semestre)
+        $materias = [];
+        $horariosUnicos = [];
+
+        foreach ($filteredData as $item) {
+            // Crear un identificador único para evitar duplicados de horario
+            $horarioKey = sprintf(
+                '%s-%s-%s-%s-%s-%s',
+                trim($item['siglaP']),
+                $item['grupo'],
+                $item['tipoClase'],
+                $item['dia'],
+                $item['horaInicio'],
+                $item['ci']
+            );
+
+            if (isset($horariosUnicos[$horarioKey])) {
+                continue;
+            }
+            $horariosUnicos[$horarioKey] = true;
+
+            $materiaKey = trim($item['siglaP']) . '-' . $item['semestre'];
+
+            if (!isset($materias[$materiaKey])) {
+                $materias[$materiaKey] = [
+                    'codigo' => trim($item['siglaP']),
+                    'nombre' => $item['materia'],
+                    'semestre' => $item['semestre'],
+                    'carrera' => $item['carrera'],
+                    'sede_id' => $item['idSede'],
+                    'sede_nombre' => $item['nombreSede'],
+                    'gestion' => trim($item['gestion']),
+                    'plan_estudios' => 'N',
+                    'docentes_grupos' => [] // array asociativo docente => grupos[]
+                ];
+            }
+
+            // Agregar docente con grupo
+            $docente = $this->limpiarNombre($item['docente']);
+            $grupo = $item['grupo'] ?? '';
+            if ($docente && $grupo !== '') {
+                if (!isset($materias[$materiaKey]['docentes_grupos'][$docente])) {
+                    $materias[$materiaKey]['docentes_grupos'][$docente] = [];
+                }
+                if (!in_array($grupo, $materias[$materiaKey]['docentes_grupos'][$docente])) {
+                    $materias[$materiaKey]['docentes_grupos'][$docente][] = $grupo;
+                }
+            }
+        }
+
+        // Convertir a array plano y ordenar
+        $resultado = [];
+        foreach ($materias as $materia) {
+            // Formatear docentes con grupos
+            $docentesFormateados = [];
+            foreach ($materia['docentes_grupos'] as $docente => $grupos) {
+                if (empty($grupos)) {
+                    $docentesFormateados[] = $docente;
+                } else {
+                    $gruposStr = implode(', ', $grupos);
+                    $docentesFormateados[] = $docente . ' (' . $gruposStr . ')';
+                }
+            }
+            
+            $resultado[] = [
+                'codigo' => $materia['codigo'],
+                'nombre' => $materia['nombre'],
+                'semestre' => $materia['semestre'],
+                'carrera' => $materia['carrera'],
+                'sede_id' => $materia['sede_id'],
+                'sede_nombre' => $materia['sede_nombre'],
+                'gestion' => $materia['gestion'],
+                'plan_estudios' => $materia['plan_estudios'],
+                'docentes' => $docentesFormateados, // array de strings formateados
+                'docentes_string' => implode(', ', $docentesFormateados) // compatibilidad
+            ];
+        }
+
+        // Ordenar por semestre y código
+        usort($resultado, function ($a, $b) {
+            if ($a['semestre'] !== $b['semestre']) {
+                return $a['semestre'] - $b['semestre'];
+            }
+            return strcmp($a['codigo'], $b['codigo']);
+        });
+
+        Log::debug('GruposExternoService: Final result count', ['result_count' => count($resultado)]);
+
+        return $resultado;
+    }
+
+    /**
+     * Obtener datos detallados de una asignatura específica del Plan N
+     */
+    public function obtenerAsignaturaDetalle(string $gestion, string $carrera, int $sede, string $codigoAsignatura): ?array
+    {
+        $data = $this->listarMateriasPlanN($gestion, $carrera, $sede);
+        
+        foreach ($data as $materia) {
+            if ($materia['codigo'] === $codigoAsignatura) {
+                return $materia;
+            }
+        }
+        
+        return null;
+    }
+
+    /**
      * Limpiar cache de grupos
      */
     public function limpiarCache(string $gestion, string $carrera, int $sede): void
     {
         $cacheKey = "grupos_externos_{$gestion}_{$carrera}_{$sede}";
         Cache::forget($cacheKey);
+        $cacheKeyPlanN = "grupos_externos_plan_n_{$gestion}_{$carrera}_{$sede}";
+        Cache::forget($cacheKeyPlanN);
     }
 
     /**
@@ -97,6 +279,7 @@ class GruposExternoService
                     'sede_id' => $item['idSede'],
                     'sede_nombre' => $item['nombreSede'],
                     'gestion' => trim($item['gestion']),
+                    'plan_estudios' => $item['planEst'] ?? 'N',
                     'grupos' => []
                 ];
             }

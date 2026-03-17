@@ -60,7 +60,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Grupos Externos (API externa)
     Route::get('grupos-externo', [GruposExternoController::class, 'index']);
+    Route::get('grupos-externo/plan-n', [GruposExternoController::class, 'planN']);
+    Route::get('grupos-externo/comparar-asignatura', [GruposExternoController::class, 'compararAsignatura']);
     Route::post('grupos-externo/refresh', [GruposExternoController::class, 'refresh']);
+    // Gestión de grupos locales
+    Route::post('grupos-externo/quitar-grupo-docente', [GruposExternoController::class, 'quitarGrupoDocente']);
+    Route::post('grupos-externo/asignar-grupo-docente', [GruposExternoController::class, 'asignarGrupoDocente']);
 
     // Stats
     Route::get('admin/stats', [DashboardController::class, 'index']);
