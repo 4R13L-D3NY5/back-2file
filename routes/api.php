@@ -312,7 +312,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Planning Cache (sincronización y lectura de datos API Planning guardados en BD)
     Route::post('/planning/sincronizar-cochabamba', [\App\Http\Controllers\PlanningCacheController::class, 'sincronizarCochabamba']);
-    Route::get('/planning/cache', [\App\Http\Controllers\PlanningCacheController::class, 'getCache']);
-    Route::get('/planning/sync-status', [\App\Http\Controllers\PlanningCacheController::class, 'syncStatus']);
+    Route::post('/planning/sincronizar-carrera',    [\App\Http\Controllers\PlanningCacheController::class, 'sincronizarCarrera']);
+    Route::get('/planning/cache',                   [\App\Http\Controllers\PlanningCacheController::class, 'getCache']);
+    Route::get('/planning/sync-status',             [\App\Http\Controllers\PlanningCacheController::class, 'syncStatus']);
 
 });
