@@ -316,4 +316,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/planning/cache',                   [\App\Http\Controllers\PlanningCacheController::class, 'getCache']);
     Route::get('/planning/sync-status',             [\App\Http\Controllers\PlanningCacheController::class, 'syncStatus']);
 
+    // Módulo de Sincronización Académica (Solo SUPER_ADMIN)
+    Route::prefix('sync')->group(function () {
+        Route::post('/carrera',       [\App\Http\Controllers\SyncController::class, 'syncCarrera']);
+        Route::post('/sede',          [\App\Http\Controllers\SyncController::class, 'syncSede']);
+        Route::post('/materia',       [\App\Http\Controllers\SyncController::class, 'syncMateria']);
+        Route::get('/logs',           [\App\Http\Controllers\SyncController::class, 'getLogs']);
+        Route::get('/logs/{id}/diff', [\App\Http\Controllers\SyncController::class, 'getDiff']);
+    });
+
 });
