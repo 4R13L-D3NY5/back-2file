@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\BancoPregunta;
 use App\Models\LogroEsperado;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BancoPreguntaController extends Controller
@@ -21,16 +22,30 @@ class BancoPreguntaController extends Controller
         if ($request->has('logro_id')) {
             $questions->where('logro_esperado_id', $request->logro_id);
         }
+
+        if ($request->has('asignatura_id')) {
+            $questions->where('asignatura_id', $request->asignatura_id);
+        }
         
-        // Filtrar por docente actual (a menos que se pida todas)
-        if (!$request->boolean('all_docentes')) {
+        // Debug Log
+        \Log::info("BancoPregunta Index Request", [
+            'asignatura_id' => $request->asignatura_id,
+            'user_id' => auth()->id(),
+            'all_docentes' => $request->boolean('all_docentes')
+        ]);
+
+        // Filtrar por docente actual (a menos que se pida todas o sea por asignatura)
+        if (!$request->boolean('all_docentes') && !$request->has('asignatura_id')) {
             $userId = auth()->id();
             if ($userId) {
                 $questions->where('created_by', $userId);
             }
         }
         
-        return response()->json($questions->get());
+        $results = $questions->get();
+        \Log::info("BancoPregunta Index Results", ['count' => $results->count()]);
+
+        return response()->json($results);
     }
 
     /**
@@ -48,8 +63,9 @@ class BancoPreguntaController extends Controller
         ]);
 
 
-        // Inyectar usuario actual
+        // Inyectar usuario actual y docente_id
         $validated['created_by'] = $request->user()?->id;
+        $validated['docente_id'] = \App\Models\Docente::where('user_id', $validated['created_by'])->first()?->id;
 
         $pregunta = BancoPregunta::create($validated);
         return response()->json($pregunta, 201);
@@ -64,72 +80,97 @@ class BancoPreguntaController extends Controller
         return response()->json(null, 204);
     }
 
-    /**
-     * Importar preguntas desde Excel
-     * Formato esperado: ENUNCIADO | TIPO | A | B | C | D | E | DIFICULTAD | PESO | RESPUESTA
-     */
     public function import(Request $request)
     {
         $request->validate([
             'file' => 'required|file|mimes:xlsx,xls,csv',
-            'logro_esperado_id' => 'required|exists:logros_esperados,id'
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'logro_esperado_id' => 'nullable|exists:logros_esperados,id'
         ]);
 
         $file = $request->file('file');
+        $asignaturaId = $request->input('asignatura_id');
         $logroId = $request->input('logro_esperado_id');
 
         try {
+            $modo = $request->input('modo', 'agregar');
+
+            if ($modo === 'reemplazar') {
+                \Log::info("Vaciando banco de preguntas para asignatura: {$asignaturaId}");
+                BancoPregunta::where('asignatura_id', $asignaturaId)->delete();
+            }
+
             $spreadsheet = IOFactory::load($file->getPathname());
             $worksheet = $spreadsheet->getActiveSheet();
             $rows = $worksheet->toArray();
             
-            // Asumimos fila 1 HEADERS
-            // ENUNCIADO(0) | TIPO(1) | A(2) | B(3) | C(4) | D(5) | E(6) | DIFICULTAD(7) | PESO(8) | RESPUESTA(9)
+            // FORMATO V3:
+            // TIPO(0) | ENUNCIADO(1) | A(2) | B(3) | C(4) | D(5) | E(6) | RESPUESTA(7) | DIFICULTAD(8) | PARCIAL(9)
 
             $count = 0;
+            $tipoMap = [
+                'FV' => 'FALSO_VERDADERO',
+                'SS' => 'SELECCION_UNICA',
+                'SM' => 'SELECCION_MULTIPLE'
+            ];
+
+            $docenteId = $request->input('docente_id') 
+                ?? (\App\Models\Docente::where('user_id', auth()->id())->first()?->id);
+
+            \Log::info("Importación Banco: docente_id detectado: " . ($docenteId ?? 'NULL'));
+
             foreach ($rows as $index => $row) {
                 if ($index === 0) continue; // Skip Header
-                if (empty($row[0])) continue; // Skip Empty Rows
+                if (empty($row[0]) || empty($row[1])) continue; // Skip Empty Rows
 
-                $tipo = strtoupper(trim($row[1] ?? 'SELECCION_UNICA')); // Default
+                $tipoBasico = strtoupper(trim($row[0]));
+                $tipo = $tipoMap[$tipoBasico] ?? 'SELECCION_UNICA';
                 
                 // Construir Opciones
                 $opciones = [];
-                // Columnas de opciones (A-E -> index 2-6)
                 $letters = ['A', 'B', 'C', 'D', 'E'];
                 foreach ($letters as $k => $letter) {
                     $val = $row[2 + $k] ?? null;
-                    if ($val) {
-                        $opciones[] = ['id' => $letter, 'text' => $val];
+                    if ($val !== null && $val !== '') {
+                        $opciones[] = ['id' => $letter, 'text' => (string)$val];
                     }
                 }
 
                 // Construir Respuesta
-                $rawResp = $row[9] ?? '';
-                // Si es Multiple (Ej: "A,B"), convertimos a array
+                $rawResp = strtoupper(trim((string)($row[7] ?? '')));
                 if (str_contains($rawResp, ',')) {
                     $respuesta = array_map('trim', explode(',', $rawResp));
                 } else {
-                    $respuesta = trim($rawResp);
+                    $respuesta = $rawResp;
                 }
 
                 BancoPregunta::create([
-                    'enunciado' => $row[0],
+                    'asignatura_id' => $asignaturaId,
+                    'docente_id' => $docenteId,
+                    'logro_esperado_id' => $logroId,
                     'tipo' => $tipo,
+                    'enunciado' => $row[1],
                     'opciones' => $opciones,
                     'respuesta_correcta' => $respuesta,
-                    'dificultad' => $row[7] ?? 'MEDIA',
-                    'peso' => (int)($row[8] ?? 1),
-                    'logro_esperado_id' => $logroId,
+                    'dificultad' => $row[8] ?? 'MEDIA',
+                    'parcial' => $row[9] ?? null,
+                    'peso' => 1,
                     'created_by' => auth()->id()
                 ]);
                 $count++;
             }
 
-            return response()->json(['message' => "Importadas {$count} preguntas correctamente."]);
+            return response()->json([
+                'success' => true,
+                'message' => "Se han importado {$count} preguntas correctamente.",
+                'total' => $count
+            ]);
 
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Error al leer archivo: ' . $e->getMessage()], 500);
+            return response()->json([
+                'success' => false,
+                'error' => 'Error al procesar el archivo Excel: ' . $e->getMessage()
+            ], 500);
         }
     }
 }

@@ -17,8 +17,11 @@ class BancoPregunta extends Model
         'opciones', // JSON Array
         'respuesta_correcta', // JSON Array or Scalar
         'dificultad',
+        'parcial',
         'peso',
         'logro_esperado_id',
+        'asignatura_id',
+        'docente_id',
         'created_by'
     ];
 
@@ -27,9 +30,19 @@ class BancoPregunta extends Model
         'respuesta_correcta' => 'array'
     ];
 
+    public function asignatura()
+    {
+        return $this->belongsTo(Asignatura::class);
+    }
+
+    public function docente()
+    {
+        return $this->belongsTo(Docente::class);
+    }
+
     public function logro()
     {
-        return $this->belongsTo(LogroEsperado::class);
+        return $this->belongsTo(LogroEsperado::class, 'logro_esperado_id');
     }
 
     public function creator()

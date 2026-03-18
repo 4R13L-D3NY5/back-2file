@@ -91,9 +91,9 @@ class AsignaturaController extends Controller
                 }
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
-            }, 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes']);
+            }, 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes', 'bancoPreguntas']);
         } else {
-            $query->with(['carreras', 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes']);
+            $query->with(['carreras', 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes', 'bancoPreguntas']);
         }
 
         if ($request->filled('search')) {
@@ -202,6 +202,18 @@ class AsignaturaController extends Controller
                     
                     // Calcular progreso por docente utilizando la misma lógica del progreso general
                     $progresoDocente = $userId ? $a->getProgresoPorDocente($userId) : $progreso;
+                    
+                    // Estadísticas de preguntas 1P por docente
+                    $preguntasDocente1P = $a->bancoPreguntas
+                        ->where('docente_id', $d->id)
+                        ->where('parcial', 1);
+                    
+                    $stats1P = [
+                        'faciles' => $preguntasDocente1P->where('dificultad', 1)->count(),
+                        'medias' => $preguntasDocente1P->where('dificultad', 2)->count(),
+                        'dificiles' => $preguntasDocente1P->where('dificultad', 3)->count(),
+                        'total' => $preguntasDocente1P->count()
+                    ];
 
                     return [
                         'id' => $d->id,
@@ -211,9 +223,17 @@ class AsignaturaController extends Controller
                         'carrera_id' => $carreraId,
                         'sede_id' => $sedeId,
                         'progreso_documentacion' => $progresoDocente,
-                        'indicadores_documentacion' => $indicadoresDocente
+                        'indicadores_documentacion' => $indicadoresDocente,
+                        'preguntas_1p_stats' => $stats1P
                     ];
-                })->values()
+                })->values(),
+                // Estadísticas consolidadas de la asignatura (Parcial 1)
+                'preguntas_1p_stats' => [
+                    'faciles' => $a->bancoPreguntas->where('parcial', 1)->where('dificultad', 1)->count(),
+                    'medias' => $a->bancoPreguntas->where('parcial', 1)->where('dificultad', 2)->count(),
+                    'dificiles' => $a->bancoPreguntas->where('parcial', 1)->where('dificultad', 3)->count(),
+                    'total' => $a->bancoPreguntas->where('parcial', 1)->count()
+                ]
             ];
         })); // END MAP
     }

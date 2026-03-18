@@ -135,6 +135,11 @@ class Asignatura extends Model
         return $this->hasMany(Auditoria::class);
     }
 
+    public function bancoPreguntas(): HasMany
+    {
+        return $this->hasMany(BancoPregunta::class);
+    }
+
     /**
      * ACCESSORS
      */
