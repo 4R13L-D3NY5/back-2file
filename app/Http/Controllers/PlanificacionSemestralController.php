@@ -208,23 +208,35 @@ class PlanificacionSemestralController extends Controller
 
                 // 1. SAVE MASTER PLANNING (Shared content) - ALWAYS
                 // We identify Master record by (asignatura_id, grupo_id=NULL, numero_sesion)
+                // Resolver tipo_clase desde cualquiera de las dos claves posibles (camelCase o snake_case)
+                $tipoClase = $sesionData['tipo_clase'] ?? $sesionData['tipoClase'] ?? null;
+
+                // Resolver semana desde cualquiera de las dos claves posibles
+                $semanaAcademica = $sesionData['semana_academica'] ?? $sesionData['semana'] ?? null;
+
+                // indice_tipo: posición ordinal dentro del tipo en la semana
+                // (1 = 1ra Teórica/Práctica de la semana, 2 = 2da, etc.)
+                $indiceTipo = $sesionData['indice_tipo'] ?? $sesionData['indiceTipo'] ?? null;
+
                 $master = Cronograma::updateOrCreate(
                     [
                         'asignatura_id' => $asignatura->id,
                         'grupo_id' => null,
                         'numero_sesion' => $numeroSesion,
                     ],
-                    [
-                        'tema_id' => $sesionData['tema_id'] ?? null,
-                        'contenido_conceptual' => $sesionData['conceptual'] ?? null,
-                        'contenido_procedimental' => $sesionData['procedimental'] ?? null,
-                        'contenido_actitudinal' => $sesionData['actitudinal'] ?? null,
-                        'criterios_desempeno' => $sesionData['criteriosDesempeno'] ?? null,
-                        'instrumentos_evaluacion' => $sesionData['instrumentosEvaluacion'] ?? null,
+                    array_filter([
+                        'tema_id'                       => $sesionData['tema_id'] ?? null,
+                        'contenido_conceptual'          => $sesionData['conceptual'] ?? null,
+                        'contenido_procedimental'       => $sesionData['procedimental'] ?? null,
+                        'contenido_actitudinal'         => $sesionData['actitudinal'] ?? null,
+                        'criterios_desempeno'           => $sesionData['criteriosDesempeno'] ?? null,
+                        'instrumentos_evaluacion'       => $sesionData['instrumentosEvaluacion'] ?? null,
                         'contenido_items_seleccionados' => $sesionData['contenido_items_seleccionados'] ?? [],
-                        'observaciones' => $sesionData['observaciones'] ?? null,
-                        'semana_academica' => $sesionData['semana'] ?? null,
-                    ] + (isset($sesionData['tipoClase']) ? ['tipo_clase' => $sesionData['tipoClase']] : [])
+                        'observaciones'                 => $sesionData['observaciones'] ?? null,
+                        'semana_academica'              => $semanaAcademica,
+                        'tipo_clase'                    => $tipoClase,
+                        'indice_tipo'                   => $indiceTipo,
+                    ], fn($v) => $v !== null)
                 );
 
                 // Sync multiple topics for Master
