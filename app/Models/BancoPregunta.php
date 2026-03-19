@@ -14,6 +14,7 @@ class BancoPregunta extends Model
     protected $fillable = [
         'enunciado',
         'tipo', // SELECCION_UNICA, SELECCION_MULTIPLE, FALSO_VERDADERO
+        'grupo',
         'opciones', // JSON Array
         'respuesta_correcta', // JSON Array or Scalar
         'dificultad',
