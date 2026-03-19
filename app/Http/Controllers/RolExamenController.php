@@ -157,13 +157,26 @@ class RolExamenController extends Controller
                 // C: Código Materia (indice 2)
                 $codigo = trim($row[2] ?? '');
                 
+                // B: Asignatura (indice 1)
+                $nombreMateriaExcel = trim($row[1] ?? '');
+                
                 // E: Grupo (indice 4)
                 $grupo = trim($row[4] ?? '');
 
                 if (empty($codigo) || trim(strtoupper($codigo)) === '#REF!') continue;
 
                 // 1. Validar Materia
-                $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+                // Buscar la materia asegurando que pertenezca a la carrera seleccionada para obtener su nombre correcto
+                $asignatura = \App\Models\Asignatura::where('codigo', $codigo)
+                    ->whereHas('carreras', function ($q) use ($carreraId) {
+                        $q->where('asignatura_carrera.carrera_id', $carreraId);
+                    })->first();
+                
+                // Fallback por si no está vinculada pero existe
+                if (!$asignatura) {
+                    $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+                }
+
                 if (!$asignatura) {
                     $errors[] = "Fila {$rowNumber}: No se encontró la materia con código '{$codigo}'";
                     continue;
@@ -235,7 +248,7 @@ class RolExamenController extends Controller
                                 'grupo' => $grupo ?: null,
                             ],
                             [
-                                'materia_nombre' => $asignatura->nombre,
+                                'materia_nombre' => !empty($nombreMateriaExcel) ? $nombreMateriaExcel : $asignatura->nombre,
                                 'semana' => $semana,
                                 'fecha' => $fecha,
                                 'hora_inicio' => $horaInicio,
@@ -291,7 +304,11 @@ class RolExamenController extends Controller
         // 2. Validar Dia de Clase (Warning Non-Blocking)
         // Solo si tenemos fecha y grupo
         if ($fecha && $grupo) {
-            $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+            $asignatura = \App\Models\Asignatura::where('codigo', $codigo)
+                ->whereHas('carreras', function ($q) use ($carreraId) {
+                    $q->where('asignatura_carrera.carrera_id', $carreraId);
+                })->first() ?? \App\Models\Asignatura::where('codigo', $codigo)->first();
+                
             if ($asignatura) {
                 // Buscar grupo por nombre vinculado a la asignatura
                 // VALIDACION: Solo buscar en grupos TEORICOS (numerales)
@@ -353,7 +370,11 @@ class RolExamenController extends Controller
 
         // 3. Validar Colisión de Exámenes (Mismo Semestre, Misma Carrera, Mismo Día)
         if ($fecha) {
-            $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+            $asignatura = \App\Models\Asignatura::where('codigo', $codigo)
+                ->whereHas('carreras', function ($q) use ($carreraId) {
+                    $q->where('asignatura_carrera.carrera_id', $carreraId);
+                })->first() ?? \App\Models\Asignatura::where('codigo', $codigo)->first();
+                
             if ($asignatura) {
                 // Obtener semestre via pivot table
                 $pivot = \Illuminate\Support\Facades\DB::table('asignatura_carrera')

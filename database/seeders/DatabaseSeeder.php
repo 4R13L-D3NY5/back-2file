@@ -25,6 +25,7 @@ class DatabaseSeeder extends Seeder
             ListaUsuariosSeeder::class,
             // TestRolesSeeder::class,
             // ArielCamaraSeeder::class,
+            EvaluacionConfiguracionSeeder::class,
         ]);
     }
 }

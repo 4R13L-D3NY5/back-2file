@@ -209,6 +209,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('evaluaciones')->group(function () {
         Route::get('/', [\App\Http\Controllers\EvaluacionController::class, 'index']); // ?asignatura_id=X
         Route::post('/', [\App\Http\Controllers\EvaluacionController::class, 'store']); // Create & Generate
+        
+        // Configuraciones de Evaluaciones (Nacional/Sede/Carrera)
+        Route::get('/config', [\App\Http\Controllers\EvaluacionConfiguracionController::class, 'obtenerConfiguracion']);
+        Route::post('/config', [\App\Http\Controllers\EvaluacionConfiguracionController::class, 'guardarConfiguracion']);
     });
 
     // Roles & Users
