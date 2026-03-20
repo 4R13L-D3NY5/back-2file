@@ -20,7 +20,6 @@ class User extends Authenticatable
      * @var list<string>
      */
     protected $fillable = [
-        'name',
         'username',
         'email',
         'password',
@@ -33,6 +32,7 @@ class User extends Authenticatable
         'telefono',
         'carrera',
         'sede_id',
+        'campus_id',
     ];
 
     /**
@@ -68,6 +68,11 @@ class User extends Authenticatable
     public function sede()
     {
         return $this->belongsTo(Sede::class);
+    }
+
+    public function campus()
+    {
+        return $this->belongsTo(Campus::class);
     }
 
     public function director()
