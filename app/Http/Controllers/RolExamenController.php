@@ -21,11 +21,15 @@ class RolExamenController extends Controller
                 'rol_examenes.*',
                 'asignaturas.nombre as materia_nombre',
                 'carreras.nombre as carrera_nombre',
+                'sedes.nombre as sede_nombre',
+                'asignaturas.id as asignatura_id',
+                'docentes.id as docente_id',
                 'docentes.nombre_completo as docente_nombre',
                 'asignatura_carrera.semestre'
             )
             ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
             ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
+            ->join('sedes', 'rol_examenes.sede_id', '=', 'sedes.id')
             ->leftJoin('asignatura_carrera', function ($join) {
                 $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
                     ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id');
@@ -459,9 +463,6 @@ class RolExamenController extends Controller
         return response()->json($examen, 201);
     }
 
-    /**
-     * Actualizar examen
-     */
     public function update(Request $request, $id)
     {
         $examen = RolExamen::findOrFail($id);
@@ -481,6 +482,110 @@ class RolExamenController extends Controller
         $examen->update($request->all());
 
         return response()->json($examen);
+    }
+
+    /**
+     * Subir PDF de examen para una variante
+     */
+    public function uploadExamen(Request $request, $id)
+    {
+        $examen = RolExamen::findOrFail($id);
+        
+        $request->validate([
+            'archivo' => 'required|file|mimes:pdf|max:5120',
+            'variante' => 'required|string',
+            'filename' => 'required|string'
+        ]);
+
+        $file = $request->file('archivo');
+        $filename = $request->filename;
+        
+        $path = $file->storeAs('examenes', $filename, 'public');
+
+        // Actualizar la columna 'variantes' (JSON)
+        $variantes = $examen->variantes ?? [];
+        
+        // Si antes era un array de strings, normalizar a objetos
+        if (count($variantes) > 0 && is_string($variantes[0])) {
+             $variantes = array_map(fn($v) => ['letra' => $v, 'archivo' => null], $variantes);
+        }
+
+        $letra = $request->variante;
+        $found = false;
+        foreach ($variantes as &$v) {
+            if ($v['letra'] === $letra) {
+                $v['archivo'] = $filename;
+                $found = true;
+            }
+        }
+        
+        if (!$found) {
+            $variantes[] = ['letra' => $letra, 'archivo' => $filename];
+        }
+
+        $examen->variantes = $variantes;
+        $examen->save();
+
+        return response()->json([
+            'success' => true,
+            'url' => asset('storage/' . $path),
+            'examen' => $examen
+        ]);
+    }
+
+    /**
+     * Subir patrón PDF o XLSX para una variante
+     */
+    public function uploadPatron(Request $request, $id)
+    {
+        $examen = RolExamen::findOrFail($id);
+        
+        $request->validate([
+            'archivo' => 'required|file|max:5120',
+            'variante' => 'required|string',
+            'tipo' => 'required|in:pdf,xlsx',
+            'filename' => 'required|string'
+        ]);
+
+        $file = $request->file('archivo');
+        $filename = $request->filename;
+        
+        $path = $file->storeAs('patrones', $filename, 'public');
+
+        // Actualizar la columna 'patrones' (JSON)
+        $patrones = $examen->patrones ?? [];
+        
+        // Si antes era un array de strings, normalizar a objetos
+        if (count($patrones) > 0 && is_string($patrones[0])) {
+             $patrones = array_map(fn($p) => ['letra' => $p, 'pdf' => null, 'xlsx' => null], $patrones);
+        }
+
+        $letra = $request->variante;
+        $tipo = $request->tipo;
+        $found = false;
+        foreach ($patrones as &$p) {
+            if ($p['letra'] === $letra) {
+                $p[$tipo] = $filename;
+                $found = true;
+            }
+        }
+        
+        if (!$found) {
+            $patrones[] = [
+                'letra' => $letra, 
+                'pdf' => ($tipo === 'pdf' ? $filename : null),
+                'xlsx' => ($tipo === 'xlsx' ? $filename : null)
+            ];
+        }
+
+        $examen->patrones = $patrones;
+        $examen->save();
+
+        return response()->json([
+            'success' => true,
+            'url' => asset('storage/' . $path),
+            'examen' => $examen
+        ]);
     }
 
     /**

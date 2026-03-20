@@ -26,16 +26,21 @@ class BancoPreguntaController extends Controller
         if ($request->has('asignatura_id')) {
             $questions->where('asignatura_id', $request->asignatura_id);
         }
+
+        if ($request->has('docente_id')) {
+            $questions->where('docente_id', $request->docente_id);
+        }
         
         // Debug Log
-        \Log::info("BancoPregunta Index Request", [
+        Log::info("BancoPregunta Index Request", [
             'asignatura_id' => $request->asignatura_id,
+            'docente_id' => $request->docente_id,
             'user_id' => auth()->id(),
             'all_docentes' => $request->boolean('all_docentes')
         ]);
 
-        // Filtrar por docente actual (a menos que se pida todas o sea por asignatura)
-        if (!$request->boolean('all_docentes') && !$request->has('asignatura_id')) {
+        // Filtrar por docente actual (a menos que se pida todas o sea por asignatura/docente específico)
+        if (!$request->boolean('all_docentes') && !$request->has('asignatura_id') && !$request->has('docente_id')) {
             $userId = auth()->id();
             if ($userId) {
                 $questions->where('created_by', $userId);
@@ -43,7 +48,7 @@ class BancoPreguntaController extends Controller
         }
         
         $results = $questions->get();
-        \Log::info("BancoPregunta Index Results", ['count' => $results->count()]);
+        Log::info("BancoPregunta Index Results", ['count' => $results->count()]);
 
         return response()->json($results);
     }
@@ -56,7 +61,9 @@ class BancoPreguntaController extends Controller
         $request->validate([
             'asignatura_id' => 'required',
             'docente_id' => 'nullable',
-            'sede_id' => 'nullable'
+            'sede_id' => 'nullable',
+            'parcial' => 'nullable',
+            'grupo' => 'nullable'
         ]);
 
         $query = BancoPregunta::where('asignatura_id', $request->asignatura_id);
@@ -69,16 +76,34 @@ class BancoPreguntaController extends Controller
             $query->where('sede_id', $request->sede_id);
         }
 
+        if ($request->has('parcial')) {
+            $query->where('parcial', $this->normalizarTipoExamen($request->parcial));
+        }
+
+        if ($request->has('grupo')) {
+            $grupo = $request->grupo;
+            $query->where(function($q) use ($grupo) {
+                $q->where('grupoTeorico', $grupo)
+                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%');
+            });
+        }
+
         $stats = $query->selectRaw("
-            SUM(CASE WHEN dificultad = 'FACIL' THEN 1 ELSE 0 END) as facil,
-            SUM(CASE WHEN dificultad = 'MEDIA' OR dificultad = 'MEDIO' THEN 1 ELSE 0 END) as medio,
-            SUM(CASE WHEN dificultad = 'DIFICIL' THEN 1 ELSE 0 END) as dificil,
+            SUM(CASE WHEN dificultad = 'FACIL' OR dificultad = '1' THEN 1 ELSE 0 END) as facil,
+            SUM(CASE WHEN dificultad = 'MEDIA' OR dificultad = 'MEDIO' OR dificultad = '2' THEN 1 ELSE 0 END) as medio,
+            SUM(CASE WHEN dificultad = 'DIFICIL' OR dificultad = '3' THEN 1 ELSE 0 END) as dificil,
             COUNT(*) as total
         ")->first();
 
+        // Conteo general para la asignatura y docente (sin parcial/grupo)
+        $totalAsignatura = BancoPregunta::where('asignatura_id', $request->asignatura_id)
+            ->where('docente_id', $request->docente_id)
+            ->count();
+
         return response()->json([
             'success' => true,
-            'stats' => $stats
+            'stats' => $stats,
+            'total_asignatura' => $totalAsignatura
         ]);
     }
 
@@ -230,6 +255,9 @@ class BancoPreguntaController extends Controller
                 }
 
                 $parcial = isset($cols['PARCIAL']) ? trim((string)($row[$cols['PARCIAL']] ?? '')) : null;
+                if ($parcial) {
+                    $parcial = $this->normalizarTipoExamen($parcial);
+                }
 
                 BancoPregunta::create([
                     'asignatura_id' => $asignaturaId,
@@ -262,5 +290,32 @@ class BancoPreguntaController extends Controller
                 'error' => 'Error al procesar el archivo Excel: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    private function normalizarTipoExamen($tipo)
+    {
+        $tipo = strtolower(trim((string)$tipo));
+
+        $mapping = [
+            '1er parcial' => '1er Parcial',
+            'primer parcial' => '1er Parcial',
+            '1 parcial' => '1er Parcial',
+            '1° parcial' => '1er Parcial',
+            '1p' => '1er Parcial',
+            '2do parcial' => '2do Parcial',
+            'segundo parcial' => '2do Parcial',
+            '2 parcial' => '2do Parcial',
+            '2° parcial' => '2do Parcial',
+            '2p' => '2do Parcial',
+            'final' => 'Final',
+            'ef' => 'Final',
+            'examen final' => 'Final',
+            '2da instancia' => '2da Instancia',
+            'segunda instancia' => '2da Instancia',
+            'segunda' => '2da Instancia',
+            '2i' => '2da Instancia',
+        ];
+
+        return $mapping[$tipo] ?? $tipo;
     }
 }

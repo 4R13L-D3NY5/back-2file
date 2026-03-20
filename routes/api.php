@@ -260,6 +260,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
         Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
         Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
+        Route::post('/{id}/upload-examen', [\App\Http\Controllers\RolExamenController::class, 'uploadExamen']);
+        Route::post('/{id}/upload-patron', [\App\Http\Controllers\RolExamenController::class, 'uploadPatron']);
     });
 
     // Materias Comunes

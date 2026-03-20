@@ -49,6 +49,11 @@ class RolExamen extends Model
     // RELACIONES
     // ==========================================
 
+    public function sede()
+    {
+        return $this->belongsTo(Sede::class);
+    }
+
     public function carrera()
     {
         return $this->belongsTo(Carrera::class);
