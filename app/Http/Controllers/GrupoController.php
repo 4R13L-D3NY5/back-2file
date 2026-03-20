@@ -236,4 +236,72 @@ class GrupoController extends Controller
             'examenes' => $examenes
         ]);
     }
+
+    /**
+     * Crear un nuevo grupo.
+     * POST /api/grupos
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'nombre' => 'required|string|max:50',
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'docente_id' => 'nullable|exists:docentes,id',
+            'carrera_id' => 'nullable|exists:carreras,id',
+            'gestion' => 'required|string|max:20',
+            'tipo' => 'nullable|string|max:20',
+            'plan_estudios' => 'nullable|string|in:N,A',
+            'modificado_localmente' => 'nullable|boolean',
+            'activo' => 'boolean',
+        ]);
+
+        // Establecer modificado_localmente en true por defecto para creación local
+        if (!isset($validated['modificado_localmente'])) {
+            $validated['modificado_localmente'] = true;
+        }
+
+        $grupo = \App\Models\Grupo::create($validated);
+
+        return response()->json($grupo, 201);
+    }
+
+    /**
+     * Actualizar un grupo existente.
+     * PUT /api/grupos/{id}
+     */
+    public function update(Request $request, $id)
+    {
+        $grupo = \App\Models\Grupo::findOrFail($id);
+
+        $validated = $request->validate([
+            'nombre' => 'sometimes|string|max:50',
+            'asignatura_id' => 'sometimes|exists:asignaturas,id',
+            'docente_id' => 'nullable|exists:docentes,id',
+            'carrera_id' => 'nullable|exists:carreras,id',
+            'gestion' => 'sometimes|string|max:20',
+            'tipo' => 'nullable|string|max:20',
+            'plan_estudios' => 'nullable|string|in:N,A',
+            'modificado_localmente' => 'nullable|boolean',
+            'activo' => 'sometimes|boolean',
+        ]);
+
+        // Marcar como modificado localmente al actualizar
+        $validated['modificado_localmente'] = true;
+
+        $grupo->update($validated);
+
+        return response()->json($grupo);
+    }
+
+    /**
+     * Eliminar un grupo.
+     * DELETE /api/grupos/{id}
+     */
+    public function destroy($id)
+    {
+        $grupo = \App\Models\Grupo::findOrFail($id);
+        $grupo->delete();
+
+        return response()->json(null, 204);
+    }
 }

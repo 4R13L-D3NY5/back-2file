@@ -510,7 +510,9 @@ class AsignaturaController extends Controller
             'sesiones_semanales_practicas',
             'docente_formacion',
             'docente_telefono',
-            'docente_email'
+            'docente_email',
+            'plan_estudios',
+            'modificado_localmente'
         ]);
 
         // Mapeo manual
@@ -542,6 +544,9 @@ class AsignaturaController extends Controller
         }
 
         if ($request->has('organizacion_calendario')) $local->organizacion_calendario = $request->organizacion_calendario;
+
+        // Marcar como modificado localmente al actualizar
+        $data['modificado_localmente'] = true;
 
         $local->fill($data); // Fill the rest
         $local->save();
@@ -609,16 +614,28 @@ class AsignaturaController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'codigo' => 'required|unique:asignaturas,codigo',
             'nombre' => 'required',
             'carrera_id' => 'required|exists:carreras,id',
-            'semestre' => 'required|integer'
+            'semestre' => 'required|integer',
+            'plan_estudios' => 'nullable|string|in:N,A',
+            'modificado_localmente' => 'boolean'
         ]);
 
         $carrera = Carrera::findOrFail($request->carrera_id);
 
-        $asignatura = Asignatura::create($request->except(['carrera_id', 'semestre', 'sede_id']));
+        $data = $request->except(['carrera_id', 'semestre', 'sede_id']);
+        // Si no se especifica modificado_localmente, establecer en true (creación local)
+        if (!isset($data['modificado_localmente'])) {
+            $data['modificado_localmente'] = true;
+        }
+        // Si no se especifica plan_estudios, establecer 'N' (Nuevo)
+        if (!isset($data['plan_estudios'])) {
+            $data['plan_estudios'] = 'N';
+        }
+
+        $asignatura = Asignatura::create($data);
 
         // Attach to pivot with context
         $asignatura->carreras()->attach($carrera->id, [
