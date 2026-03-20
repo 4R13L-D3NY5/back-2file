@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\BancoPregunta;
 use App\Models\LogroEsperado;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BancoPreguntaController extends Controller
@@ -130,13 +132,59 @@ class BancoPreguntaController extends Controller
         return response()->json($pregunta, 201);
     }
     
-    /**
-     * Eliminar pregunta.
-     */
     public function destroy($id)
     {
-        BancoPregunta::findOrFail($id)->delete();
+        $pregunta = BancoPregunta::findOrFail($id);
+        if ($pregunta->imagen) {
+            Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+        }
+        $pregunta->delete();
         return response()->json(null, 204);
+    }
+
+    /**
+     * Actualizar una pregunta existente (con soporte para imagen).
+     */
+    public function update(Request $request, $id)
+    {
+        $pregunta = BancoPregunta::findOrFail($id);
+
+        $validated = $request->validate([
+            'enunciado' => 'required|string',
+            'tipo' => 'required|in:SELECCION_UNICA,SELECCION_MULTIPLE,FALSO_VERDADERO,PR,EM,SP',
+            'opciones' => 'nullable',
+            'respuesta_correcta' => 'required',
+            'dificultad' => 'nullable',
+            'parcial' => 'nullable|string',
+            'grupo' => 'nullable|string',
+            'grupoTeorico' => 'nullable|string',
+            'image_file' => 'nullable|image|max:5120'
+        ]);
+
+        // Procesar opciones si vienen como string (FormData puede enviarlas así)
+        if (isset($validated['opciones']) && is_string($validated['opciones'])) {
+            $validated['opciones'] = json_decode($validated['opciones'], true);
+        }
+        // Procesar respuesta_correcta si viene como string
+        if (isset($validated['respuesta_correcta']) && is_string($validated['respuesta_correcta'])) {
+             // Si parece un array JSON (e.g. ["A","B"]), decodificar
+             if (str_starts_with($validated['respuesta_correcta'], '[')) {
+                $validated['respuesta_correcta'] = json_decode($validated['respuesta_correcta'], true);
+             }
+        }
+
+        if ($request->hasFile('image_file')) {
+            if ($pregunta->imagen) {
+                Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+            }
+            $file = $request->file('image_file');
+            $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $file->storeAs('preguntas', $filename, 'public');
+            $validated['imagen'] = $filename;
+        }
+
+        $pregunta->update($validated);
+        return response()->json($pregunta);
     }
 
     public function import(Request $request)

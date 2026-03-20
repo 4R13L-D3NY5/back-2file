@@ -25,7 +25,8 @@ class BancoPregunta extends Model
         'logro_esperado_id',
         'asignatura_id',
         'docente_id',
-        'created_by'
+        'created_by',
+        'imagen'
     ];
 
     protected $casts = [
