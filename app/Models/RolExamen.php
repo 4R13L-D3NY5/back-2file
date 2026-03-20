@@ -14,12 +14,18 @@ class RolExamen extends Model
     protected $fillable = [
         'gestion',
         'carrera_id',
+        'sede_id',
         'materia_codigo',
         'materia_nombre',
         'tipo_examen',
         'grupo',
         'semana',
         'fecha',
+        'estado',
+        'config_generacion',
+        'timestamps_proceso',
+        'variantes',
+        'patrones',
         'hora_inicio',
         'hora_fin',
         'aula',
@@ -31,12 +37,22 @@ class RolExamen extends Model
     protected $casts = [
         'fecha' => 'date',
         'semana' => 'integer',
+        'sede_id' => 'integer',
+        'config_generacion' => 'array',
+        'timestamps_proceso' => 'array',
+        'variantes' => 'array',
+        'patrones' => 'array',
         'conflictos' => 'array',
     ];
 
     // ==========================================
     // RELACIONES
     // ==========================================
+
+    public function sede()
+    {
+        return $this->belongsTo(Sede::class);
+    }
 
     public function carrera()
     {

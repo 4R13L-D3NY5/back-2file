@@ -4,8 +4,10 @@ namespace App\Http\Controllers;
 
 use App\Models\BancoPregunta;
 use App\Models\LogroEsperado;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BancoPreguntaController extends Controller
@@ -26,16 +28,21 @@ class BancoPreguntaController extends Controller
         if ($request->has('asignatura_id')) {
             $questions->where('asignatura_id', $request->asignatura_id);
         }
+
+        if ($request->has('docente_id')) {
+            $questions->where('docente_id', $request->docente_id);
+        }
         
         // Debug Log
-        \Log::info("BancoPregunta Index Request", [
+        Log::info("BancoPregunta Index Request", [
             'asignatura_id' => $request->asignatura_id,
+            'docente_id' => $request->docente_id,
             'user_id' => auth()->id(),
             'all_docentes' => $request->boolean('all_docentes')
         ]);
 
-        // Filtrar por docente actual (a menos que se pida todas o sea por asignatura)
-        if (!$request->boolean('all_docentes') && !$request->has('asignatura_id')) {
+        // Filtrar por docente actual (a menos que se pida todas o sea por asignatura/docente específico)
+        if (!$request->boolean('all_docentes') && !$request->has('asignatura_id') && !$request->has('docente_id')) {
             $userId = auth()->id();
             if ($userId) {
                 $questions->where('created_by', $userId);
@@ -43,9 +50,63 @@ class BancoPreguntaController extends Controller
         }
         
         $results = $questions->get();
-        \Log::info("BancoPregunta Index Results", ['count' => $results->count()]);
+        Log::info("BancoPregunta Index Results", ['count' => $results->count()]);
 
         return response()->json($results);
+    }
+
+    /**
+     * Obtener estadísticas de conteo de preguntas por dificultad.
+     */
+    public function getStats(Request $request)
+    {
+        $request->validate([
+            'asignatura_id' => 'required',
+            'docente_id' => 'nullable',
+            'sede_id' => 'nullable',
+            'parcial' => 'nullable',
+            'grupo' => 'nullable'
+        ]);
+
+        $query = BancoPregunta::where('asignatura_id', $request->asignatura_id);
+
+        if ($request->has('docente_id')) {
+            $query->where('docente_id', $request->docente_id);
+        }
+
+        if ($request->has('sede_id')) {
+            $query->where('sede_id', $request->sede_id);
+        }
+
+        if ($request->has('parcial')) {
+            $query->where('parcial', $this->normalizarTipoExamen($request->parcial));
+        }
+
+        if ($request->has('grupo')) {
+            $grupo = $request->grupo;
+            $query->where(function($q) use ($grupo) {
+                $q->where('grupoTeorico', $grupo)
+                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%');
+            });
+        }
+
+        $stats = $query->selectRaw("
+            SUM(CASE WHEN dificultad = 'FACIL' OR dificultad = '1' THEN 1 ELSE 0 END) as facil,
+            SUM(CASE WHEN dificultad = 'MEDIA' OR dificultad = 'MEDIO' OR dificultad = '2' THEN 1 ELSE 0 END) as medio,
+            SUM(CASE WHEN dificultad = 'DIFICIL' OR dificultad = '3' THEN 1 ELSE 0 END) as dificil,
+            COUNT(*) as total
+        ")->first();
+
+        // Conteo general para la asignatura y docente (sin parcial/grupo)
+        $totalAsignatura = BancoPregunta::where('asignatura_id', $request->asignatura_id)
+            ->where('docente_id', $request->docente_id)
+            ->count();
+
+        return response()->json([
+            'success' => true,
+            'stats' => $stats,
+            'total_asignatura' => $totalAsignatura
+        ]);
     }
 
     /**
@@ -71,13 +132,59 @@ class BancoPreguntaController extends Controller
         return response()->json($pregunta, 201);
     }
     
-    /**
-     * Eliminar pregunta.
-     */
     public function destroy($id)
     {
-        BancoPregunta::findOrFail($id)->delete();
+        $pregunta = BancoPregunta::findOrFail($id);
+        if ($pregunta->imagen) {
+            Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+        }
+        $pregunta->delete();
         return response()->json(null, 204);
+    }
+
+    /**
+     * Actualizar una pregunta existente (con soporte para imagen).
+     */
+    public function update(Request $request, $id)
+    {
+        $pregunta = BancoPregunta::findOrFail($id);
+
+        $validated = $request->validate([
+            'enunciado' => 'required|string',
+            'tipo' => 'required|in:SELECCION_UNICA,SELECCION_MULTIPLE,FALSO_VERDADERO,PR,EM,SP',
+            'opciones' => 'nullable',
+            'respuesta_correcta' => 'required',
+            'dificultad' => 'nullable',
+            'parcial' => 'nullable|string',
+            'grupo' => 'nullable|string',
+            'grupoTeorico' => 'nullable|string',
+            'image_file' => 'nullable|image|max:5120'
+        ]);
+
+        // Procesar opciones si vienen como string (FormData puede enviarlas así)
+        if (isset($validated['opciones']) && is_string($validated['opciones'])) {
+            $validated['opciones'] = json_decode($validated['opciones'], true);
+        }
+        // Procesar respuesta_correcta si viene como string
+        if (isset($validated['respuesta_correcta']) && is_string($validated['respuesta_correcta'])) {
+             // Si parece un array JSON (e.g. ["A","B"]), decodificar
+             if (str_starts_with($validated['respuesta_correcta'], '[')) {
+                $validated['respuesta_correcta'] = json_decode($validated['respuesta_correcta'], true);
+             }
+        }
+
+        if ($request->hasFile('image_file')) {
+            if ($pregunta->imagen) {
+                Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+            }
+            $file = $request->file('image_file');
+            $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+            $file->storeAs('preguntas', $filename, 'public');
+            $validated['imagen'] = $filename;
+        }
+
+        $pregunta->update($validated);
+        return response()->json($pregunta);
     }
 
     public function import(Request $request)
@@ -85,19 +192,27 @@ class BancoPreguntaController extends Controller
         $request->validate([
             'file' => 'required|file|mimes:xlsx,xls,csv',
             'asignatura_id' => 'required|exists:asignaturas,id',
-            'logro_esperado_id' => 'nullable|exists:logros_esperados,id'
+            'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
+            'sede_id' => 'nullable|exists:sedes,id',
+            'grupo' => 'nullable|string|max:255',
         ]);
 
         $file = $request->file('file');
         $asignaturaId = $request->input('asignatura_id');
         $logroId = $request->input('logro_esperado_id');
+        $sedeId = $request->input('sede_id');
+        $grupoTeorico = $request->input('grupoTeorico');
 
         try {
             $modo = $request->input('modo', 'agregar');
+            $docenteId = $request->input('docente_id') 
+                ?? (\App\Models\Docente::where('user_id', auth()->id())->first()?->id);
 
             if ($modo === 'reemplazar') {
-                \Log::info("Vaciando banco de preguntas para asignatura: {$asignaturaId}");
-                BancoPregunta::where('asignatura_id', $asignaturaId)->delete();
+                \Log::info("Vaciando banco de preguntas para asignatura: {$asignaturaId} y docente: {$docenteId}");
+                BancoPregunta::where('asignatura_id', $asignaturaId)
+                    ->where('docente_id', $docenteId)
+                    ->delete();
             }
 
             $spreadsheet = IOFactory::load($file->getPathname());
@@ -142,9 +257,6 @@ class BancoPreguntaController extends Controller
                 'EM' => 'EMPAREJAMIENTO'
             ];
 
-            $docenteId = $request->input('docente_id') 
-                ?? (\App\Models\Docente::where('user_id', auth()->id())->first()?->id);
-
             \Log::info("Importación Banco: docente_id detectado: " . ($docenteId ?? 'NULL'));
 
             foreach ($rows as $index => $row) {
@@ -181,15 +293,28 @@ class BancoPreguntaController extends Controller
                     $respuesta = $rawResp;
                 }
 
-                $dificultad = isset($cols['DIFICULTAD']) ? (trim((string)($row[$cols['DIFICULTAD']] ?? '')) ?: 'MEDIA') : 'MEDIA';
+                $dificultad = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                
+                // PR y EM no llevan dificultad por regla de negocio
+                if ($tipo === 'PROBLEMA' || $tipo === 'EMPAREJAMIENTO') {
+                    $dificultad = null;
+                } else {
+                    $dificultad = $dificultad ?: 'MEDIA';
+                }
+
                 $parcial = isset($cols['PARCIAL']) ? trim((string)($row[$cols['PARCIAL']] ?? '')) : null;
+                if ($parcial) {
+                    $parcial = $this->normalizarTipoExamen($parcial);
+                }
 
                 BancoPregunta::create([
                     'asignatura_id' => $asignaturaId,
                     'docente_id' => $docenteId,
                     'logro_esperado_id' => $logroId,
+                    'sede_id' => $sedeId,
                     'tipo' => $tipo,
                     'grupo' => $grupo,
+                    'grupoTeorico' => $grupoTeorico,
                     'enunciado' => $enunciado,
                     'opciones' => empty($opciones) ? [] : $opciones,
                     'respuesta_correcta' => empty($respuesta) ? [] : $respuesta,
@@ -213,5 +338,32 @@ class BancoPreguntaController extends Controller
                 'error' => 'Error al procesar el archivo Excel: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    private function normalizarTipoExamen($tipo)
+    {
+        $tipo = strtolower(trim((string)$tipo));
+
+        $mapping = [
+            '1er parcial' => '1er Parcial',
+            'primer parcial' => '1er Parcial',
+            '1 parcial' => '1er Parcial',
+            '1° parcial' => '1er Parcial',
+            '1p' => '1er Parcial',
+            '2do parcial' => '2do Parcial',
+            'segundo parcial' => '2do Parcial',
+            '2 parcial' => '2do Parcial',
+            '2° parcial' => '2do Parcial',
+            '2p' => '2do Parcial',
+            'final' => 'Final',
+            'ef' => 'Final',
+            'examen final' => 'Final',
+            '2da instancia' => '2da Instancia',
+            'segunda instancia' => '2da Instancia',
+            'segunda' => '2da Instancia',
+            '2i' => '2da Instancia',
+        ];
+
+        return $mapping[$tipo] ?? $tipo;
     }
 }

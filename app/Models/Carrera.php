@@ -66,4 +66,9 @@ class Carrera extends Model
             $query->where('carreras.id', $this->id);
         });
     }
+
+    public function campus(): BelongsToMany
+    {
+        return $this->belongsToMany(Campus::class, 'campus_carrera');
+    }
 }

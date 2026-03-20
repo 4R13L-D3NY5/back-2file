@@ -17,34 +17,38 @@ class EvaluacionConfiguracionController extends Controller
         $sedeId = $request->input('sede_id');
         $carreraId = $request->input('carrera_id');
 
-        // Busca el registro más específico
-        $config = EvaluacionConfiguracion::where('nivel', $nivel);
+        // Busca el registro más específico para saber si existe o es heredado
+        $configQuery = EvaluacionConfiguracion::where('nivel', $nivel);
 
         if ($nivel === 'sede' && $sedeId) {
-            $config->where('sede_id', $sedeId);
+            $configQuery->where('sede_id', $sedeId);
         } elseif ($nivel === 'carrera' && $sedeId && $carreraId) {
-            $config->where('sede_id', $sedeId)->where('carrera_id', $carreraId);
+            $configQuery->where('sede_id', $sedeId)->where('carrera_id', $carreraId);
         }
 
-        $configuracion = $config->first();
+        $configuracionPropia = $configQuery->first();
 
-        // Fallback: si no hay para la sede o carrera, obtener la nacional
-        if (!$configuracion && $nivel !== 'nacional') {
-            $configuracion = EvaluacionConfiguracion::where('nivel', 'nacional')->first();
-        }
+        // Obtener la efectiva evaluando la herencia hacia arriba
+        $efectiva = EvaluacionConfiguracion::obtenerConfiguracionEfectiva(
+            $nivel === 'nacional' ? null : $sedeId, 
+            $nivel === 'carrera' ? $carreraId : null
+        );
 
-        // Si por alguna razón ni siquiera hay nacional creada
-        if (!$configuracion) {
+        if (!$efectiva) {
             return response()->json([
                 'success' => false,
                 'message' => 'No se encontró la configuración en la base de datos local.',
             ], 404);
         }
 
+        $origen = $efectiva['_origen'] ?? 'nacional';
+        unset($efectiva['_origen']);
+
         return response()->json([
             'success' => true,
-            'configuracion' => $configuracion->configuracion,
-            'nivel_hallado' => $configuracion->nivel
+            'configuracion' => $efectiva,
+            'nivel_hallado' => $origen,
+            'es_propia' => $configuracionPropia !== null
         ]);
     }
 
