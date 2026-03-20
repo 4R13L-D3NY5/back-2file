@@ -178,8 +178,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [BancoPreguntaController::class, 'index']); // ?logro_id=X
         Route::get('/stats', [BancoPreguntaController::class, 'getStats']);
         Route::post('/', [BancoPreguntaController::class, 'store']);
-        Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::post('/import', [BancoPreguntaController::class, 'import']);
+        Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
     });
 

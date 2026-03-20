@@ -63,7 +63,15 @@ class RolExamenController extends Controller
             $query->where('rol_examenes.carrera_id', $carreraId);
         }
 
-        if ($request->has('sede_id')) {
+        // Restricción de Sede para Directores
+        $user = auth()->user();
+        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+            if ($sedeId) {
+                $query->where('rol_examenes.sede_id', $sedeId);
+                Log::info("Filtrando RolExamen por sede del Director: {$sedeId}");
+            }
+        } elseif ($request->has('sede_id')) {
             $query->where('rol_examenes.sede_id', $request->sede_id);
         }
 
@@ -97,13 +105,24 @@ class RolExamenController extends Controller
     {
         $gestion = $request->get('gestion', date('Y') . '-I');
 
-        $examenes = RolExamen::where('materia_codigo', $materiaId)
+        $user = auth()->user();
+        $query = RolExamen::where('materia_codigo', $materiaId)
             ->orWhere(function ($q) use ($materiaId) {
                 $q->whereRaw('UPPER(materia_codigo) = ?', [strtoupper($materiaId)]);
             })
-            ->gestion($gestion)
-            ->orderBy('semana')
-            ->get();
+            ->where('gestion', $gestion);
+
+        // Restricción por Sede para Directores
+        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+            if ($sedeId) {
+                $query->where('sede_id', $sedeId);
+            }
+        } elseif ($request->has('sede_id')) {
+            $query->where('sede_id', $request->sede_id);
+        }
+
+        $examenes = $query->orderBy('semana')->get();
 
         return response()->json([
             'data' => $examenes
@@ -129,14 +148,30 @@ class RolExamenController extends Controller
         $sedeId = $request->get('sede_id');
         $grupoTeorico = $request->get('grupoTeorico'); // Opcional, por si se quiere asignar a todo
 
-        // Intentar obtener sede_id del usuario si no viene
-        if (!$sedeId && auth()->user()) {
-            $user = auth()->user();
-            if ($user->director) {
-                $sedeId = $user->director->sede_id;
-            } elseif ($user->docente) {
-                $sedeId = $user->docente->sede_id;
+        $user = auth()->user();
+        if ($user) {
+            if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+                // Priorizar sede_id del Director
+                if ($user->director && $user->director->sede_id) {
+                    $sedeId = $user->director->sede_id;
+                } else {
+                    $sedeId = $user->sede_id;
+                }
+                Log::info("Subida de RolExamen: Usando sede_id ({$sedeId}) del Director autenticado: {$user->username}");
+            } elseif (!$sedeId) {
+                // Fallback si no viene en el request
+                if ($user->docente && $user->docente->sede_id) {
+                    $sedeId = $user->docente->sede_id;
+                } else {
+                    $sedeId = $user->sede_id;
+                }
+                Log::info("Subida de RolExamen: Usando sede_id ({$sedeId}) por defecto del usuario: {$user->username}");
             }
+        }
+
+        if (!$sedeId) {
+            $sedeId = 1; // Default fallback final si nada funciona
+            Log::warning("Subida de RolExamen: No se pudo determinar sede_id, usando default 1.");
         }
 
         try {
@@ -455,8 +490,23 @@ class RolExamenController extends Controller
             return response()->json(['message' => 'Datos inválidos', 'errors' => $validator->errors()], 422);
         }
 
+        $data = $request->all();
+        $user = auth()->user();
+
+        if ($user) {
+            if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+                if ($user->director && $user->director->sede_id) {
+                    $data['sede_id'] = $user->director->sede_id;
+                } else {
+                    $data['sede_id'] = $user->sede_id;
+                }
+            } elseif (!isset($data['sede_id'])) {
+                $data['sede_id'] = $user->sede_id ?: 1;
+            }
+        }
+
         $examen = RolExamen::create([
-            ...$request->all(),
+            ...$data,
             'created_by' => auth()->id(),
         ]);
 
@@ -477,6 +527,14 @@ class RolExamenController extends Controller
 
         if ($validator->fails()) {
             return response()->json(['message' => 'Datos inválidos', 'errors' => $validator->errors()], 422);
+        }
+
+        $user = auth()->user();
+        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+            if ($sedeId && $examen->sede_id != $sedeId) {
+                return response()->json(['message' => 'No tiene permiso para editar este examen de otra sede'], 403);
+            }
         }
 
         $examen->update($request->all());
@@ -526,6 +584,14 @@ class RolExamenController extends Controller
         $examen->variantes = $variantes;
         $examen->save();
 
+        $user = auth()->user();
+        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+            if ($sedeId && $examen->sede_id != $sedeId) {
+                return response()->json(['message' => 'No tiene permiso para subir archivos a este examen de otra sede'], 403);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'url' => asset('storage/' . $path),
@@ -539,6 +605,14 @@ class RolExamenController extends Controller
     public function uploadPatron(Request $request, $id)
     {
         $examen = RolExamen::findOrFail($id);
+
+        $user = auth()->user();
+        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+            if ($sedeId && $examen->sede_id != $sedeId) {
+                return response()->json(['message' => 'No tiene permiso para subir archivos a este examen de otra sede'], 403);
+            }
+        }
         
         $request->validate([
             'archivo' => 'required|file|max:5120',
@@ -594,6 +668,15 @@ class RolExamenController extends Controller
     public function destroy($id)
     {
         $examen = RolExamen::findOrFail($id);
+        
+        $user = auth()->user();
+        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+            if ($sedeId && $examen->sede_id != $sedeId) {
+                return response()->json(['message' => 'No tiene permiso para eliminar este examen de otra sede'], 403);
+            }
+        }
+
         $examen->delete();
 
         return response()->json(['message' => 'Examen eliminado']);
@@ -613,9 +696,18 @@ class RolExamenController extends Controller
             return response()->json(['message' => 'Datos inválidos', 'errors' => $validator->errors()], 422);
         }
 
-        $count = RolExamen::where('gestion', $request->gestion)
-            ->where('carrera_id', $request->carrera_id)
-            ->delete();
+        $query = RolExamen::where('gestion', $request->gestion)
+            ->where('carrera_id', $request->carrera_id);
+
+        $user = auth()->user();
+        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+            if ($sedeId) {
+                $query->where('sede_id', $sedeId);
+            }
+        }
+
+        $count = $query->delete();
 
         return response()->json(['message' => "Se eliminaron {$count} exámenes correctamente.", 'count' => $count]);
     }
