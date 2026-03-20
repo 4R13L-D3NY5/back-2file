@@ -319,7 +319,7 @@
             <div class="info-row">
                 <div class="info-item">
                     <div class="label">Motivo</div>
-                    <div class="value">Nuevo Módulo de Videos</div>
+                    <div class="value">Actualización del Sistema</div>
                 </div>
                 <div class="info-item">
                     <div class="label">Disponible</div>
