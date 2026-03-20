@@ -319,11 +319,11 @@
             <div class="info-row">
                 <div class="info-item">
                     <div class="label">Motivo</div>
-                    <div class="value">Actualización del Sistema</div>
+                    <div class="value">Nuevo Módulo de Videos</div>
                 </div>
                 <div class="info-item">
-                    <div class="label">Tiempo estimado</div>
-                    <div class="value">~1 Hora</div>
+                    <div class="label">Disponible</div>
+                    <div class="value">Mañana 6:00 AM</div>
                 </div>
             </div>
 
