@@ -322,8 +322,8 @@
                     <div class="value">Actualización del Sistema</div>
                 </div>
                 <div class="info-item">
-                    <div class="label">Disponible</div>
-                    <div class="value">Mañana 6:00 AM</div>
+                    <div class="label">Estado</div>
+                    <div class="value">Volveremos pronto</div>
                 </div>
             </div>
 
