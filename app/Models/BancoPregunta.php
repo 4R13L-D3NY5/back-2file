@@ -15,11 +15,13 @@ class BancoPregunta extends Model
         'enunciado',
         'tipo', // SELECCION_UNICA, SELECCION_MULTIPLE, FALSO_VERDADERO
         'grupo',
+        'grupoTeorico',
         'opciones', // JSON Array
         'respuesta_correcta', // JSON Array or Scalar
         'dificultad',
         'parcial',
         'peso',
+        'sede_id',
         'logro_esperado_id',
         'asignatura_id',
         'docente_id',
@@ -30,6 +32,11 @@ class BancoPregunta extends Model
         'opciones' => 'array',
         'respuesta_correcta' => 'array'
     ];
+
+    public function sede()
+    {
+        return $this->belongsTo(Sede::class);
+    }
 
     public function asignatura()
     {

@@ -6,6 +6,7 @@ use App\Models\RolExamen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class RolExamenController extends Controller
@@ -15,17 +16,35 @@ class RolExamenController extends Controller
      */
     public function index(Request $request)
     {
-        // Start with RolExamen model
-        $query = RolExamen::query()->select('rol_examenes.*');
+        $query = RolExamen::query()
+            ->select(
+                'rol_examenes.*',
+                'asignaturas.nombre as materia_nombre',
+                'carreras.nombre as carrera_nombre',
+                'docentes.nombre_completo as docente_nombre',
+                'asignatura_carrera.semestre'
+            )
+            ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
+            ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
+            ->leftJoin('asignatura_carrera', function ($join) {
+                $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
+                    ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id');
+            })
+            ->join('grupos', function ($join) {
+                $join->on('rol_examenes.sede_id', '=', 'grupos.sede_id')
+                    ->on('rol_examenes.carrera_id', '=', 'grupos.carrera_id')
+                    ->on('rol_examenes.grupo', '=', 'grupos.nombre')
+                    ->on('asignaturas.id', '=', 'grupos.asignatura_id');
+            })
+            ->join('docentes', 'grupos.docente_id', '=', 'docentes.id');
 
-        // Simple conditional clauses
+        // Filtros
         if ($request->has('gestion')) {
             $query->where('rol_examenes.gestion', $request->gestion);
         }
+
         if ($request->has('carrera_id')) {
             $carreraId = $request->carrera_id;
-            
-            // Seguridad: Si es Director, validar que sea su carrera
             $user = auth()->user();
             if ($user && isset($user->rol) && $user->rol->codigo === 'DIRECTOR_CARRERA') {
                 $carreraIds = [];
@@ -33,44 +52,24 @@ class RolExamenController extends Controller
                     if ($user->director->carrera_id) $carreraIds[] = $user->director->carrera_id;
                     if ($user->director->carreras) $carreraIds = array_merge($carreraIds, $user->director->carreras->pluck('id')->toArray());
                 }
-                
                 if (!in_array($carreraId, array_unique($carreraIds))) {
                     return response()->json(['message' => 'No tiene permiso para ver esta carrera'], 403);
                 }
             }
             $query->where('rol_examenes.carrera_id', $carreraId);
-        } else {
-            // Seguridad: Si es Director, filtrar por sus carreras por defecto
-            $user = auth()->user();
-            if ($user && isset($user->rol) && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-                $carreraIds = [];
-                if ($user->director) {
-                    if ($user->director->carrera_id) $carreraIds[] = $user->director->carrera_id;
-                    if ($user->director->carreras) $carreraIds = array_merge($carreraIds, $user->director->carreras->pluck('id')->toArray());
-                }
-                
-                if (!empty($carreraIds)) {
-                    $query->whereIn('rol_examenes.carrera_id', array_unique($carreraIds));
-                } else {
-                    $query->whereRaw('1 = 0');
-                }
-            }
+        }
+
+        if ($request->has('sede_id')) {
+            $query->where('rol_examenes.sede_id', $request->sede_id);
+        }
+
+        if ($request->has('fecha')) {
+            $query->whereDate('rol_examenes.fecha', $request->fecha);
         }
 
         if ($request->has('materia_codigo')) {
             $query->where('rol_examenes.materia_codigo', $request->materia_codigo);
         }
-
-        // Join to get Semestre
-        // rol_examenes.materia_codigo -> asignaturas.codigo
-        // asignaturas.id -> asignatura_carrera.asignatura_id
-        // rol_examenes.carrera_id -> asignatura_carrera.carrera_id
-        $query->leftJoin('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
-            ->leftJoin('asignatura_carrera', function ($join) {
-                $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
-                    ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id');
-            })
-            ->addSelect('asignatura_carrera.semestre');
 
         $examenes = $query->distinct()
             ->orderBy('rol_examenes.semana')
@@ -123,6 +122,18 @@ class RolExamenController extends Controller
 
         $gestion = $request->get('gestion', date('Y') . '-I');
         $carreraId = $request->get('carrera_id');
+        $sedeId = $request->get('sede_id');
+        $grupoTeorico = $request->get('grupoTeorico'); // Opcional, por si se quiere asignar a todo
+
+        // Intentar obtener sede_id del usuario si no viene
+        if (!$sedeId && auth()->user()) {
+            $user = auth()->user();
+            if ($user->director) {
+                $sedeId = $user->director->sede_id;
+            } elseif ($user->docente) {
+                $sedeId = $user->docente->sede_id;
+            }
+        }
 
         try {
             $file = $request->file('file');
@@ -150,6 +161,16 @@ class RolExamenController extends Controller
             $warnings = [];
 
             DB::beginTransaction();
+
+            // Lógica de LIMPIEZA PREVIA (Cleanup)
+            // Borrar exámenes existentes para esta gestión, carrera y sede antes de importar
+            if ($sedeId) {
+                RolExamen::where('gestion', $gestion)
+                    ->where('carrera_id', $carreraId)
+                    ->where('sede_id', $sedeId)
+                    ->delete();
+                Log::info("Limpieza de RolExamen completada para carrera {$carreraId}, sede {$sedeId}, gestión {$gestion}");
+            }
 
             foreach ($rowsProcessed as $index => $row) {
                 $rowNumber = $index + 10;
@@ -246,8 +267,10 @@ class RolExamenController extends Controller
                                 'materia_codigo' => $codigo,
                                 'tipo_examen' => $tipo,
                                 'grupo' => $grupo ?: null,
+                                'sede_id' => $sedeId,
                             ],
                             [
+                                'grupoTeorico' => $grupoTeorico ?: $grupo,
                                 'materia_nombre' => !empty($nombreMateriaExcel) ? $nombreMateriaExcel : $asignatura->nombre,
                                 'semana' => $semana,
                                 'fecha' => $fecha,

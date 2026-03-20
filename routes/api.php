@@ -176,6 +176,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Banco de Preguntas
     Route::prefix('banco-preguntas')->group(function () {
         Route::get('/', [BancoPreguntaController::class, 'index']); // ?logro_id=X
+        Route::get('/stats', [BancoPreguntaController::class, 'getStats']);
         Route::post('/', [BancoPreguntaController::class, 'store']);
         Route::post('/import', [BancoPreguntaController::class, 'import']);
         Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
@@ -213,6 +214,10 @@ Route::middleware('auth:sanctum')->group(function () {
         // Configuraciones de Evaluaciones (Nacional/Sede/Carrera)
         Route::get('/config', [\App\Http\Controllers\EvaluacionConfiguracionController::class, 'obtenerConfiguracion']);
         Route::post('/config', [\App\Http\Controllers\EvaluacionConfiguracionController::class, 'guardarConfiguracion']);
+
+        // Configuración de Tiempos Nacional
+        Route::get('/tiempos', [\App\Http\Controllers\EvaluacionTiempoController::class, 'index']);
+        Route::post('/tiempos', [\App\Http\Controllers\EvaluacionTiempoController::class, 'store']);
     });
 
     // Roles & Users
@@ -220,11 +225,23 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('usuarios', \App\Http\Controllers\UserController::class);
     Route::post('/usuarios/{id}/reset-password', [\App\Http\Controllers\UserController::class, 'resetPassword']);
     Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
+    Route::apiResource('campus', \App\Http\Controllers\CampusController::class);
+    Route::get('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'obtenerCarreras']);
+    Route::post('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'asignarCarreras']);
+    Route::delete('/campus/{id}/carreras/{carreraId}', [\App\Http\Controllers\CampusController::class, 'deasignarCarrera']);
+    
+    // Evaluadores
+    Route::get('/evaluadores', [\App\Http\Controllers\CampusController::class, 'obtenerEvaluadores']);
+    Route::get('/evaluadores/disponibles', [\App\Http\Controllers\CampusController::class, 'evaluadoresDisponibles']);
+    Route::post('/campus/{id}/evaluadores', [\App\Http\Controllers\CampusController::class, 'asignarEvaluador']);
+    Route::delete('/campus/{id}/evaluadores/{userId}', [\App\Http\Controllers\CampusController::class, 'removerEvaluador']);
+    
     Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
     Route::get('/my-subjects', [\App\Http\Controllers\DocenteController::class, 'mySubjects']);
 
     // Cascading Filter Endpoints
     Route::get('sedes/{id}/carreras', [\App\Http\Controllers\SedeController::class, 'carreras']);
+    Route::get('carreras', [\App\Http\Controllers\CarreraController::class, 'index']);
     Route::get('carreras/{id}/asignaturas', [\App\Http\Controllers\CarreraController::class, 'asignaturas']);
     Route::get('carreras/{id}/semestres', [\App\Http\Controllers\CarreraController::class, 'semestres']);
     Route::get('carreras/{id}', [\App\Http\Controllers\CarreraController::class, 'show']);

@@ -49,6 +49,40 @@ class BancoPreguntaController extends Controller
     }
 
     /**
+     * Obtener estadísticas de conteo de preguntas por dificultad.
+     */
+    public function getStats(Request $request)
+    {
+        $request->validate([
+            'asignatura_id' => 'required',
+            'docente_id' => 'nullable',
+            'sede_id' => 'nullable'
+        ]);
+
+        $query = BancoPregunta::where('asignatura_id', $request->asignatura_id);
+
+        if ($request->has('docente_id')) {
+            $query->where('docente_id', $request->docente_id);
+        }
+
+        if ($request->has('sede_id')) {
+            $query->where('sede_id', $request->sede_id);
+        }
+
+        $stats = $query->selectRaw("
+            SUM(CASE WHEN dificultad = 'FACIL' THEN 1 ELSE 0 END) as facil,
+            SUM(CASE WHEN dificultad = 'MEDIA' OR dificultad = 'MEDIO' THEN 1 ELSE 0 END) as medio,
+            SUM(CASE WHEN dificultad = 'DIFICIL' THEN 1 ELSE 0 END) as dificil,
+            COUNT(*) as total
+        ")->first();
+
+        return response()->json([
+            'success' => true,
+            'stats' => $stats
+        ]);
+    }
+
+    /**
      * Crear una nueva pregunta manualmente.
      */
     public function store(Request $request)
@@ -85,19 +119,27 @@ class BancoPreguntaController extends Controller
         $request->validate([
             'file' => 'required|file|mimes:xlsx,xls,csv',
             'asignatura_id' => 'required|exists:asignaturas,id',
-            'logro_esperado_id' => 'nullable|exists:logros_esperados,id'
+            'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
+            'sede_id' => 'nullable|exists:sedes,id',
+            'grupo' => 'nullable|string|max:255',
         ]);
 
         $file = $request->file('file');
         $asignaturaId = $request->input('asignatura_id');
         $logroId = $request->input('logro_esperado_id');
+        $sedeId = $request->input('sede_id');
+        $grupoTeorico = $request->input('grupoTeorico');
 
         try {
             $modo = $request->input('modo', 'agregar');
+            $docenteId = $request->input('docente_id') 
+                ?? (\App\Models\Docente::where('user_id', auth()->id())->first()?->id);
 
             if ($modo === 'reemplazar') {
-                \Log::info("Vaciando banco de preguntas para asignatura: {$asignaturaId}");
-                BancoPregunta::where('asignatura_id', $asignaturaId)->delete();
+                \Log::info("Vaciando banco de preguntas para asignatura: {$asignaturaId} y docente: {$docenteId}");
+                BancoPregunta::where('asignatura_id', $asignaturaId)
+                    ->where('docente_id', $docenteId)
+                    ->delete();
             }
 
             $spreadsheet = IOFactory::load($file->getPathname());
@@ -142,9 +184,6 @@ class BancoPreguntaController extends Controller
                 'EM' => 'EMPAREJAMIENTO'
             ];
 
-            $docenteId = $request->input('docente_id') 
-                ?? (\App\Models\Docente::where('user_id', auth()->id())->first()?->id);
-
             \Log::info("Importación Banco: docente_id detectado: " . ($docenteId ?? 'NULL'));
 
             foreach ($rows as $index => $row) {
@@ -181,15 +220,25 @@ class BancoPreguntaController extends Controller
                     $respuesta = $rawResp;
                 }
 
-                $dificultad = isset($cols['DIFICULTAD']) ? (trim((string)($row[$cols['DIFICULTAD']] ?? '')) ?: 'MEDIA') : 'MEDIA';
+                $dificultad = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                
+                // PR y EM no llevan dificultad por regla de negocio
+                if ($tipo === 'PROBLEMA' || $tipo === 'EMPAREJAMIENTO') {
+                    $dificultad = null;
+                } else {
+                    $dificultad = $dificultad ?: 'MEDIA';
+                }
+
                 $parcial = isset($cols['PARCIAL']) ? trim((string)($row[$cols['PARCIAL']] ?? '')) : null;
 
                 BancoPregunta::create([
                     'asignatura_id' => $asignaturaId,
                     'docente_id' => $docenteId,
                     'logro_esperado_id' => $logroId,
+                    'sede_id' => $sedeId,
                     'tipo' => $tipo,
                     'grupo' => $grupo,
+                    'grupoTeorico' => $grupoTeorico,
                     'enunciado' => $enunciado,
                     'opciones' => empty($opciones) ? [] : $opciones,
                     'respuesta_correcta' => empty($respuesta) ? [] : $respuesta,
