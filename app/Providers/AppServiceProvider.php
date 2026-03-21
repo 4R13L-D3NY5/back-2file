@@ -2,6 +2,10 @@
 
 namespace App\Providers;
 
+use App\Models\Director;
+use App\Models\Carrera;
+use App\Observers\DirectorObserver;
+use App\Observers\CarreraObserver;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -19,6 +23,7 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        //
+        Director::observe(DirectorObserver::class);
+        Carrera::observe(CarreraObserver::class);
     }
 }

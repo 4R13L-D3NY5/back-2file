@@ -39,6 +39,13 @@ class Carrera extends Model
         return $this->belongsTo(Director::class);
     }
 
+    public function directores(): BelongsToMany
+    {
+        return $this->belongsToMany(Director::class, 'director_carrera')
+            ->withTimestamps()
+            ->withPivot('es_principal');
+    }
+
     public function sede(): BelongsTo
     {
         return $this->belongsTo(\App\Models\Sede::class);
@@ -73,5 +80,15 @@ class Carrera extends Model
     public function campus(): BelongsToMany
     {
         return $this->belongsToMany(Campus::class, 'campus_carrera');
+    }
+
+    /**
+     * Relación muchos-a-muchos con directores a través de la tabla pivot director_carrera.
+     * Esta es la relación principal para la nueva estructura.
+     * Alias de directores() por compatibilidad.
+     */
+    public function directoresRelacion(): BelongsToMany
+    {
+        return $this->directores();
     }
 }
