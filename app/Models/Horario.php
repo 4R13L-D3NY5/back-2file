@@ -17,6 +17,7 @@ class Horario extends Model
         'dia',
         'hora_inicio',
         'hora_fin',
+        'modificado_localmente',
     ];
 
     public function grupo()

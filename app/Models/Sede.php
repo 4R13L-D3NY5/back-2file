@@ -17,7 +17,8 @@ class Sede extends Model
         'ciudad',
         // 'direccion',
         // 'telefono',
-        'activo'
+        'activo',
+        'modificado_localmente'
     ];
 
     protected $casts = [

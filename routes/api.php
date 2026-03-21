@@ -82,7 +82,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/change-password', [AuthController::class, 'changePassword']);
 
     // Carreras
-    Route::apiResource('carreras', CarreraController::class)->only(['index', 'update']);
+    Route::apiResource('carreras', CarreraController::class)->only(['store', 'update', 'destroy'])->middleware('role:SUPER_ADMIN');
+    Route::get('/carreras/{id}', [CarreraController::class, 'show']); // pública para autenticados
 
     // Mallas Curriculares
     Route::get('/mallas-curriculares', [\App\Http\Controllers\MallaCurricularController::class, 'getMallas']);
@@ -107,8 +108,31 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
 
     // Grupos
+    Route::get('grupos-flat', [GrupoController::class, 'flatIndex']);  // Lista plana de grupos reales (para CRUD admin)
     Route::get('grupos', [GrupoController::class, 'index']);
     Route::get('grupos/{id}', [GrupoController::class, 'show']);
+    Route::post('grupos', [GrupoController::class, 'store'])->middleware('role:SUPER_ADMIN');
+    Route::put('grupos/{id}', [GrupoController::class, 'update'])->middleware('role:SUPER_ADMIN');
+    Route::delete('grupos/{id}', [GrupoController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
+
+    // Horarios
+    Route::get('horarios', [\App\Http\Controllers\HorarioController::class, 'index']);
+    Route::get('horarios/{id}', [\App\Http\Controllers\HorarioController::class, 'show']);
+    Route::post('horarios', [\App\Http\Controllers\HorarioController::class, 'store'])->middleware('role:SUPER_ADMIN');
+    Route::put('horarios/{id}', [\App\Http\Controllers\HorarioController::class, 'update'])->middleware('role:SUPER_ADMIN');
+    Route::delete('horarios/{id}', [\App\Http\Controllers\HorarioController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
+
+    // Aulas (CRUD completo)
+    Route::get('aulas',        [\App\Http\Controllers\AulaController::class, 'index']);
+    Route::post('aulas',       [\App\Http\Controllers\AulaController::class, 'store'])->middleware('role:SUPER_ADMIN');
+    Route::put('aulas/{id}',   [\App\Http\Controllers\AulaController::class, 'update'])->middleware('role:SUPER_ADMIN');
+    Route::delete('aulas/{id}',[\App\Http\Controllers\AulaController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
+
+    // Bloques (CRUD completo)
+    Route::get('bloques',        [\App\Http\Controllers\BloqueController::class, 'index']);
+    Route::post('bloques',       [\App\Http\Controllers\BloqueController::class, 'store'])->middleware('role:SUPER_ADMIN');
+    Route::put('bloques/{id}',   [\App\Http\Controllers\BloqueController::class, 'update'])->middleware('role:SUPER_ADMIN');
+    Route::delete('bloques/{id}',[\App\Http\Controllers\BloqueController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
 
     // Grupos Externos (API externa)
     Route::get('grupos-externo', [GruposExternoController::class, 'index']);
@@ -227,7 +251,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('roles', \App\Http\Controllers\RolController::class);
     Route::apiResource('usuarios', \App\Http\Controllers\UserController::class);
     Route::post('/usuarios/{id}/reset-password', [\App\Http\Controllers\UserController::class, 'resetPassword']);
-    Route::apiResource('sedes', \App\Http\Controllers\SedeController::class);
+    Route::apiResource('sedes', \App\Http\Controllers\SedeController::class)->only(['index', 'show']);
+    Route::post('/sedes', [\App\Http\Controllers\SedeController::class, 'store'])->middleware('role:SUPER_ADMIN');
+    Route::put('/sedes/{id}', [\App\Http\Controllers\SedeController::class, 'update'])->middleware('role:SUPER_ADMIN');
+    Route::delete('/sedes/{id}', [\App\Http\Controllers\SedeController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
     Route::apiResource('campus', \App\Http\Controllers\CampusController::class);
     Route::get('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'obtenerCarreras']);
     Route::post('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'asignarCarreras']);
@@ -238,7 +265,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/evaluadores/disponibles', [\App\Http\Controllers\CampusController::class, 'evaluadoresDisponibles']);
     Route::post('/campus/{id}/evaluadores', [\App\Http\Controllers\CampusController::class, 'asignarEvaluador']);
     Route::delete('/campus/{id}/evaluadores/{userId}', [\App\Http\Controllers\CampusController::class, 'removerEvaluador']);
-    
     Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
     Route::get('/my-subjects', [\App\Http\Controllers\DocenteController::class, 'mySubjects']);
 
@@ -247,7 +273,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('carreras', [\App\Http\Controllers\CarreraController::class, 'index']);
     Route::get('carreras/{id}/asignaturas', [\App\Http\Controllers\CarreraController::class, 'asignaturas']);
     Route::get('carreras/{id}/semestres', [\App\Http\Controllers\CarreraController::class, 'semestres']);
-    Route::get('carreras/{id}', [\App\Http\Controllers\CarreraController::class, 'show']);
     Route::put('carreras/{id}/contexto', [\App\Http\Controllers\CarreraController::class, 'updateContexto']);
 
     // Module 7b: Vista Patrón de Examen

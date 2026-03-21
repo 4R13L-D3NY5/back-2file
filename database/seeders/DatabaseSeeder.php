@@ -20,7 +20,8 @@ class DatabaseSeeder extends Seeder
         $this->call([
             RoleSeeder::class,
             SedeSeeder::class,
-            // CarreraSeeder::class,
+            ConstantsMigrationSeeder::class, // Migra constantes hardcodeadas a BD
+            // CarreraSeeder::class, // Comentado para evitar conflictos con ConstantsMigrationSeeder
             UserSeeder::class,
             ListaUsuariosSeeder::class,
             // TestRolesSeeder::class,

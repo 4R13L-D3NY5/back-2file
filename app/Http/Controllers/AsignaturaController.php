@@ -510,7 +510,9 @@ class AsignaturaController extends Controller
             'sesiones_semanales_practicas',
             'docente_formacion',
             'docente_telefono',
-            'docente_email'
+            'docente_email',
+            'plan_estudios',
+            'modificado_localmente'
         ]);
 
         // Mapeo manual
@@ -543,6 +545,9 @@ class AsignaturaController extends Controller
 
         if ($request->has('organizacion_calendario')) $local->organizacion_calendario = $request->organizacion_calendario;
 
+        // Marcar como modificado localmente al actualizar
+        $data['modificado_localmente'] = true;
+
         $local->fill($data); // Fill the rest
         $local->save();
 
@@ -571,6 +576,37 @@ class AsignaturaController extends Controller
         $mainCarrera = $local->carreras->first();
         $response['carrera'] = $mainCarrera; // Para compatibilidad frontend si usa .carrera
         $response['semestre'] = $mainCarrera?->pivot?->semestre; // Fix: Include semestre
+
+        // ── FUSIÓN DE DUPLICADOS POR CÓDIGO ──────────────────────────────────────
+        // Si se actualizó plan_estudios, buscar duplicados del mismo código y fusionarlos
+        // moviendo sus grupos a esta asignatura y eliminando el duplicado.
+        if ($request->has('plan_estudios')) {
+            $duplicados = Asignatura::where('codigo', $local->codigo)
+                ->where('id', '!=', $local->id)
+                ->get();
+
+            foreach ($duplicados as $dup) {
+                DB::transaction(function () use ($dup, $local) {
+                    // Reasignar grupos del duplicado a la asignatura principal
+                    \App\Models\Grupo::where('asignatura_id', $dup->id)
+                        ->update(['asignatura_id' => $local->id, 'modificado_localmente' => true]);
+
+                    // Reasignar unidades si las tiene
+                    if (method_exists($dup, 'unidades')) {
+                        DB::table('unidades')->where('asignatura_id', $dup->id)
+                            ->update(['asignatura_id' => $local->id]);
+                    }
+
+                    // Eliminar pivots del duplicado (no los necesitamos, 1884 ya tiene los propios)
+                    DB::table('asignatura_carrera')->where('asignatura_id', $dup->id)->delete();
+
+                    // Soft delete del duplicado
+                    $dup->delete();
+
+                    Log::info("Fusión de asignaturas: duplicado ID {$dup->id} ({$dup->nombre}) fusionado en ID {$local->id}");
+                });
+            }
+        }
 
         // PROPAGACION DE DATOS: Si es Cochabamba (ID 1), actualizar "espejos" en otras sedes
         if ($mainCarrera && $mainCarrera->sede_id == 1) { // 1 = Cochabamba (Central)
@@ -609,16 +645,28 @@ class AsignaturaController extends Controller
 
     public function store(Request $request)
     {
-        $request->validate([
+        $validated = $request->validate([
             'codigo' => 'required|unique:asignaturas,codigo',
             'nombre' => 'required',
             'carrera_id' => 'required|exists:carreras,id',
-            'semestre' => 'required|integer'
+            'semestre' => 'required|integer',
+            'plan_estudios' => 'nullable|string|in:N,A',
+            'modificado_localmente' => 'boolean'
         ]);
 
         $carrera = Carrera::findOrFail($request->carrera_id);
 
-        $asignatura = Asignatura::create($request->except(['carrera_id', 'semestre', 'sede_id']));
+        $data = $request->except(['carrera_id', 'semestre', 'sede_id']);
+        // Si no se especifica modificado_localmente, establecer en true (creación local)
+        if (!isset($data['modificado_localmente'])) {
+            $data['modificado_localmente'] = true;
+        }
+        // Si no se especifica plan_estudios, establecer 'N' (Nuevo)
+        if (!isset($data['plan_estudios'])) {
+            $data['plan_estudios'] = 'N';
+        }
+
+        $asignatura = Asignatura::create($data);
 
         // Attach to pivot with context
         $asignatura->carreras()->attach($carrera->id, [

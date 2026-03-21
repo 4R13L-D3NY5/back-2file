@@ -64,4 +64,64 @@ class SedeController extends Controller
 
         return response()->json($carreras);
     }
+
+    /**
+     * Crear una nueva sede.
+     * POST /api/sedes
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'nombre' => 'required|string|max:255',
+            'codigo' => 'required|string|max:10|unique:sedes,codigo',
+            'ciudad' => 'required|string|max:100',
+            'activo' => 'boolean',
+            'modificado_localmente' => 'nullable|boolean',
+        ]);
+
+        // Establecer modificado_localmente en true por defecto para creación local
+        if (!isset($validated['modificado_localmente'])) {
+            $validated['modificado_localmente'] = true;
+        }
+
+        $sede = Sede::create($validated);
+
+        return response()->json($sede, 201);
+    }
+
+    /**
+     * Actualizar una sede existente.
+     * PUT /api/sedes/{id}
+     */
+    public function update(Request $request, $id)
+    {
+        $sede = Sede::findOrFail($id);
+
+        $validated = $request->validate([
+            'nombre' => 'sometimes|string|max:255',
+            'codigo' => 'sometimes|string|max:10|unique:sedes,codigo,' . $sede->id,
+            'ciudad' => 'sometimes|string|max:100',
+            'activo' => 'sometimes|boolean',
+            'modificado_localmente' => 'nullable|boolean',
+        ]);
+
+        // Marcar como modificado localmente al actualizar
+        $validated['modificado_localmente'] = true;
+
+        $sede->update($validated);
+
+        return response()->json($sede);
+    }
+
+    /**
+     * Eliminar una sede.
+     * DELETE /api/sedes/{id}
+     */
+    public function destroy($id)
+    {
+        $sede = Sede::findOrFail($id);
+        $sede->delete();
+
+        return response()->json(null, 204);
+    }
 }
