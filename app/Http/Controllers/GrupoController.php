@@ -3,11 +3,81 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asignatura;
+use App\Models\Grupo;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class GrupoController extends Controller
 {
+    /**
+     * Lista grupos reales (modelo Grupo) con relaciones para el CRUD admin.
+     * GET /api/grupos-flat
+     */
+    public function flatIndex(Request $request)
+    {
+        $query = Grupo::with(['asignatura', 'carrera', 'docente', 'sede'])
+            ->orderBy('id', 'desc');
+
+        if ($request->filled('sede_id')) {
+            $query->where('sede_id', $request->sede_id);
+        }
+        if ($request->filled('carrera_id')) {
+            $query->where('carrera_id', $request->carrera_id);
+        }
+        if ($request->filled('asignatura_id')) {
+            $query->where('asignatura_id', $request->asignatura_id);
+        }
+        if ($request->filled('plan_estudios')) {
+            $query->where('plan_estudios', $request->plan_estudios);
+        }
+        if ($request->filled('gestion')) {
+            $query->where('gestion', $request->gestion);
+        }
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->where(function ($q) use ($search) {
+                $q->where('nombre', 'like', "%$search%")
+                  ->orWhereHas('asignatura', fn($q2) => $q2->where('nombre', 'like', "%$search%")->orWhere('codigo', 'like', "%$search%"))
+                  ->orWhereHas('docente', fn($q2) => $q2->where('nombre_completo', 'like', "%$search%"));
+            });
+        }
+
+        $perPage = $request->per_page ?? 50;
+        $grupos = $query->paginate($perPage);
+
+        $data = $grupos->getCollection()->map(fn($g) => [
+            'id'                    => $g->id,
+            'nombre'                => $g->nombre,
+            'asignatura_id'         => $g->asignatura_id,
+            'asignatura_nombre'     => $g->asignatura?->nombre,
+            'asignatura_codigo'     => $g->asignatura?->codigo,
+            'asignatura_plan'       => $g->asignatura?->plan_estudios,
+            'carrera_id'            => $g->carrera_id,
+            'carrera_nombre'        => $g->carrera?->nombre,
+            'docente_id'            => $g->docente_id,
+            'docente_nombre'        => $g->docente?->nombre_completo,
+            'sede_id'               => $g->sede_id,
+            'sede_nombre'           => $g->sede?->nombre,
+            'gestion'               => $g->gestion,
+            'tipo'                  => $g->tipo,
+            'turno'                 => $g->turno,
+            'estado'                => $g->estado,
+            'plan_estudios'         => $g->plan_estudios,
+            'id_horario_api'        => $g->id_horario_api,
+            'modificado_localmente' => (bool) $g->modificado_localmente,
+        ]);
+
+        return response()->json([
+            'data' => $data,
+            'meta' => [
+                'current_page' => $grupos->currentPage(),
+                'last_page'    => $grupos->lastPage(),
+                'total'        => $grupos->total(),
+            ],
+        ]);
+    }
+
+
     /**
      * Display a listing of subjects with their groups (schedules).
      * Filters by Sede, Carrera, Gestion, Semestre.
@@ -244,15 +314,18 @@ class GrupoController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'nombre' => 'required|string|max:50',
-            'asignatura_id' => 'required|exists:asignaturas,id',
-            'docente_id' => 'nullable|exists:docentes,id',
-            'carrera_id' => 'nullable|exists:carreras,id',
-            'gestion' => 'required|string|max:20',
-            'tipo' => 'nullable|string|max:20',
-            'plan_estudios' => 'nullable|string|in:N,A',
-            'modificado_localmente' => 'nullable|boolean',
-            'activo' => 'boolean',
+            'nombre'               => 'required|string|max:50',
+            'asignatura_id'        => 'required|exists:asignaturas,id',
+            'docente_id'           => 'nullable|exists:docentes,id',
+            'carrera_id'           => 'nullable|exists:carreras,id',
+            'sede_id'              => 'nullable|exists:sedes,id',
+            'gestion'              => 'required|string|max:20',
+            'tipo'                 => 'nullable|string|max:20',
+            'turno'                => 'nullable|string|max:20',
+            'estado'               => 'nullable|string|max:20',
+            'plan_estudios'        => 'nullable|string|in:N,A',
+            'id_horario_api'       => 'nullable|integer',
+            'modificado_localmente'=> 'nullable|boolean',
         ]);
 
         // Establecer modificado_localmente en true por defecto para creación local
@@ -274,15 +347,18 @@ class GrupoController extends Controller
         $grupo = \App\Models\Grupo::findOrFail($id);
 
         $validated = $request->validate([
-            'nombre' => 'sometimes|string|max:50',
-            'asignatura_id' => 'sometimes|exists:asignaturas,id',
-            'docente_id' => 'nullable|exists:docentes,id',
-            'carrera_id' => 'nullable|exists:carreras,id',
-            'gestion' => 'sometimes|string|max:20',
-            'tipo' => 'nullable|string|max:20',
-            'plan_estudios' => 'nullable|string|in:N,A',
-            'modificado_localmente' => 'nullable|boolean',
-            'activo' => 'sometimes|boolean',
+            'nombre'               => 'sometimes|string|max:50',
+            'asignatura_id'        => 'sometimes|exists:asignaturas,id',
+            'docente_id'           => 'nullable|exists:docentes,id',
+            'carrera_id'           => 'nullable|exists:carreras,id',
+            'sede_id'              => 'nullable|exists:sedes,id',
+            'gestion'              => 'sometimes|string|max:20',
+            'tipo'                 => 'nullable|string|max:20',
+            'turno'                => 'nullable|string|max:20',
+            'estado'               => 'nullable|string|max:20',
+            'plan_estudios'        => 'nullable|string|in:N,A',
+            'id_horario_api'       => 'nullable|integer',
+            'modificado_localmente'=> 'nullable|boolean',
         ]);
 
         // Marcar como modificado localmente al actualizar

@@ -577,6 +577,37 @@ class AsignaturaController extends Controller
         $response['carrera'] = $mainCarrera; // Para compatibilidad frontend si usa .carrera
         $response['semestre'] = $mainCarrera?->pivot?->semestre; // Fix: Include semestre
 
+        // ── FUSIÓN DE DUPLICADOS POR CÓDIGO ──────────────────────────────────────
+        // Si se actualizó plan_estudios, buscar duplicados del mismo código y fusionarlos
+        // moviendo sus grupos a esta asignatura y eliminando el duplicado.
+        if ($request->has('plan_estudios')) {
+            $duplicados = Asignatura::where('codigo', $local->codigo)
+                ->where('id', '!=', $local->id)
+                ->get();
+
+            foreach ($duplicados as $dup) {
+                DB::transaction(function () use ($dup, $local) {
+                    // Reasignar grupos del duplicado a la asignatura principal
+                    \App\Models\Grupo::where('asignatura_id', $dup->id)
+                        ->update(['asignatura_id' => $local->id, 'modificado_localmente' => true]);
+
+                    // Reasignar unidades si las tiene
+                    if (method_exists($dup, 'unidades')) {
+                        DB::table('unidades')->where('asignatura_id', $dup->id)
+                            ->update(['asignatura_id' => $local->id]);
+                    }
+
+                    // Eliminar pivots del duplicado (no los necesitamos, 1884 ya tiene los propios)
+                    DB::table('asignatura_carrera')->where('asignatura_id', $dup->id)->delete();
+
+                    // Soft delete del duplicado
+                    $dup->delete();
+
+                    Log::info("Fusión de asignaturas: duplicado ID {$dup->id} ({$dup->nombre}) fusionado en ID {$local->id}");
+                });
+            }
+        }
+
         // PROPAGACION DE DATOS: Si es Cochabamba (ID 1), actualizar "espejos" en otras sedes
         if ($mainCarrera && $mainCarrera->sede_id == 1) { // 1 = Cochabamba (Central)
             Asignatura::where('codigo', $local->codigo)

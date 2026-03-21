@@ -27,7 +27,21 @@ class HorarioController extends Controller
             $query->where('dia', $request->dia);
         }
 
-        $horarios = $query->with(['grupo', 'aula.bloque'])->get();
+        // Filtrar por sede_id a través de la relación grupo
+        if ($request->has('sede_id') && $request->sede_id) {
+            $query->whereHas('grupo', function ($q) use ($request) {
+                $q->where('sede_id', $request->sede_id);
+            });
+        }
+
+        // Filtrar por carrera_id a través de la relación grupo
+        if ($request->has('carrera_id') && $request->carrera_id) {
+            $query->whereHas('grupo', function ($q) use ($request) {
+                $q->where('carrera_id', $request->carrera_id);
+            });
+        }
+
+        $horarios = $query->with(['grupo.asignatura', 'grupo.carrera', 'grupo.sede', 'grupo.docente', 'aula.bloque'])->get();
 
         return response()->json($horarios);
     }
@@ -82,10 +96,8 @@ class HorarioController extends Controller
             'id_horario_api' => 'nullable|integer|unique:horarios,id_horario_api,' . $horario->id,
         ]);
 
-        // Si hay cambios en campos que pueden provenir de API, marcar como modificado localmente
-        if ($horario->isDirty(['dia', 'hora_inicio', 'hora_fin', 'aula_id', 'grupo_id'])) {
-            $validated['modificado_localmente'] = true;
-        }
+        // Siempre marcar como modificado localmente al editar desde admin
+        $validated['modificado_localmente'] = true;
 
         $horario->update($validated);
 

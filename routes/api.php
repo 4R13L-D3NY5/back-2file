@@ -108,6 +108,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
 
     // Grupos
+    Route::get('grupos-flat', [GrupoController::class, 'flatIndex']);  // Lista plana de grupos reales (para CRUD admin)
     Route::get('grupos', [GrupoController::class, 'index']);
     Route::get('grupos/{id}', [GrupoController::class, 'show']);
     Route::post('grupos', [GrupoController::class, 'store'])->middleware('role:SUPER_ADMIN');
@@ -120,6 +121,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('horarios', [\App\Http\Controllers\HorarioController::class, 'store'])->middleware('role:SUPER_ADMIN');
     Route::put('horarios/{id}', [\App\Http\Controllers\HorarioController::class, 'update'])->middleware('role:SUPER_ADMIN');
     Route::delete('horarios/{id}', [\App\Http\Controllers\HorarioController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
+
+    // Aulas (CRUD completo)
+    Route::get('aulas',        [\App\Http\Controllers\AulaController::class, 'index']);
+    Route::post('aulas',       [\App\Http\Controllers\AulaController::class, 'store'])->middleware('role:SUPER_ADMIN');
+    Route::put('aulas/{id}',   [\App\Http\Controllers\AulaController::class, 'update'])->middleware('role:SUPER_ADMIN');
+    Route::delete('aulas/{id}',[\App\Http\Controllers\AulaController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
+
+    // Bloques (CRUD completo)
+    Route::get('bloques',        [\App\Http\Controllers\BloqueController::class, 'index']);
+    Route::post('bloques',       [\App\Http\Controllers\BloqueController::class, 'store'])->middleware('role:SUPER_ADMIN');
+    Route::put('bloques/{id}',   [\App\Http\Controllers\BloqueController::class, 'update'])->middleware('role:SUPER_ADMIN');
+    Route::delete('bloques/{id}',[\App\Http\Controllers\BloqueController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
 
     // Grupos Externos (API externa)
     Route::get('grupos-externo', [GruposExternoController::class, 'index']);
@@ -189,8 +202,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [BancoPreguntaController::class, 'index']); // ?logro_id=X
         Route::get('/stats', [BancoPreguntaController::class, 'getStats']);
         Route::post('/', [BancoPreguntaController::class, 'store']);
-        Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::post('/import', [BancoPreguntaController::class, 'import']);
+        Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
     });
 
