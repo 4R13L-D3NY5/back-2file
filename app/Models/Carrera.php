@@ -15,6 +15,7 @@ class Carrera extends Model
     protected $fillable = [
         'nombre',
         'codigo',
+        'codigo_api',
         'sigla',
         'sede_id',
         'facultad',
@@ -24,7 +25,9 @@ class Carrera extends Model
         'vision',
         'perfil_profesional',
         'imagen',
-        'activo'
+        'activo',
+        'plan_estudios',
+        'modificado_localmente'
     ];
 
     protected $casts = [

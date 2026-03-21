@@ -92,8 +92,22 @@ class UserController extends Controller
             'rol_id' => 'required|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
             'sede_id' => 'nullable|exists:sedes,id',
-            'estado' => 'boolean'
+            'estado' => 'sometimes|string|in:activo,inactivo,true,false,1,0'
         ]);
+        
+        // Convertir estado a booleano
+        if (isset($validated['estado'])) {
+            $estado = $validated['estado'];
+            if (in_array($estado, ['activo', 'true', '1'], true)) {
+                $validated['estado'] = true;
+            } elseif (in_array($estado, ['inactivo', 'false', '0'], true)) {
+                $validated['estado'] = false;
+            } else {
+                $validated['estado'] = true; // default
+            }
+        } else {
+            $validated['estado'] = true; // default si no se envía
+        }
 
         // Generar username automaticamente si no viene, e.g. nombre.apellido
         if (!$request->has('username')) {
@@ -124,21 +138,24 @@ class UserController extends Controller
                 'user_id' => $user->id,
                 'nombres' => $user->nombre,
                 'apellidos' => $user->apellido,
-                'sede_id' => $request->sede_id, // Asignar sede
+                'sede_id' => $validated['sede_id'] ?? null, // Asignar sede desde datos validados
                 // 'carrera_id' => ... asignamos la primera como principal?
             ]);
 
             // Asignar carreras (ids vienen en $validated['carrera'] como string "1, 2" o array si el validador lo permitiera)
             // En el store frontend hicimos .join(', '). Recibimos "1, 2".
-            if (!empty($validated['carrera'])) {
-                $carreraIds = explode(',', $validated['carrera']);
+            $carreraString = trim($validated['carrera'] ?? '');
+            if ($carreraString !== '') {
+                $carreraIds = explode(',', $carreraString);
                 $carreraIds = array_map('trim', $carreraIds);
+                $carreraIds = array_filter($carreraIds, function ($id) {
+                    return is_numeric($id) && $id > 0;
+                });
 
                 // Actualizar carreras para que apunten a este director
-                \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
-
-                // Set primary career to director profile just in case
-                if (count($carreraIds) > 0) {
+                if (!empty($carreraIds)) {
+                    \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
+                    // Set primary career to director profile
                     $director->carrera_id = $carreraIds[0];
                     $director->save();
                 }
@@ -161,9 +178,22 @@ class UserController extends Controller
             'rol_id' => 'sometimes|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
             'sede_id' => 'nullable|exists:sedes,id',
-            'estado' => 'boolean',
+            'estado' => 'sometimes|string|in:activo,inactivo,true,false,1,0',
             'password' => 'nullable|string|min:6'
         ]);
+
+        // Convertir estado a booleano si está presente
+        if (isset($validated['estado'])) {
+            $estado = $validated['estado'];
+            if (in_array($estado, ['activo', 'true', '1'], true)) {
+                $validated['estado'] = true;
+            } elseif (in_array($estado, ['inactivo', 'false', '0'], true)) {
+                $validated['estado'] = false;
+            } else {
+                // Mantener el valor actual del usuario
+                unset($validated['estado']);
+            }
+        }
 
         if (isset($validated['password'])) {
             $validated['password'] = Hash::make($validated['password']);
@@ -182,7 +212,7 @@ class UserController extends Controller
                 [
                     'nombres' => $user->nombre,
                     'apellidos' => $user->apellido,
-                    'sede_id' => $request->sede_id ?? $user->sede_id
+                    'sede_id' => $validated['sede_id'] ?? $user->sede_id
                 ]
             );
 
@@ -190,7 +220,7 @@ class UserController extends Controller
             $director->update([
                 'nombres' => $validated['nombre'] ?? $director->nombres,
                 'apellidos' => $validated['apellido'] ?? $director->apellidos,
-                'sede_id' => $request->sede_id ?? $director->sede_id
+                'sede_id' => $validated['sede_id'] ?? $director->sede_id
             ]);
 
             // Sync Carreras
@@ -198,15 +228,18 @@ class UserController extends Controller
                 // Desvincular anteriores
                 \App\Models\Carrera::where('director_id', $director->id)->update(['director_id' => null]);
 
-                if (!empty($validated['carrera'])) {
-                    $carreraIds = explode(',', $validated['carrera']);
+                $carreraString = trim($validated['carrera']);
+                if ($carreraString !== '') {
+                    $carreraIds = explode(',', $carreraString);
                     $carreraIds = array_map('trim', $carreraIds);
+                    $carreraIds = array_filter($carreraIds, function ($id) {
+                        return is_numeric($id) && $id > 0;
+                    });
 
                     // Vincular nuevas
-                    \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
-
-                    // Update primary
-                    if (count($carreraIds) > 0) {
+                    if (!empty($carreraIds)) {
+                        \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
+                        // Update primary
                         $director->carrera_id = $carreraIds[0];
                         $director->save();
                     }

@@ -17,6 +17,7 @@ class Grupo extends Model
         'id_horario_api',
         'gestion',
         'plan_estudios',
+        'modificado_localmente',
         'asignatura_id',
         'carrera_id',
         'docente_id',

@@ -131,4 +131,72 @@ class CarreraController extends Controller
             'carrera' => $carrera
         ]);
     }
+
+    /**
+     * Crear una nueva carrera.
+     * POST /api/carreras
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'nombre' => 'required|string|max:255',
+            'codigo' => 'required|string|max:20|unique:carreras,codigo',
+            'sigla' => 'nullable|string|max:10',
+            'sede_id' => 'nullable|exists:sedes,id',
+            'facultad' => 'nullable|string|max:255',
+            'area' => 'nullable|string|max:100',
+            'plan_estudios' => 'nullable|string|in:N,A',
+            'activo' => 'boolean',
+            'modificado_localmente' => 'nullable|boolean',
+        ]);
+
+        // Establecer modificado_localmente en true por defecto para creación local
+        if (!isset($validated['modificado_localmente'])) {
+            $validated['modificado_localmente'] = true;
+        }
+
+        $carrera = Carrera::create($validated);
+
+        return response()->json($carrera, 201);
+    }
+
+    /**
+     * Actualizar una carrera existente.
+     * PUT /api/carreras/{id}
+     */
+    public function update(Request $request, $id)
+    {
+        $carrera = Carrera::findOrFail($id);
+
+        $validated = $request->validate([
+            'nombre' => 'sometimes|string|max:255',
+            'codigo' => 'sometimes|string|max:20|unique:carreras,codigo,' . $carrera->id,
+            'sigla' => 'nullable|string|max:10',
+            'sede_id' => 'nullable|exists:sedes,id',
+            'facultad' => 'nullable|string|max:255',
+            'area' => 'nullable|string|max:100',
+            'plan_estudios' => 'nullable|string|in:N,A',
+            'activo' => 'sometimes|boolean',
+            'modificado_localmente' => 'nullable|boolean',
+        ]);
+
+        // Marcar como modificado localmente al actualizar
+        $validated['modificado_localmente'] = true;
+
+        $carrera->update($validated);
+
+        return response()->json($carrera);
+    }
+
+    /**
+     * Eliminar una carrera (soft delete).
+     * DELETE /api/carreras/{id}
+     */
+    public function destroy($id)
+    {
+        $carrera = Carrera::findOrFail($id);
+        $carrera->delete();
+
+        return response()->json(null, 204);
+    }
 }
