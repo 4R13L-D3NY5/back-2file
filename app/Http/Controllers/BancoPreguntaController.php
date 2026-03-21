@@ -32,9 +32,17 @@ class BancoPreguntaController extends Controller
         if ($request->has('docente_id')) {
             $questions->where('docente_id', $request->docente_id);
         }
+
+        if ($request->has('grupoTeorico')) {
+            $questions->where('grupoTeorico', $request->grupoTeorico);
+        }
+
+        if ($request->has('parcial')) {
+            $questions->where('parcial', $request->parcial);
+        }
         
         // Debug Log
-        Log::info("BancoPregunta Index Request", [
+        \Illuminate\Support\Facades\Log::info("BancoPregunta Index Request", [
             'asignatura_id' => $request->asignatura_id,
             'docente_id' => $request->docente_id,
             'user_id' => auth()->id(),
@@ -50,9 +58,18 @@ class BancoPreguntaController extends Controller
         }
         
         $results = $questions->get();
-        Log::info("BancoPregunta Index Results", ['count' => $results->count()]);
+        $count = $results->count();
+        $stats = [
+            'facil' => $results->filter(fn($p) => $p->dificultad == 'FACIL' || $p->dificultad == '1')->count(),
+            'medio' => $results->filter(fn($p) => $p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == '2')->count(),
+            'dificil' => $results->filter(fn($p) => $p->dificultad == 'DIFICIL' || $p->dificultad == '3')->count(),
+        ];
 
-        return response()->json($results);
+        return response()->json([
+            'total' => $count,
+            'preguntas' => $results,
+            'stats' => $stats
+        ]);
     }
 
     /**
@@ -209,10 +226,25 @@ class BancoPreguntaController extends Controller
                 ?? (\App\Models\Docente::where('user_id', auth()->id())->first()?->id);
 
             if ($modo === 'reemplazar') {
-                \Log::info("Vaciando banco de preguntas para asignatura: {$asignaturaId} y docente: {$docenteId}");
-                BancoPregunta::where('asignatura_id', $asignaturaId)
-                    ->where('docente_id', $docenteId)
-                    ->delete();
+                $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
+                    ->where('docente_id', $docenteId);
+                
+                if ($grupoTeorico) {
+                    $queryDelete->where('grupoTeorico', $grupoTeorico);
+                }
+                
+                if ($request->has('parcial') && $request->parcial) {
+                    $queryDelete->where('parcial', $this->normalizarTipoExamen($request->parcial));
+                }
+
+                \Log::info("Vaciando banco de preguntas filtrado", [
+                    'asignatura' => $asignaturaId,
+                    'docente' => $docenteId,
+                    'grupo' => $grupoTeorico,
+                    'parcial' => $request->parcial
+                ]);
+
+                $queryDelete->delete();
             }
 
             $spreadsheet = IOFactory::load($file->getPathname());

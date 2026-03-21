@@ -62,7 +62,8 @@ class AuthController extends Controller
             'docente.grupos.asignatura',
             'director.sede',
             'director.carrera',
-            'director.carreras'
+            'director.carreras',
+            'campus.sede'
         ]);
 
         // Append progress
@@ -206,7 +207,8 @@ class AuthController extends Controller
             'docente.grupos.asignatura',
             'director.sede',
             'director.carrera',
-            'director.carreras'
+            'director.carreras',
+            'campus.sede'
         ]);
 
         // Append progress attribute to each asignatura

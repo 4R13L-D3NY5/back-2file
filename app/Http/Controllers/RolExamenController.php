@@ -19,13 +19,13 @@ class RolExamenController extends Controller
         $query = RolExamen::query()
             ->select(
                 'rol_examenes.*',
-                'asignaturas.nombre as materia_nombre',
-                'carreras.nombre as carrera_nombre',
-                'sedes.nombre as sede_nombre',
-                'asignaturas.id as asignatura_id',
-                'docentes.id as docente_id',
-                'docentes.nombre_completo as docente_nombre',
-                'asignatura_carrera.semestre'
+                \DB::raw('MAX(asignaturas.nombre) as materia'),
+                \DB::raw('MAX(carreras.nombre) as carrera'),
+                \DB::raw('MAX(sedes.nombre) as sede'),
+                \DB::raw('MAX(asignaturas.id) as asignatura_id'),
+                \DB::raw('MAX(docentes.id) as docente_id'),
+                \DB::raw('MAX(docentes.nombre_completo) as docente'),
+                \DB::raw('MAX(asignatura_carrera.semestre) as semestre')
             )
             ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
             ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
@@ -34,13 +34,13 @@ class RolExamenController extends Controller
                 $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
                     ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id');
             })
-            ->join('grupos', function ($join) {
+            ->leftJoin('grupos', function ($join) {
                 $join->on('rol_examenes.sede_id', '=', 'grupos.sede_id')
                     ->on('rol_examenes.carrera_id', '=', 'grupos.carrera_id')
                     ->on('rol_examenes.grupo', '=', 'grupos.nombre')
                     ->on('asignaturas.id', '=', 'grupos.asignatura_id');
             })
-            ->join('docentes', 'grupos.docente_id', '=', 'docentes.id');
+            ->leftJoin('docentes', 'grupos.docente_id', '=', 'docentes.id');
 
         // Filtros
         if ($request->has('gestion')) {
@@ -63,7 +63,7 @@ class RolExamenController extends Controller
             $query->where('rol_examenes.carrera_id', $carreraId);
         }
 
-        // Restricción de Sede para Directores
+        // Restricción de Sede para Directores y Campus para Evaluaciones
         $user = auth()->user();
         if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
             $sedeId = $user->director?->sede_id ?? $user->sede_id;
@@ -71,6 +71,24 @@ class RolExamenController extends Controller
                 $query->where('rol_examenes.sede_id', $sedeId);
                 Log::info("Filtrando RolExamen por sede del Director: {$sedeId}");
             }
+        } elseif ($user && $user->load('rol') && $user->rol->codigo === 'EVALUACIONES' && $user->campus_id) {
+            // Filtrar por las carreras del campus asignado
+            $carreraIds = DB::table('campus_carrera')
+                ->where('campus_id', $user->campus_id)
+                ->pluck('carrera_id');
+            
+            // Si el evaluador no tiene sede asignada directamente en user, usar la del campus
+            $sedeId = $user->sede_id;
+            if (!$sedeId) {
+                $sedeId = DB::table('campus')->where('id', $user->campus_id)->value('sede_id');
+            }
+            
+            $query->whereIn('rol_examenes.carrera_id', $carreraIds);
+            if ($sedeId) {
+                $query->where('rol_examenes.sede_id', $sedeId);
+            }
+            
+            Log::info("Filtrando RolExamen por campus del Evaluador: {$user->campus_id} (Sede: {$sedeId})");
         } elseif ($request->has('sede_id')) {
             $query->where('rol_examenes.sede_id', $request->sede_id);
         }
@@ -83,7 +101,7 @@ class RolExamenController extends Controller
             $query->where('rol_examenes.materia_codigo', $request->materia_codigo);
         }
 
-        $examenes = $query->distinct()
+        $examenes = $query->groupBy('rol_examenes.id')
             ->orderBy('rol_examenes.semana')
             ->orderBy('rol_examenes.fecha')
             ->orderBy('rol_examenes.hora_inicio')
@@ -537,7 +555,33 @@ class RolExamenController extends Controller
             }
         }
 
-        $examen->update($request->all());
+        $data = $request->all();
+        if (isset($data['estado']) && $data['estado'] === 'programados') {
+            // 1. Limpiar Archivos Físicos del Storage
+            if (!empty($examen->variantes)) {
+                foreach ($examen->variantes as $v) {
+                    $file = is_array($v) ? ($v['archivo'] ?? null) : $v;
+                    if ($file) \Storage::disk('public')->delete('examenes/' . $file);
+                }
+            }
+            if (!empty($examen->patrones)) {
+                foreach ($examen->patrones as $p) {
+                    if (is_array($p)) {
+                        if (isset($p['pdf'])) \Storage::disk('public')->delete('patrones/' . $p['pdf']);
+                        if (isset($p['xlsx'])) \Storage::disk('public')->delete('patrones/' . $p['xlsx']);
+                    } else {
+                        \Storage::disk('public')->delete('patrones/' . $p);
+                    }
+                }
+            }
+
+            // 2. Limpiar Campos en DB
+            $data['variantes'] = [];
+            $data['patrones'] = [];
+            $data['config_generacion'] = null;
+        }
+
+        $examen->update($data);
 
         return response()->json($examen);
     }
