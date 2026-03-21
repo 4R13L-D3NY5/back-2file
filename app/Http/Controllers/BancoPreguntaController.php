@@ -398,4 +398,21 @@ class BancoPreguntaController extends Controller
 
         return $mapping[$tipo] ?? $tipo;
     }
+    public function showImage($filename)
+    {
+        $path = storage_path('app/public/preguntas/' . $filename);
+        if (!file_exists($path)) {
+            abort(404);
+        }
+        return response()->file($path);
+    }
+
+    public function getLogo()
+    {
+        $path = public_path('descargas/unitepc-logo.png');
+        if (!file_exists($path)) {
+            abort(404);
+        }
+        return response()->file($path);
+    }
 }

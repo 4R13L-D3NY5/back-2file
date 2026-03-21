@@ -177,6 +177,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('banco-preguntas')->group(function () {
         Route::get('/', [BancoPreguntaController::class, 'index']); // ?logro_id=X
         Route::get('/stats', [BancoPreguntaController::class, 'getStats']);
+        Route::get('/image/{filename}', [BancoPreguntaController::class, 'showImage']);
+        Route::get('/logo-unitepc', [BancoPreguntaController::class, 'getLogo']);
         Route::post('/', [BancoPreguntaController::class, 'store']);
         Route::post('/import', [BancoPreguntaController::class, 'import']);
         Route::post('/{id}', [BancoPreguntaController::class, 'update']);

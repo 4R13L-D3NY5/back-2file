@@ -22,7 +22,7 @@ class RolExamenController extends Controller
                 \DB::raw('MAX(asignaturas.nombre) as materia'),
                 \DB::raw('MAX(carreras.nombre) as carrera'),
                 \DB::raw('MAX(sedes.nombre) as sede'),
-                \DB::raw('MAX(asignaturas.id) as asignatura_id'),
+                \DB::raw('COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id)) as asignatura_id'),
                 \DB::raw('MAX(docentes.id) as docente_id'),
                 \DB::raw('MAX(docentes.nombre_completo) as docente'),
                 \DB::raw('MAX(asignatura_carrera.semestre) as semestre')
