@@ -23,6 +23,12 @@ return new class extends Migration
             ->get();
 
         foreach ($carrerasConDirector as $registro) {
+            // Verificar si el director existe antes de intentar asociarlo
+            $directorExiste = DB::table('directors')->where('id', $registro->director_id)->exists();
+            if (!$directorExiste) {
+                continue;
+            }
+
             // Verificar si ya existe en la tabla pivot (por si acaso)
             $existe = DB::table('director_carrera')
                 ->where('director_id', $registro->director_id)
@@ -47,6 +53,12 @@ return new class extends Migration
             ->get();
 
         foreach ($directoresConCarreraPrincipal as $registro) {
+            // Verificar si la carrera existe antes de intentar asociarla
+            $carreraExiste = DB::table('carreras')->where('id', $registro->carrera_id)->exists();
+            if (!$carreraExiste) {
+                continue;
+            }
+
             // Verificar si ya existe en la tabla pivot
             $existe = DB::table('director_carrera')
                 ->where('director_id', $registro->director_id)
