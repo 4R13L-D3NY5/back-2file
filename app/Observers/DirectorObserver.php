@@ -4,6 +4,7 @@ namespace App\Observers;
 
 use App\Models\Director;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 
 class DirectorObserver
 {
@@ -68,7 +69,7 @@ class DirectorObserver
             // Obtener todas las carreras actuales del director en la tabla pivot
             $carrerasActuales = $director->carreras()->pluck('carrera_id')->toArray();
             
-            // Si la carrera principal no está en la lista, agregarla
+            // Si la carrera principal no está en la tabla pivot, agregarla
             if (!in_array($director->carrera_id, $carrerasActuales)) {
                 $director->carreras()->attach($director->carrera_id, [
                     'es_principal' => true,
@@ -76,18 +77,18 @@ class DirectorObserver
                     'updated_at' => now(),
                 ]);
             } else {
-                // Si ya existe, asegurarse de que esté marcada como principal
-                // y que las otras no lo estén
+                // Si ya existe, asegurar que esté marcada como principal
                 $director->carreras()->updateExistingPivot($director->carrera_id, [
                     'es_principal' => true,
                     'updated_at' => now(),
                 ]);
-                
-                // Marcar otras carreras como no principales
-                $director->carreras()
-                    ->where('carrera_id', '!=', $director->carrera_id)
-                    ->update(['director_carrera.es_principal' => false]);
             }
+            
+            // Marcar TODAS las demás carreras de este director como NO principales
+            DB::table('director_carrera')
+                ->where('director_id', $director->id)
+                ->where('carrera_id', '!=', $director->carrera_id)
+                ->update(['es_principal' => false, 'updated_at' => now()]);
             
             Log::info("Sincronizada carrera principal para director {$director->id}: carrera_id={$director->carrera_id}");
         } catch (\Exception $e) {
