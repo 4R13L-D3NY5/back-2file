@@ -24,9 +24,15 @@ class MateriaComunController extends Controller
             return response()->json(['error' => 'No autorizado'], 403);
         }
 
-        // Obtener TODAS las carreras del director
+        // Obtener TODAS las carreras del director (legacy director_id + tabla pivot)
         $director = $user->director;
-        $carreraIds = Carrera::where('director_id', $director->id)->pluck('id')->toArray();
+        $carreraIds = Carrera::where('director_id', $director->id)
+            ->orWhereHas('directores', function ($q) use ($director) {
+                $q->where('director_id', $director->id);
+            })
+            ->distinct()
+            ->pluck('id')
+            ->toArray();
         
         if (empty($carreraIds) && $director->carrera_id) {
             $carreraIds[] = $director->carrera_id;
@@ -98,7 +104,13 @@ class MateriaComunController extends Controller
         }
 
         $director = $user->director;
-        $carreraIds = Carrera::where('director_id', $director->id)->pluck('id')->toArray();
+        $carreraIds = Carrera::where('director_id', $director->id)
+            ->orWhereHas('directores', function ($q) use ($director) {
+                $q->where('director_id', $director->id);
+            })
+            ->distinct()
+            ->pluck('id')
+            ->toArray();
         
         if (empty($carreraIds) && $director->carrera_id) {
             $carreraIds[] = $director->carrera_id;
@@ -145,8 +157,14 @@ class MateriaComunController extends Controller
         $search     = $request->input('search', '');
         $excludeId  = $request->input('asignatura_id'); // Excluir la materia base
 
-        // Carreras propias del director (para excluirlas de los resultados)
-        $misCarreraIds = Carrera::where('director_id', $director->id)->pluck('id')->toArray();
+        // Carreras propias del director (para excluirlas de los resultados) - legacy director_id + tabla pivot
+        $misCarreraIds = Carrera::where('director_id', $director->id)
+            ->orWhereHas('directores', function ($q) use ($director) {
+                $q->where('director_id', $director->id);
+            })
+            ->distinct()
+            ->pluck('id')
+            ->toArray();
         if (empty($misCarreraIds) && $director->carrera_id) {
             $misCarreraIds[] = $director->carrera_id;
         }

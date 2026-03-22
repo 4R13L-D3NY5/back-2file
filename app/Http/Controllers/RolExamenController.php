@@ -54,7 +54,10 @@ class RolExamenController extends Controller
                 $carreraIds = [];
                 if ($user->director) {
                     if ($user->director->carrera_id) $carreraIds[] = $user->director->carrera_id;
+                    // Incluir carreras de la relación legacy HasMany (carreras.director_id)
                     if ($user->director->carreras) $carreraIds = array_merge($carreraIds, $user->director->carreras->pluck('id')->toArray());
+                    // Incluir carreras de la nueva relación muchos-a-muchos (tabla pivot)
+                    $carreraIds = array_merge($carreraIds, $user->director->carreras()->pluck('carrera_id')->toArray());
                 }
                 if (!in_array($carreraId, array_unique($carreraIds))) {
                     return response()->json(['message' => 'No tiene permiso para ver esta carrera'], 403);

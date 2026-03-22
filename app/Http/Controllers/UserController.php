@@ -3,6 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\Director;
+use App\Models\Carrera;
+use App\Observers\DirectorObserver;
+use App\Observers\CarreraObserver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -152,12 +156,25 @@ class UserController extends Controller
                     return is_numeric($id) && $id > 0;
                 });
 
-                // Actualizar carreras para que apunten a este director
                 if (!empty($carreraIds)) {
-                    \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
-                    // Set primary career to director profile
+                    // Sincronizar tabla pivot (muchos-a-muchos)
+                    $director->carreras()->sync($carreraIds);
+                    
+                    // Establecer carrera principal (primera de la lista) en campo legacy
                     $director->carrera_id = $carreraIds[0];
                     $director->save();
+                    
+                    // Sincronizar campos legacy en carreras (director_id) usando observers
+                    $directorObserver = new DirectorObserver();
+                    $directorObserver->syncFromPivot($director);
+                    
+                    foreach ($carreraIds as $carreraId) {
+                        $carrera = Carrera::find($carreraId);
+                        if ($carrera) {
+                            $carreraObserver = new CarreraObserver();
+                            $carreraObserver->syncFromPivot($carrera);
+                        }
+                    }
                 }
             }
         }
@@ -225,9 +242,6 @@ class UserController extends Controller
 
             // Sync Carreras
             if (isset($validated['carrera'])) { // Si se envió el campo carrera
-                // Desvincular anteriores
-                \App\Models\Carrera::where('director_id', $director->id)->update(['director_id' => null]);
-
                 $carreraString = trim($validated['carrera']);
                 if ($carreraString !== '') {
                     $carreraIds = explode(',', $carreraString);
@@ -236,13 +250,36 @@ class UserController extends Controller
                         return is_numeric($id) && $id > 0;
                     });
 
-                    // Vincular nuevas
                     if (!empty($carreraIds)) {
-                        \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
-                        // Update primary
+                        // Sincronizar tabla pivot (muchos-a-muchos)
+                        $director->carreras()->sync($carreraIds);
+                        
+                        // Establecer carrera principal (primera de la lista) en campo legacy
                         $director->carrera_id = $carreraIds[0];
                         $director->save();
+                        
+                        // Sincronizar campos legacy en carreras (director_id) usando observers
+                        $directorObserver = new DirectorObserver();
+                        $directorObserver->syncFromPivot($director);
+                        
+                        foreach ($carreraIds as $carreraId) {
+                            $carrera = Carrera::find($carreraId);
+                            if ($carrera) {
+                                $carreraObserver = new CarreraObserver();
+                                $carreraObserver->syncFromPivot($carrera);
+                            }
+                        }
+                    } else {
+                        // Si se envió cadena vacía (sin IDs), desvincular todas las carreras
+                        $director->carreras()->sync([]);
+                        $director->carrera_id = null;
+                        $director->save();
                     }
+                } else {
+                    // Cadena vacía: desvincular todas las carreras
+                    $director->carreras()->sync([]);
+                    $director->carrera_id = null;
+                    $director->save();
                 }
             }
         }

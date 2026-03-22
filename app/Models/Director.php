@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Director extends Model
 {
@@ -25,9 +26,21 @@ class Director extends Model
         return $this->belongsTo(Carrera::class);
     }
 
-    public function carreras(): HasMany
+    public function carreras(): BelongsToMany
     {
-        return $this->hasMany(Carrera::class);
+        return $this->belongsToMany(Carrera::class, 'director_carrera')
+            ->withTimestamps()
+            ->withPivot('es_principal');
+    }
+
+    /**
+     * Relación muchos-a-muchos con carreras a través de la tabla pivot director_carrera.
+     * Esta es la relación principal para la nueva estructura.
+     * Alias de carreras() por compatibilidad.
+     */
+    public function carrerasRelacion(): BelongsToMany
+    {
+        return $this->carreras();
     }
 }
 
