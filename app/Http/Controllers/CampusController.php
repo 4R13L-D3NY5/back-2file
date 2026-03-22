@@ -135,11 +135,16 @@ class CampusController extends Controller
             'carreras.*' => 'exists:carreras,id'
         ]);
 
+        \Illuminate\Support\Facades\Log::info("Asignando carreras a campus ID: {$id}", ['payload' => $request->all()]);
+
         if ($validator->fails()) {
+            \Illuminate\Support\Facades\Log::error("Validación fallida al asignar carreras", ['errors' => $validator->errors()]);
             return response()->json(['message' => 'Validation errors', 'errors' => $validator->errors()], 422);
         }
 
         $campus->carreras()->syncWithoutDetaching($request->carreras);
+        
+        \Illuminate\Support\Facades\Log::info("Carreras asignadas correctamente a campus ID: {$id}");
 
         return response()->json(['message' => 'Carreras asignadas correctamente']);
     }
@@ -195,9 +200,12 @@ class CampusController extends Controller
 
     public function asignarEvaluador(Request $request, $id)
     {
-        $campus = Campus::find($id);
-        if (!$campus) {
-            return response()->json(['message' => 'Campus no encontrado'], 404);
+        $campus = null;
+        if ($request->rol_id != 9) {
+            $campus = Campus::find($id);
+            if (!$campus) {
+                return response()->json(['message' => 'Campus no encontrado'], 404);
+            }
         }
 
         if ($request->has('crear_nuevo') && $request->crear_nuevo) {
@@ -221,15 +229,17 @@ class CampusController extends Controller
             $usuario->telefono = $request->telefono ?? null;
             $usuario->password = bcrypt((string)$request->ci);
             $usuario->password_change_required = true;
-            $usuario->rol_id = 7;
+            $usuario->rol_id = $request->rol_id ?? 7;
             $usuario->estado = true;
-            $usuario->campus_id = $campus->id;
+            $usuario->campus_id = $campus ? $campus->id : null;
             $usuario->save();
 
-            return response()->json(['message' => 'Evaluador creado y asignado al campus exitosamente']);
+            $rolNombre = $usuario->rol_id == 9 ? 'Responsable de Evaluaciones' : 'Evaluador';
+            return response()->json(['message' => "{$rolNombre} creado y asignado al campus exitosamente"]);
         } else {
             $validator = Validator::make($request->all(), [
-                'usuario_id' => 'required|exists:users,id'
+                'usuario_id' => 'required|exists:users,id',
+                'rol_id' => 'nullable|exists:roles,id'
             ]);
 
             if ($validator->fails()) {
@@ -237,14 +247,16 @@ class CampusController extends Controller
             }
 
             $usuario = \App\Models\User::find($request->usuario_id);
-            if ((int)$usuario->rol_id !== 7) {
-                return response()->json(['message' => 'El usuario no tiene el rol de Evaluaciones'], 403);
+            
+            // Si viene un rol_id en la petición, actualizarlo (por si se quiere promover a Responsable)
+            if ($request->has('rol_id')) {
+                $usuario->rol_id = $request->rol_id;
             }
 
-            $usuario->campus_id = $campus->id;
+            $usuario->campus_id = $campus ? $campus->id : null;
             $usuario->save();
 
-            return response()->json(['message' => 'Evaluador asignado correctamente']);
+            return response()->json(['message' => 'Usuario asignado correctamente']);
         }
     }
 

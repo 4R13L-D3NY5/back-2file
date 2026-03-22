@@ -65,7 +65,12 @@ class RolExamenController extends Controller
 
         // Restricción de Sede para Directores y Campus para Evaluaciones
         $user = auth()->user();
-        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+        if ($user && $user->rol && $user->rol->codigo === 'RESPONSABLE_EVALUACIONES') {
+            // Acceso Global: No aplicar filtros de sede/campus automáticos
+            if ($request->has('sede_id')) {
+                $query->where('rol_examenes.sede_id', $request->sede_id);
+            }
+        } elseif ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
             $sedeId = $user->director?->sede_id ?? $user->sede_id;
             if ($sedeId) {
                 $query->where('rol_examenes.sede_id', $sedeId);

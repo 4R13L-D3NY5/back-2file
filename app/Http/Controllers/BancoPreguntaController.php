@@ -325,6 +325,41 @@ class BancoPreguntaController extends Controller
                     $respuesta = $rawResp;
                 }
 
+                // Validaciones por Tipo
+                // 1. Respuesta y Dificultad Obligatorias (Excepto PROBLEMA/EMPAREJAMIENTO)
+                if ($tipo !== 'PROBLEMA' && $tipo !== 'EMPAREJAMIENTO') {
+                    if (empty($respuesta)) {
+                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" requiere respuesta.");
+                    }
+                    $rawDif = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                    if ($rawDif === '') {
+                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" requiere nivel de dificultad (1, 2 o 3).");
+                    }
+                } else {
+                    // PROBLEMA y EMPAREJAMIENTO deben estar vacíos
+                    if (!empty($respuesta)) {
+                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" NO debe tener respuesta (debe estar vacía).");
+                    }
+                    $rawDif = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                    if ($rawDif !== '') {
+                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" NO debe tener dificultad (debe estar vacía).");
+                    }
+                }
+
+                // 2. Validaciones para SM
+                if ($tipo === 'SELECCION_MULTIPLE') {
+                    // 1. Validar que tenga exactamente 2 respuestas
+                    $respLetters = is_array($respuesta) ? implode('', $respuesta) : $respuesta;
+                    $lettersOnly = preg_replace('/[^A-E]/', '', $respLetters);
+                    if (strlen($lettersOnly) !== 2) {
+                        throw new \Exception("Fila " . ($index + 1) . ": Selección Múltiple (SM) DEBE tener exactamente 2 respuestas correctas (ej: A,B).");
+                    }
+                    // 2. Validar que tenga las 5 opciones A-E rellenadas
+                    if (count($opciones) < 5) {
+                        throw new \Exception("Fila " . ($index + 1) . ": Selección Múltiple (SM) DEBE tener las 5 opciones (A, B, C, D, E) rellenadas.");
+                    }
+                }
+
                 $dificultad = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
                 
                 // PR y EM no llevan dificultad por regla de negocio
