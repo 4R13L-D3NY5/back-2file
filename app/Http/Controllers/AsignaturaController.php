@@ -206,12 +206,12 @@ class AsignaturaController extends Controller
                     // Estadísticas de preguntas 1P por docente
                     $preguntasDocente1P = $a->bancoPreguntas
                         ->where('docente_id', $d->id)
-                        ->where('parcial', 1);
+                        ->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1);
                     
                     $stats1P = [
-                        'faciles' => $preguntasDocente1P->where('dificultad', 1)->count(),
-                        'medias' => $preguntasDocente1P->where('dificultad', 2)->count(),
-                        'dificiles' => $preguntasDocente1P->where('dificultad', 3)->count(),
+                        'faciles' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'FACIL' || $p->dificultad == 1)->count(),
+                        'medias' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == 2)->count(),
+                        'dificiles' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'DIFICIL' || $p->dificultad == 3)->count(),
                         'total' => $preguntasDocente1P->count()
                     ];
 
@@ -229,10 +229,10 @@ class AsignaturaController extends Controller
                 })->values(),
                 // Estadísticas consolidadas de la asignatura (Parcial 1)
                 'preguntas_1p_stats' => [
-                    'faciles' => $a->bancoPreguntas->where('parcial', 1)->where('dificultad', 1)->count(),
-                    'medias' => $a->bancoPreguntas->where('parcial', 1)->where('dificultad', 2)->count(),
-                    'dificiles' => $a->bancoPreguntas->where('parcial', 1)->where('dificultad', 3)->count(),
-                    'total' => $a->bancoPreguntas->where('parcial', 1)->count()
+                    'faciles' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'FACIL' || $p->dificultad == 1))->count(),
+                    'medias' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == 2))->count(),
+                    'dificiles' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'DIFICIL' || $p->dificultad == 3))->count(),
+                    'total' => $a->bancoPreguntas->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1)->count()
                 ]
             ];
         })); // END MAP

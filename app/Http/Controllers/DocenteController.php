@@ -69,6 +69,14 @@ class DocenteController extends Controller
             });
         }
 
+        // Filter: Asignatura
+        if ($request->has('asignatura_id') && $request->asignatura_id) {
+            $asignaturaId = $request->asignatura_id;
+            $query->whereHas('grupos.asignatura', function ($q) use ($asignaturaId) {
+                $q->where('asignaturas.id', $asignaturaId);
+            });
+        }
+
         // Filter: Estado
         if ($request->has('estado') && $request->estado !== null && $request->estado !== 'null') {
             $isActive = filter_var($request->estado, FILTER_VALIDATE_BOOLEAN);
