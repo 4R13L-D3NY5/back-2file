@@ -12,6 +12,7 @@ use App\Http\Controllers\GrupoController;
 use App\Http\Controllers\GruposExternoController;
 use App\Http\Controllers\PlanificacionController;
 use App\Http\Controllers\PlanificacionSemestralController;
+use App\Http\Controllers\GeneracionManualController;
 
 // Public Routes
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,1')->name('login');
@@ -207,6 +208,18 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/import', [BancoPreguntaController::class, 'import']);
         Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
+    });
+
+    // Generaciones Manuales (Registro de Auditoría)
+    Route::prefix('generaciones-manuales')->group(function () {
+        Route::get('/', [GeneracionManualController::class, 'index']);
+        Route::post('/', [GeneracionManualController::class, 'store']);
+        Route::put('/{id}/estado', [GeneracionManualController::class, 'updateEstado']);
+        Route::post('/{id}/upload-archivos', [GeneracionManualController::class, 'uploadArchivos']);
+        Route::get('/{id}/download-examen', [GeneracionManualController::class, 'downloadExamen']);
+        Route::get('/{id}/download-patron-pdf', [GeneracionManualController::class, 'downloadPatronPdf']);
+        Route::get('/{id}/download-patron-xlsx', [GeneracionManualController::class, 'downloadPatronXlsx']);
+        Route::delete('/{id}', [GeneracionManualController::class, 'destroy']);
     });
 
     // Planificación Semestral (Nuevo Módulo)

@@ -132,11 +132,10 @@ class RolExamenController extends Controller
         $gestion = $request->get('gestion', date('Y') . '-I');
 
         $user = auth()->user();
-        $query = RolExamen::where('materia_codigo', $materiaId)
-            ->orWhere(function ($q) use ($materiaId) {
-                $q->whereRaw('UPPER(materia_codigo) = ?', [strtoupper($materiaId)]);
-            })
-            ->where('gestion', $gestion);
+        $query = RolExamen::where(function($q) use ($materiaId) {
+            $q->where('materia_codigo', $materiaId)
+              ->orWhereRaw('UPPER(materia_codigo) = ?', [strtoupper($materiaId)]);
+        })->where('gestion', $gestion);
 
         // Restricción por Sede para Directores
         if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
@@ -146,6 +145,27 @@ class RolExamenController extends Controller
             }
         } elseif ($request->has('sede_id')) {
             $query->where('sede_id', $request->sede_id);
+        }
+
+        // Filtro por docente_id (mostrar solo los exámenes asignados a los grupos del docente)
+        if ($request->has('docente_id') && ($user && $user->rol && $user->rol->codigo === 'DOCENTE')) {
+            $docenteId = $request->docente_id;
+            
+            $gruposDocente = DB::table('grupos')
+                ->join('asignaturas', 'grupos.asignatura_id', '=', 'asignaturas.id')
+                ->where('grupos.docente_id', $docenteId)
+                ->where(function ($q) use ($materiaId) {
+                    $q->where('asignaturas.codigo', $materiaId)
+                      ->orWhereRaw('UPPER(asignaturas.codigo) = ?', [strtoupper($materiaId)]);
+                })
+                ->pluck('grupos.nombre')
+                ->toArray();
+
+            $query->where(function($q) use ($gruposDocente) {
+                $q->whereIn('grupo', $gruposDocente)
+                  ->orWhereNull('grupo')
+                  ->orWhere('grupo', '');
+            });
         }
 
         $examenes = $query->orderBy('semana')->get();
