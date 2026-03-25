@@ -294,6 +294,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Rol de Exámenes (Director de Carrera)
     Route::prefix('rol-examenes')->group(function () {
         Route::get('/', [\App\Http\Controllers\RolExamenController::class, 'index']);
+        Route::get('/por-carrera', [\App\Http\Controllers\RolExamenController::class, 'porCarrera']);
         Route::post('/', [\App\Http\Controllers\RolExamenController::class, 'store']);
         Route::post('/upload', [\App\Http\Controllers\RolExamenController::class, 'upload']);
         Route::post('/bulk-delete', [\App\Http\Controllers\RolExamenController::class, 'destroyAll']);

@@ -3,15 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
-use App\Models\Director;
-use App\Models\Carrera;
-use App\Observers\DirectorObserver;
-use App\Observers\CarreraObserver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\DB;
 
 class UserController extends Controller
 {
@@ -54,12 +48,12 @@ class UserController extends Controller
             // Resolver Carrera
             $carreraNombre = null;
 
-            // 1. Si es Director, ver perfil (Priorizar tabla pivot)
+            // 1. Si es Director, ver perfil
             if ($user->director) {
-                if ($user->director->carreras->isNotEmpty()) {
-                    $carreraNombre = $user->director->carreras->pluck('nombre')->implode(', ');
-                } elseif ($user->director->carrera) {
+                if ($user->director->carrera) {
                     $carreraNombre = $user->director->carrera->nombre;
+                } elseif ($user->director->carreras->isNotEmpty()) {
+                    $carreraNombre = $user->director->carreras->pluck('nombre')->implode(', ');
                 }
             }
 
@@ -88,110 +82,75 @@ class UserController extends Controller
 
     public function store(Request $request)
     {
-        Log::info("Store Request:", $request->all());
         // Validar campos extendidos
         $validated = $request->validate([
             'nombre' => 'required|string|max:255',
             'apellido' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
-            'ci' => 'required|string|max:20', // No unique global si hay duplicados
+            'ci' => 'required|string|max:20',
             'telefono' => 'nullable|string|max:20',
             'rol_id' => 'required|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
             'sede_id' => 'nullable|exists:sedes,id',
-            'estado' => 'sometimes'
+            'estado' => 'nullable' // flexibilizado para manejar booleans y strings
         ]);
         
-        // Convertir estado a booleano
-        if (isset($validated['estado'])) {
-            $estado = $validated['estado'];
-            if (in_array($estado, ['activo', 'true', '1'], true)) {
+        // Convertir estado a booleano de forma robusta
+        if ($request->has('estado')) {
+            $estado = $request->input('estado');
+            if (in_array($estado, ['activo', 'true', '1', 1, true], true)) {
                 $validated['estado'] = true;
-            } elseif (in_array($estado, ['inactivo', 'false', '0'], true)) {
+            } elseif (in_array($estado, ['inactivo', 'false', '0', 0, false], true)) {
                 $validated['estado'] = false;
             } else {
-                $validated['estado'] = true; // default
+                $validated['estado'] = true;
             }
         } else {
-            $validated['estado'] = true; // default si no se envía
+            $validated['estado'] = true;
         }
 
-        DB::beginTransaction();
-        try {
-            // Password default es el CI
-            $validated['password'] = Hash::make($validated['ci']);
-            $validated['password_change_required'] = false;
-
-            // Generar username automaticamente
+        // Generar username automaticamente si no viene, e.g. nombre.apellido
+        if (!$request->has('username')) {
             $baseUsername = Str::slug($validated['nombre'] . '.' . $validated['apellido']);
             $validated['username'] = $this->generateUniqueUsername($baseUsername);
+        } else {
+            $request->validate(['username' => 'required|string|unique:users,username']);
+            $validated['username'] = $request->username;
+        }
 
-            $user = User::create($validated);
-            $user->load('rol');
+        // Password default 'password' if not set, else hash it
+        // Password default es el CI
+        $validated['password'] = Hash::make($validated['ci']);
+        $validated['password_change_required'] = false;
 
-            // Lógica para Director de Carrera
-            if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-                $director = \App\Models\Director::create([
-                    'user_id' => $user->id,
-                    'nombres' => $user->nombre,
-                    'apellidos' => $user->apellido,
-                    'sede_id' => $validated['sede_id'] ?? null,
-                ]);
+        $user = User::create($validated);
+        $user->load('rol');
 
-                // Asignar carreras
-                if (isset($validated['carrera'])) {
-                    $carreraString = trim($validated['carrera']);
-                    if ($carreraString !== '') {
-                        $carreraIds = array_map('trim', explode(',', $carreraString));
-                        $carreraIds = array_filter($carreraIds, function ($id) {
-                            return is_numeric($id) && $id > 0;
-                        });
+        // Lógica para Director de Carrera y Dirección Académica
+        if ($user->rol && in_array($user->rol->codigo, ['DIRECTOR_CARRERA', 'DIRECCION_ACADEMICA'])) {
+            // Crear perfil director
+            $director = \App\Models\Director::create([
+                'user_id' => $user->id,
+                'nombres' => $user->nombre,
+                'apellidos' => $user->apellido,
+                'sede_id' => $validated['sede_id'] ?? null,
+            ]);
 
-                        if (!empty($carreraIds)) {
-                            // Sincronizar tabla pivot
-                            $syncData = [];
-                            foreach ($carreraIds as $index => $id) {
-                                $syncData[$id] = ['es_principal' => ($index === 0)];
-                            }
-                            $director->carreras()->sync($syncData);
-                            
-                            // Campo legacy
-                            $director->carrera_id = $carreraIds[0];
-                            $director->save();
-                            
-                            // users.carrera
-                            $user->carrera = implode(', ', $carreraIds);
-                            $user->save();
-                        }
-                    }
+            // Asignar carreras si es necesario
+            $carreraString = trim($validated['carrera'] ?? '');
+            if ($carreraString !== '') {
+                $carreraIds = explode(',', $carreraString);
+                $carreraIds = array_map('trim', $carreraIds);
+                $carreraIds = array_filter($carreraIds, function ($id) {
+                    return is_numeric($id) && $id > 0;
+                });
+
+                if (!empty($carreraIds)) {
+                    \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
+                    $director->carrera_id = $carreraIds[0];
+                    $director->save();
                 }
             }
-
-            DB::commit();
-            
-            $user->load(['rol', 'director.carrera', 'director.carreras', 'sede']);
-            
-            // Formatear respuesta
-            if ($user->director && $user->director->carreras) {
-                $carreraNombre = $user->director->carreras->pluck('nombre')->implode(', ');
-                $user->setAttribute('carrera_nombre', $carreraNombre);
-            }
-            if ($user->sede) {
-                $user->setAttribute('sede_nombre', $user->sede->nombre);
-            }
-
-            return response()->json($user, 201);
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error("Error en UserController@store: " . $e->getMessage(), [
-                'trace' => $e->getTraceAsString(),
-                'request' => $request->all()
-            ]);
-            return response()->json([
-                'message' => 'Error al crear usuario',
-                'error' => $e->getMessage()
-            ], 500);
         }
 
         return response()->json($user, 201);
@@ -199,7 +158,6 @@ class UserController extends Controller
 
     public function update(Request $request, string $id)
     {
-        \Log::info("Update Request para usuario {$id}:", $request->all());
         $user = User::findOrFail($id);
 
         $validated = $request->validate([
@@ -211,19 +169,18 @@ class UserController extends Controller
             'rol_id' => 'sometimes|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
             'sede_id' => 'nullable|exists:sedes,id',
-            'estado' => 'sometimes',
+            'estado' => 'nullable',
             'password' => 'nullable|string|min:6'
         ]);
 
         // Convertir estado a booleano si está presente
-        if (isset($validated['estado'])) {
-            $estado = $validated['estado'];
-            if (in_array($estado, ['activo', 'true', '1'], true)) {
+        if ($request->has('estado')) {
+            $estado = $request->input('estado');
+            if (in_array($estado, ['activo', 'true', '1', 1, true], true)) {
                 $validated['estado'] = true;
-            } elseif (in_array($estado, ['inactivo', 'false', '0'], true)) {
+            } elseif (in_array($estado, ['inactivo', 'false', '0', 0, false], true)) {
                 $validated['estado'] = false;
             } else {
-                // Mantener el valor actual del usuario
                 unset($validated['estado']);
             }
         }
@@ -234,72 +191,52 @@ class UserController extends Controller
             unset($validated['password']);
         }
 
-        DB::transaction(function () use ($user, $validated) {
-            $user->update($validated);
-            $user->load('rol');
+        $user->update($validated);
+        $user->load('rol');
 
-            // Sync Director Data
-            if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-                $director = \App\Models\Director::firstOrCreate(['user_id' => $user->id]);
+        // Sync Director Data (Para Director y Dirección Académica)
+        if ($user->rol && in_array($user->rol->codigo, ['DIRECTOR_CARRERA', 'DIRECCION_ACADEMICA'])) {
+            // Update or Create Director profile
+            $director = \App\Models\Director::firstOrCreate(
+                ['user_id' => $user->id],
+                [
+                    'nombres' => $user->nombre,
+                    'apellidos' => $user->apellido,
+                    'sede_id' => $validated['sede_id'] ?? $user->sede_id
+                ]
+            );
 
-                // Update fields
-                $director->update([
-                    'nombres' => $validated['nombre'] ?? $director->nombres,
-                    'apellidos' => $validated['apellido'] ?? $director->apellidos,
-                    'sede_id' => $validated['sede_id'] ?? $director->sede_id
-                ]);
+            // Update fields
+            $director->update([
+                'nombres' => $validated['nombre'] ?? $director->nombres,
+                'apellidos' => $validated['apellido'] ?? $director->apellidos,
+                'sede_id' => $validated['sede_id'] ?? $director->sede_id
+            ]);
 
-                // Sync Carreras
-                if (isset($validated['carrera'])) {
-                    $carreraString = trim($validated['carrera']);
+            // Sync Carreras
+            if (isset($validated['carrera']) && $validated['carrera'] !== null) { 
+                // Desvincular anteriores
+                \App\Models\Carrera::where('director_id', $director->id)->update(['director_id' => null]);
 
-                    if ($carreraString !== '') {
-                        $carreraIds = array_map('trim', explode(',', $carreraString));
-                        $carreraIds = array_filter($carreraIds, function ($id) {
-                            return is_numeric($id) && $id > 0;
-                        });
+                $carreraString = trim($validated['carrera']);
+                if ($carreraString !== '') {
+                    $carreraIds = explode(',', $carreraString);
+                    $carreraIds = array_map('trim', $carreraIds);
+                    $carreraIds = array_filter($carreraIds, function ($id) {
+                        return is_numeric($id) && $id > 0;
+                    });
 
-                        if (!empty($carreraIds)) {
-                            $syncData = [];
-                            foreach ($carreraIds as $index => $id) {
-                                $syncData[$id] = ['es_principal' => ($index === 0)];
-                            }
-                            $director->carreras()->sync($syncData);
-                            
-                            $director->carrera_id = $carreraIds[0];
-                            $director->save();
-                            
-                            // Asegurar que users.carrera tenga la misma cadena
-                            $user->carrera = implode(', ', $carreraIds);
-                            $user->save();
-                        } else {
-                            $director->carreras()->sync([]);
-                            $director->carrera_id = null;
-                            $director->save();
-                            $user->carrera = null;
-                            $user->save();
-                        }
-                    } else {
-                        $director->carreras()->sync([]);
-                        $director->carrera_id = null;
+                    // Vincular nuevas
+                    if (!empty($carreraIds)) {
+                        \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
+                        // Update primary
+                        $director->carrera_id = $carreraIds[0];
                         $director->save();
-                        $user->carrera = null;
-                        $user->save();
                     }
                 }
             }
-        });
+        }
 
-        $user->load(['rol', 'director.carrera', 'director.carreras', 'sede']);
-        
-        // Formatear respuesta igual que en index para el Store de Quasar
-        if ($user->director && $user->director->carreras) {
-            $carreraNombre = $user->director->carreras->pluck('nombre')->implode(', ');
-            $user->setAttribute('carrera_nombre', $carreraNombre);
-        }
-        if ($user->sede) {
-            $user->setAttribute('sede_nombre', $user->sede->nombre);
-        }
         return response()->json($user);
     }
 
