@@ -91,6 +91,94 @@ class RolExamenController extends Controller
     }
 
     /**
+     * Vista panorámica: estado del rol de exámenes por sede y carrera
+     * Usado por: Vicerrector Nacional (todas las sedes) y Dirección Académica (solo su sede)
+     */
+    public function porCarrera(Request $request)
+    {
+        $user = auth()->user();
+
+        // Obtener todas las carreras con sus sedes
+        $carrerasQuery = DB::table('carreras')
+            ->join('sedes', 'carreras.sede_id', '=', 'sedes.id')
+            ->select(
+                'carreras.id as carrera_id',
+                'carreras.nombre as carrera_nombre',
+                'sedes.id as sede_id',
+                'sedes.nombre as sede_nombre'
+            );
+
+        // Dirección Académica: filtrar solo su sede
+        if ($user && isset($user->rol) && $user->rol->codigo === 'DIRECCION_ACADEMICA') {
+            $sedeId = $user->director?->sede_id ?? $request->input('sede_id');
+            if ($sedeId) {
+                $carrerasQuery->where('sedes.id', $sedeId);
+            }
+        } elseif ($request->has('sede_id')) {
+            $carrerasQuery->where('sedes.id', $request->input('sede_id'));
+        }
+
+        $carreras = $carrerasQuery->orderBy('sedes.nombre')->orderBy('carreras.nombre')->get();
+
+        // Para cada carrera, obtener sus exámenes del filtro de tipo_examen
+        $tipoExamen = $request->input('tipo_examen');
+
+        $resultado = $carreras->map(function ($carrera) use ($tipoExamen) {
+            $examenesQuery = RolExamen::query()
+                ->select(
+                    'rol_examenes.*',
+                    'asignaturas.nombre as materia_nombre',
+                    'asignaturas.codigo as materia_codigo'
+                )
+                ->leftJoin('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
+                ->where('rol_examenes.carrera_id', $carrera->carrera_id)
+                ->where('rol_examenes.sede_id', $carrera->sede_id);
+
+            if ($tipoExamen) {
+                $examenesQuery->where('rol_examenes.tipo_examen', $tipoExamen);
+            }
+
+            $examenes = $examenesQuery->orderBy('rol_examenes.fecha')->get();
+
+            // Calcular stats por estado
+            $estados = ['programados', 'generados', 'impresos', 'entregados', 'devueltos', 'revisados', 'subidos'];
+            $stats = [];
+            foreach ($estados as $estado) {
+                $stats[$estado] = $examenes->where('estado', $estado)->count();
+            }
+            // Simplificado: pendientes = programados, en proceso = generados+impresos, finalizados = subidos
+            $statsSimple = [
+                'pendientes'  => $stats['programados'] ?? 0,
+                'enProceso'   => ($stats['generados'] ?? 0) + ($stats['impresos'] ?? 0) + ($stats['entregados'] ?? 0) + ($stats['devueltos'] ?? 0) + ($stats['revisados'] ?? 0),
+                'finalizados' => $stats['subidos'] ?? 0,
+            ];
+
+            return [
+                'sede_id'       => $carrera->sede_id,
+                'sede_nombre'   => $carrera->sede_nombre,
+                'carrera_id'    => $carrera->carrera_id,
+                'carrera_nombre'=> $carrera->carrera_nombre,
+                'total_examenes'=> $examenes->count(),
+                'stats'         => $statsSimple,
+                'examenes'      => $examenes->map(fn($e) => [
+                    'id'      => $e->id,
+                    'materia' => $e->materia_nombre ?? $e->materia_codigo,
+                    'codigo'  => $e->materia_codigo,
+                    'parcial' => $e->tipo_examen,
+                    'fecha'   => $e->fecha,
+                    'hora'    => $e->hora_inicio ? substr($e->hora_inicio, 0, 5) : '-',
+                    'grupo'   => $e->grupo ?? '-',
+                    'estado'  => $e->estado ?? 'programados',
+                ])->values(),
+            ];
+        });
+
+        return response()->json([
+            'data' => $resultado,
+        ]);
+    }
+
+    /**
      * Obtener exámenes de una materia específica
      */
     public function getByMateria(Request $request, $materiaId)

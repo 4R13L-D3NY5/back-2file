@@ -87,26 +87,26 @@ class UserController extends Controller
             'nombre' => 'required|string|max:255',
             'apellido' => 'required|string|max:255',
             'email' => 'required|email|unique:users,email',
-            'ci' => 'required|string|max:20', // No unique global si hay duplicados
+            'ci' => 'required|string|max:20',
             'telefono' => 'nullable|string|max:20',
             'rol_id' => 'required|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
             'sede_id' => 'nullable|exists:sedes,id',
-            'estado' => 'sometimes|string|in:activo,inactivo,true,false,1,0'
+            'estado' => 'nullable' // flexibilizado para manejar booleans y strings
         ]);
         
-        // Convertir estado a booleano
-        if (isset($validated['estado'])) {
-            $estado = $validated['estado'];
-            if (in_array($estado, ['activo', 'true', '1'], true)) {
+        // Convertir estado a booleano de forma robusta
+        if ($request->has('estado')) {
+            $estado = $request->input('estado');
+            if (in_array($estado, ['activo', 'true', '1', 1, true], true)) {
                 $validated['estado'] = true;
-            } elseif (in_array($estado, ['inactivo', 'false', '0'], true)) {
+            } elseif (in_array($estado, ['inactivo', 'false', '0', 0, false], true)) {
                 $validated['estado'] = false;
             } else {
-                $validated['estado'] = true; // default
+                $validated['estado'] = true;
             }
         } else {
-            $validated['estado'] = true; // default si no se envía
+            $validated['estado'] = true;
         }
 
         // Generar username automaticamente si no viene, e.g. nombre.apellido
@@ -126,24 +126,17 @@ class UserController extends Controller
         $user = User::create($validated);
         $user->load('rol');
 
-        // Lógica para Director de Carrera
-        // Asumimos que el rol con ID 6 (o codigo DIRECTOR_CARRERA) es para directores.
-        // Lo ideal es buscar por código, pero aqui usaremos el nombre del rol o codigo si esta cargado
-        // O verificamos si el request trae 'rol_id' correspondiente.
-        // Mejor: Si el rol tiene codigo 'DIRECTOR_CARRERA'.
-
-        if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+        // Lógica para Director de Carrera y Dirección Académica
+        if ($user->rol && in_array($user->rol->codigo, ['DIRECTOR_CARRERA', 'DIRECCION_ACADEMICA'])) {
             // Crear perfil director
             $director = \App\Models\Director::create([
                 'user_id' => $user->id,
                 'nombres' => $user->nombre,
                 'apellidos' => $user->apellido,
-                'sede_id' => $validated['sede_id'] ?? null, // Asignar sede desde datos validados
-                // 'carrera_id' => ... asignamos la primera como principal?
+                'sede_id' => $validated['sede_id'] ?? null,
             ]);
 
-            // Asignar carreras (ids vienen en $validated['carrera'] como string "1, 2" o array si el validador lo permitiera)
-            // En el store frontend hicimos .join(', '). Recibimos "1, 2".
+            // Asignar carreras si es necesario
             $carreraString = trim($validated['carrera'] ?? '');
             if ($carreraString !== '') {
                 $carreraIds = explode(',', $carreraString);
@@ -152,10 +145,8 @@ class UserController extends Controller
                     return is_numeric($id) && $id > 0;
                 });
 
-                // Actualizar carreras para que apunten a este director
                 if (!empty($carreraIds)) {
                     \App\Models\Carrera::whereIn('id', $carreraIds)->update(['director_id' => $director->id]);
-                    // Set primary career to director profile
                     $director->carrera_id = $carreraIds[0];
                     $director->save();
                 }
@@ -178,19 +169,18 @@ class UserController extends Controller
             'rol_id' => 'sometimes|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
             'sede_id' => 'nullable|exists:sedes,id',
-            'estado' => 'sometimes|string|in:activo,inactivo,true,false,1,0',
+            'estado' => 'nullable',
             'password' => 'nullable|string|min:6'
         ]);
 
         // Convertir estado a booleano si está presente
-        if (isset($validated['estado'])) {
-            $estado = $validated['estado'];
-            if (in_array($estado, ['activo', 'true', '1'], true)) {
+        if ($request->has('estado')) {
+            $estado = $request->input('estado');
+            if (in_array($estado, ['activo', 'true', '1', 1, true], true)) {
                 $validated['estado'] = true;
-            } elseif (in_array($estado, ['inactivo', 'false', '0'], true)) {
+            } elseif (in_array($estado, ['inactivo', 'false', '0', 0, false], true)) {
                 $validated['estado'] = false;
             } else {
-                // Mantener el valor actual del usuario
                 unset($validated['estado']);
             }
         }
@@ -204,8 +194,8 @@ class UserController extends Controller
         $user->update($validated);
         $user->load('rol');
 
-        // Sync Director Data
-        if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+        // Sync Director Data (Para Director y Dirección Académica)
+        if ($user->rol && in_array($user->rol->codigo, ['DIRECTOR_CARRERA', 'DIRECCION_ACADEMICA'])) {
             // Update or Create Director profile
             $director = \App\Models\Director::firstOrCreate(
                 ['user_id' => $user->id],
@@ -224,7 +214,7 @@ class UserController extends Controller
             ]);
 
             // Sync Carreras
-            if (isset($validated['carrera'])) { // Si se envió el campo carrera
+            if (isset($validated['carrera']) && $validated['carrera'] !== null) { 
                 // Desvincular anteriores
                 \App\Models\Carrera::where('director_id', $director->id)->update(['director_id' => null]);
 
