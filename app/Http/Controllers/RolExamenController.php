@@ -38,7 +38,9 @@ class RolExamenController extends Controller
                 $join->on('rol_examenes.sede_id', '=', 'grupos.sede_id')
                     ->on('rol_examenes.carrera_id', '=', 'grupos.carrera_id')
                     ->on('rol_examenes.grupo', '=', 'grupos.nombre')
-                    ->on('asignaturas.id', '=', 'grupos.asignatura_id');
+                    ->on('asignaturas.id', '=', 'grupos.asignatura_id')
+                    ->where('grupos.estado', 'ACTIVO')
+                    ->whereNull('grupos.deleted_at');
             })
             ->leftJoin('docentes', 'grupos.docente_id', '=', 'docentes.id');
 
@@ -154,6 +156,8 @@ class RolExamenController extends Controller
             $gruposDocente = DB::table('grupos')
                 ->join('asignaturas', 'grupos.asignatura_id', '=', 'asignaturas.id')
                 ->where('grupos.docente_id', $docenteId)
+                ->where('grupos.estado', 'ACTIVO')
+                ->whereNull('grupos.deleted_at')
                 ->where(function ($q) use ($materiaId) {
                     $q->where('asignaturas.codigo', $materiaId)
                       ->orWhereRaw('UPPER(asignaturas.codigo) = ?', [strtoupper($materiaId)]);

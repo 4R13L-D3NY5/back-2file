@@ -15,14 +15,31 @@ class GrupoController extends Controller
      */
     public function flatIndex(Request $request)
     {
-        $query = Grupo::with(['asignatura', 'carrera', 'docente', 'sede'])
+        // Si el admin quiere ver todos los estados (para gestionar inactivos),
+        // usar withoutGlobalScope. Por defecto solo muestra ACTIVOS.
+        $baseQuery = $request->boolean('mostrar_inactivos')
+            ? Grupo::withoutGlobalScope('activo')
+            : Grupo::query();
+
+        $query = $baseQuery->with(['asignatura', 'carrera', 'docente', 'sede'])
+            ->whereHas('asignatura') // Excluir grupos huérfanos cuya asignatura fue eliminada
             ->orderBy('id', 'desc');
 
         if ($request->filled('sede_id')) {
             $query->where('sede_id', $request->sede_id);
         }
         if ($request->filled('carrera_id')) {
-            $query->where('carrera_id', $request->carrera_id);
+            $carreraId = $request->carrera_id;
+            $sedeId    = $request->sede_id;
+            $query->where('carrera_id', $carreraId);
+            // Además, asegurar que la asignatura pertenezca a esta carrera (via pivot asignatura_carrera)
+            // Esto evita que aparezcan asignaturas de otras carreras (ej. MED en BYF)
+            $query->whereHas('asignatura.carreras', function ($q) use ($carreraId, $sedeId) {
+                $q->where('carreras.id', $carreraId);
+                if ($sedeId) {
+                    $q->where('asignatura_carrera.sede_id', $sedeId);
+                }
+            });
         }
         if ($request->filled('asignatura_id')) {
             $query->where('asignatura_id', $request->asignatura_id);
