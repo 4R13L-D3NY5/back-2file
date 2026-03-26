@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Grupo;
 use App\Models\Sede;
 use App\Models\SyncLog;
 use App\Services\PlanningSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -347,8 +349,38 @@ class SyncController extends Controller
         // ── Snapshot DESPUÉS ─────────────────────────────────────────────────
         $snapshotDespues = $this->capturarSnapshot($sede->id, $carrera);
 
-        // ── Generar Diff ─────────────────────────────────────────────────────
+        // ── Generar Diff base ────────────────────────────────────────────────
         $diff = $this->generarDiff($snapshotAntes, $snapshotDespues);
+
+        // ── Fase de Reconciliación (solo en sync manual del admin) ───────────
+        $carreraModel = \App\Models\Carrera::where('sigla', $carrera)->first();
+        if ($carreraModel) {
+            try {
+                $reconcile = $service->reconcile(
+                    $carreraModel->id,
+                    $sede->id,
+                    $gestion,
+                    $items
+                );
+
+                // Extender el diff con los resultados de la reconciliación
+                $diff['grupos_inactivados']        = $reconcile['grupos_inactivados']        ?? [];
+                $diff['asignaturas_desvinculadas']  = $reconcile['asignaturas_desvinculadas'] ?? [];
+                $diff['duplicados_fusionados']      = $reconcile['duplicados_fusionados']     ?? [];
+                $diff['conflictos_locales']         = $reconcile['conflictos_locales']        ?? [];
+
+                // Actualizar el resumen
+                $diff['resumen']['grupos_inactivados']       = count($diff['grupos_inactivados']);
+                $diff['resumen']['asignaturas_desvinculadas']= count($diff['asignaturas_desvinculadas']);
+                $diff['resumen']['duplicados_fusionados']    = count($diff['duplicados_fusionados']);
+                $diff['resumen']['conflictos_locales']       = count($diff['conflictos_locales']);
+                $diff['resumen']['total_cambios']           += count($diff['grupos_inactivados'])
+                                                             + count($diff['duplicados_fusionados']);
+            } catch (\Throwable $e) {
+                Log::error("SyncController::reconcile error: {$e->getMessage()}");
+                $diff['reconcile_error'] = $e->getMessage();
+            }
+        }
 
         return [
             'total'    => count($items),
@@ -359,6 +391,49 @@ class SyncController extends Controller
             'errores'  => $stats['errors']        ?? 0,
             'diff'     => $diff,
         ];
+    }
+
+    /**
+     * Resolver un conflicto local vs API.
+     * POST /api/sync/resolver-conflictos
+     * Body: { grupo_id, accion: 'aceptar_api'|'mantener_local', docente_id_api? }
+     */
+    public function resolverConflicto(Request $request)
+    {
+        $request->validate([
+            'grupo_id' => 'required|integer|exists:grupos,id',
+            'accion'   => 'required|in:aceptar_api,mantener_local',
+            'docente_ci_api' => 'nullable|string',
+        ]);
+
+        $grupo = Grupo::withoutGlobalScope('activo')->findOrFail($request->grupo_id);
+
+        if ($request->accion === 'aceptar_api') {
+            // Si se acepta la API, actualizar el docente con el de la API
+            if ($request->filled('docente_ci_api')) {
+                $docente = \App\Models\Docente::where('ci', $request->docente_ci_api)->first();
+                if ($docente) {
+                    $grupo->docente_id            = $docente->id;
+                    $grupo->modificado_localmente = false;
+                    $grupo->save();
+                }
+            } else {
+                $grupo->modificado_localmente = false;
+                $grupo->save();
+            }
+
+            return response()->json([
+                'ok'      => true,
+                'mensaje' => 'Conflicto resuelto: se aceptaron los datos de la API.',
+            ]);
+        }
+
+        // mantener_local: solo marcar como resuelto (no cambiar datos)
+        // El campo modificado_localmente permanece true para futuros syncs
+        return response()->json([
+            'ok'      => true,
+            'mensaje' => 'Conflicto resuelto: se mantienen los datos locales.',
+        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -372,7 +447,8 @@ class SyncController extends Controller
         $carreraId    = $carreraModel?->id;
 
         // Grupos: snapshot de docente asignado y estado
-        $grupos = \App\Models\Grupo::with('docente', 'horarios')
+        // withoutGlobalScope: el snapshot necesita ver TODOS los grupos para el diff
+        $grupos = \App\Models\Grupo::withoutGlobalScope('activo')->with('docente', 'horarios')
             ->where('sede_id', $sedeId)
             ->when($carreraId, fn($q) => $q->where('carrera_id', $carreraId))
             ->get()

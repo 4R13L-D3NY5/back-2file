@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -12,6 +13,18 @@ class Grupo extends Model
     use SoftDeletes;
 
     protected $table = 'grupos';
+
+    /**
+     * Global scope: por defecto solo muestra grupos ACTIVOS.
+     * Para ver grupos INACTIVOS usar: Grupo::withoutGlobalScope('activo')->...
+     * Para sync/import usar: Grupo::withoutGlobalScopes()->...
+     */
+    protected static function booted(): void
+    {
+        static::addGlobalScope('activo', function (Builder $builder) {
+            $builder->where('grupos.estado', 'ACTIVO');
+        });
+    }
 
     protected $fillable = [
         'id_horario_api',

@@ -680,8 +680,20 @@ class AsignaturaController extends Controller
     public function destroy($id)
     {
         $asignatura = Asignatura::findOrFail($id);
+
+        // Soft-delete en cascada: horarios de los grupos de esta asignatura
+        $grupoIds = $asignatura->grupos()->pluck('grupos.id');
+        if ($grupoIds->isNotEmpty()) {
+            \App\Models\Horario::whereIn('grupo_id', $grupoIds)->delete();
+        }
+
+        // Soft-delete en cascada: grupos de esta asignatura
+        $asignatura->grupos()->delete();
+
+        // Soft-delete la asignatura
         $asignatura->delete();
-        return response()->json(['message' => 'Asignatura eliminada correctamente']);
+
+        return response()->json(['message' => 'Asignatura y sus grupos/horarios eliminados correctamente']);
     }
 
     public function assignDocentes(Request $request, $id)

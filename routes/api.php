@@ -382,11 +382,12 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Módulo de Sincronización Académica (Solo SUPER_ADMIN)
     Route::prefix('sync')->group(function () {
-        Route::post('/carrera',       [\App\Http\Controllers\SyncController::class, 'syncCarrera']);
-        Route::post('/sede',          [\App\Http\Controllers\SyncController::class, 'syncSede']);
-        Route::post('/materia',       [\App\Http\Controllers\SyncController::class, 'syncMateria']);
-        Route::get('/logs',           [\App\Http\Controllers\SyncController::class, 'getLogs']);
-        Route::get('/logs/{id}/diff', [\App\Http\Controllers\SyncController::class, 'getDiff']);
+        Route::post('/carrera',              [\App\Http\Controllers\SyncController::class, 'syncCarrera']);
+        Route::post('/sede',                 [\App\Http\Controllers\SyncController::class, 'syncSede']);
+        Route::post('/materia',              [\App\Http\Controllers\SyncController::class, 'syncMateria']);
+        Route::get('/logs',                  [\App\Http\Controllers\SyncController::class, 'getLogs']);
+        Route::get('/logs/{id}/diff',        [\App\Http\Controllers\SyncController::class, 'getDiff']);
+        Route::post('/resolver-conflictos',  [\App\Http\Controllers\SyncController::class, 'resolverConflicto']);
     });
 
 });

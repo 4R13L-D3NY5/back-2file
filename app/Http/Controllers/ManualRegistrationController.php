@@ -88,7 +88,8 @@ class ManualRegistrationController extends Controller
                 $docenteActual = null;
 
                 if ($asignatura && $carreraModel) {
-                    $sidopaGrupo = Grupo::where([
+                    // withoutGlobalScope: necesitamos ver también grupos INACTIVOS para mostrar su estado
+                    $sidopaGrupo = Grupo::withoutGlobalScope('activo')->where([
                         'gestion'        => $gestion,
                         'asignatura_id'  => $asignatura->id,
                         'carrera_id'     => $carreraModel->id,
