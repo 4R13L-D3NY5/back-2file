@@ -25,7 +25,13 @@ class RolExamenController extends Controller
                 \DB::raw('COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id)) as asignatura_id'),
                 \DB::raw('MAX(docentes.id) as docente_id'),
                 \DB::raw('MAX(docentes.nombre_completo) as docente'),
-                \DB::raw('MAX(asignatura_carrera.semestre) as semestre')
+                \DB::raw('MAX(asignatura_carrera.semestre) as semestre'),
+                \DB::raw("(SELECT COUNT(*) FROM banco_preguntas 
+                           WHERE banco_preguntas.asignatura_id = asignaturas.id 
+                           AND banco_preguntas.docente_id = docentes.id
+                           AND banco_preguntas.parcial = rol_examenes.tipo_examen 
+                           AND (banco_preguntas.grupoTeorico = rol_examenes.grupo OR banco_preguntas.grupoTeorico LIKE CONCAT('%', rol_examenes.grupo, '%'))
+                          ) as total_banco")
             )
             ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
             ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
