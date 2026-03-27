@@ -21,6 +21,7 @@ return [
 
     'allowed_origins' => [
         'https://documentacion.xpertiaplus.com',
+        'https://www.documentacion.xpertiaplus.com',
         'https://planificacion.unitepc.edu.bo',
         'http://localhost:9000',
         'http://127.0.0.1:9000',
