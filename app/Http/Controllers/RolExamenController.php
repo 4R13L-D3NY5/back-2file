@@ -81,11 +81,11 @@ class RolExamenController extends Controller
             if ($request->has('sede_id')) {
                 $query->where('rol_examenes.sede_id', $request->sede_id);
             }
-        } elseif ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+        } elseif ($user && $user->rol && in_array($user->rol->codigo, ['DIRECTOR_CARRERA', 'VICERRECTORADO', 'VICERRECTOR_SEDE', 'DIRECCION_ACADEMICA', 'DIRECCIÓN ACADÉMICA'])) {
+            $sedeId = $user->director?->sede_id ?? $user->docente?->sede_id ?? $user->sede_id;
             if ($sedeId) {
                 $query->where('rol_examenes.sede_id', $sedeId);
-                Log::info("Filtrando RolExamen por sede del Director: {$sedeId}");
+                Log::info("Filtrando RolExamen por sede de Autoridad ({$user->rol->codigo}): {$sedeId}");
             }
         } elseif ($user && $user->load('rol') && $user->rol->codigo === 'EVALUACIONES' && $user->campus_id) {
             // Filtrar por las carreras del campus asignado
@@ -152,9 +152,9 @@ class RolExamenController extends Controller
               ->orWhereRaw('UPPER(materia_codigo) = ?', [strtoupper($materiaId)]);
         })->where('gestion', $gestion);
 
-        // Restricción por Sede para Directores
-        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+        // Restricción por Sede para Directores y Autoridades
+        if ($user && $user->rol && in_array($user->rol->codigo, ['DIRECTOR_CARRERA', 'VICERRECTORADO', 'VICERRECTOR_SEDE', 'DIRECCION_ACADEMICA', 'DIRECCIÓN ACADÉMICA'])) {
+            $sedeId = $user->director?->sede_id ?? $user->docente?->sede_id ?? $user->sede_id;
             if ($sedeId) {
                 $query->where('sede_id', $sedeId);
             }
