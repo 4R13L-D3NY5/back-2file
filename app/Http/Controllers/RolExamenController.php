@@ -28,9 +28,12 @@ class RolExamenController extends Controller
                 \DB::raw('MAX(asignatura_carrera.semestre) as semestre'),
                 \DB::raw("(SELECT COUNT(*) FROM banco_preguntas 
                            WHERE banco_preguntas.asignatura_id = MAX(asignaturas.id) 
-                           AND banco_preguntas.docente_id = MAX(docentes.id)
                            AND banco_preguntas.parcial = rol_examenes.tipo_examen 
-                           AND (banco_preguntas.grupoTeorico = rol_examenes.grupo OR banco_preguntas.grupoTeorico LIKE CONCAT('%', rol_examenes.grupo, '%'))
+                           AND (
+                               banco_preguntas.grupoTeorico = rol_examenes.grupo
+                               OR banco_preguntas.grupoTeorico = REGEXP_REPLACE(rol_examenes.grupo, '^[A-Za-z]+', '')
+                               OR REGEXP_REPLACE(banco_preguntas.grupoTeorico, '^[A-Za-z]+', '') = REGEXP_REPLACE(rol_examenes.grupo, '^[A-Za-z]+', '')
+                           )
                           ) as total_banco")
             )
             ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
@@ -43,10 +46,13 @@ class RolExamenController extends Controller
             ->leftJoin('grupos', function ($join) {
                 $join->on('rol_examenes.sede_id', '=', 'grupos.sede_id')
                     ->on('rol_examenes.carrera_id', '=', 'grupos.carrera_id')
-                    ->on('rol_examenes.grupo', '=', 'grupos.nombre')
                     ->on('asignaturas.id', '=', 'grupos.asignatura_id')
                     ->where('grupos.estado', 'ACTIVO')
-                    ->whereNull('grupos.deleted_at');
+                    ->whereNull('grupos.deleted_at')
+                    ->whereRaw(
+                        "grupos.nombre = REGEXP_REPLACE(rol_examenes.grupo, '^[A-Za-z]+', '')"
+                        . " OR grupos.nombre = rol_examenes.grupo"
+                    );
             })
             ->leftJoin('docentes', 'grupos.docente_id', '=', 'docentes.id');
 

@@ -101,9 +101,11 @@ class BancoPreguntaController extends Controller
 
         if ($request->has('grupo')) {
             $grupo = $request->grupo;
-            $query->where(function($q) use ($grupo) {
+            $grupoNormalizado = preg_replace('/^[A-Za-z]+/', '', $grupo); // "G1" → "1"
+            $query->where(function($q) use ($grupo, $grupoNormalizado) {
                 $q->where('grupoTeorico', $grupo)
-                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%');
+                  ->orWhere('grupoTeorico', $grupoNormalizado)
+                  ->orWhereRaw("REGEXP_REPLACE(grupoTeorico, '^[A-Za-z]+', '') = ?", [$grupoNormalizado]);
             });
         }
 
