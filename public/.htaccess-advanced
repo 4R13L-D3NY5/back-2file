@@ -1,0 +1,71 @@
+# ADVANCED CORS .htaccess for cPanel
+# Uses multiple techniques to ensure CORS works
+
+# Enable rewrite engine
+RewriteEngine On
+
+# ========== CORS HEADERS (Apache level) ==========
+<IfModule mod_headers.c>
+    # Remove any existing CORS headers first
+    Header unset Access-Control-Allow-Origin
+    Header unset Access-Control-Allow-Methods
+    Header unset Access-Control-Allow-Headers
+    Header unset Access-Control-Allow-Credentials
+    
+    # Set CORS headers for ALL responses (including errors)
+    Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-XSRF-Token, X-CSRF-Token, Accept, Origin"
+    Header always set Access-Control-Allow-Credentials "true"
+    Header always set Access-Control-Max-Age "86400"
+    
+    # Special handling for OPTIONS preflight
+    <IfModule mod_rewrite.c>
+        RewriteCond %{REQUEST_METHOD} OPTIONS
+        RewriteRule ^(.*)$ $1 [R=200,E=IS_OPTIONS:1,L]
+        
+        # Force headers for OPTIONS response
+        Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com" env=IS_OPTIONS
+    </IfModule>
+</IfModule>
+
+# ========== LARAVEL REWRITES ==========
+<IfModule mod_rewrite.c>
+    # Handle Authorization Header
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+    
+    # Handle X-XSRF-Token Header
+    RewriteCond %{HTTP:x-xsrf-token} .
+    RewriteRule ^ - [E=HTTP_X_XSRF_TOKEN:%{HTTP:x-xsrf-token}]
+    
+    # Redirect Trailing Slashes If Not A Folder...
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_URI} (.+)/$
+    RewriteRule ^ %1 [L,R=301]
+    
+    # Send Requests To Front Controller...
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [L]
+</IfModule>
+
+# ========== SECURITY HEADERS ==========
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-XSS-Protection "1; mode=block"
+</IfModule>
+
+# ========== CGI/FPM FIX ==========
+# If using CGI or FPM, these directives help
+<IfModule mod_env.c>
+    SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
+    SetEnvIf X-XSRF-Token "(.*)" HTTP_X_XSRF_TOKEN=$1
+</IfModule>
+
+# Prevent directory listing
+Options -Indexes
+
+# Ensure .htaccess is processed
+AllowOverride All

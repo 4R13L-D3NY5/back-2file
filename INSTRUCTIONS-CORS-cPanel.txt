@@ -1,0 +1,158 @@
+===========================================
+SOLUCIÓN CORS PARA cPanel/Laravel
+===========================================
+
+PROBLEMA: Error CORS al hacer login desde 
+https://documentacion.xpertiaplus.com a 
+https://api.documentacion.xpertiaplus.com/api/login
+
+ERROR: curl -I -X OPTIONS devuelve HTTP/1.1 404 Not Found
+
+ARCHIVOS MODIFICADOS/CREADOS:
+-----------------------------
+
+1. routes/api.php                - Agrega manejo OPTIONS en Laravel
+2. config/cors.php               - Agrega dominio www
+3. public/.htaccess              - Configuración Apache para cPanel
+4. public/test-cors.php          - Herramienta de prueba
+5. public/server-info.php        - Diagnóstico del servidor
+6. fix-cors-cpanel.sh           - Script de instalación automática
+7. .htaccess-simple              - Versión simple de respaldo
+8. .htaccess-advanced            - Versión avanzada de respaldo
+
+PASOS PARA IMPLEMENTAR:
+----------------------
+
+PASO 1: Conectarse al servidor via SSH o usar File Manager de cPanel
+
+PASO 2: Navegar al directorio correcto:
+   cd /home/usuario/public_html/api.documentacion.xpertiaplus.com
+
+PASO 3: Ejecutar el script de instalación (si tienes SSH):
+   bash fix-cors-cpanel.sh
+
+   O hacer manualmente:
+
+PASO 4 (MANUAL): Subir archivos:
+   
+   A) Laravel root (donde está artisan):
+      - routes/api.php (sobrescribir)
+      - config/cors.php (sobrescribir)
+   
+   B) Public directory (public/ o document root):
+      - public/.htaccess (sobrescribir)
+      - public/test-cors.php (nuevo)
+      - public/server-info.php (nuevo)
+
+PASO 5: Verificar que el .htaccess está en el DOCUMENT ROOT correcto.
+   En cPanel, el Document Root suele ser public_html/api.documentacion.xpertiaplus.com/
+   Si Laravel está en un subdirectorio, ajustar rutas.
+
+PASO 6: Habilitar módulos Apache en cPanel:
+   1. Login a cPanel
+   2. Buscar "Apache Modules"
+   3. Habilitar: rewrite_module y headers_module
+   4. Si no aparecen, contactar al hosting
+
+PASO 7: Limpiar caché Laravel:
+   cd /home/usuario/public_html/api.documentacion.xpertiaplus.com
+   php artisan config:clear
+   php artisan cache:clear
+   php artisan route:clear
+
+PASO 8: Probar configuración:
+
+   A) Test básico:
+      curl -I -X OPTIONS https://api.documentacion.xpertiaplus.com/api/login
+      
+      Debe devolver:
+      HTTP/1.1 200 OK
+      Access-Control-Allow-Origin: https://documentacion.xpertiaplus.com
+      ...otros headers CORS...
+
+   B) Diagnóstico:
+      https://api.documentacion.xpertiaplus.com/server-info.php
+      
+   C) Test CORS:
+      https://api.documentacion.xpertiaplus.com/test-cors.php
+
+PASO 9: Si OPTIONS sigue dando 404:
+
+   A) Probar versiones alternativas de .htaccess:
+      - Renombrar .htaccess a .htaccess-old
+      - Copiar .htaccess-simple a .htaccess
+      - Probar de nuevo
+      
+   B) Verificar si PHP corre como CGI/FPM:
+      - Crear .user.ini en public/ con:
+          cgi.fix_pathinfo = 1
+      
+   C) Revisar logs de error:
+      - cPanel → Metrics → Errors
+      - O: /home/usuario/logs/error_log
+
+PASO 10: Probar login desde el frontend:
+   https://documentacion.xpertiaplus.com
+
+SOLUCIÓN ALTERNATIVA SI NADA FUNCIONA:
+-------------------------------------
+
+1. Contactar al hosting para:
+   - Habilitar mod_rewrite y mod_headers
+   - Habilitar AllowOverride All para el directorio
+   - Verificar si usan CGI/FPM y configurar correctamente
+
+2. Usar Cloudflare (si aplica):
+   - Agregar Page Rule para api.documentacion.xpertiaplus.com
+   - Configurar headers CORS en Rules
+
+3. Configurar en nivel de aplicación (PHP):
+   En bootstrap/app.php, agregar middleware:
+   
+   $middleware->append(function ($request, $next) {
+       $response = $next($request);
+       return $response
+           ->header('Access-Control-Allow-Origin', 'https://documentacion.xpertiaplus.com')
+           ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+           ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN, Accept, Origin')
+           ->header('Access-Control-Allow-Credentials', 'true');
+   });
+
+ARCHIVOS DE RESPALDO:
+--------------------
+
+- .htaccess-simple: Versión mínima para probar
+- .htaccess-advanced: Versión con técnicas avanzadas
+- CORS-FIX-cPanel.md: Documentación completa
+- apache-check.sh: Verificador de configuración
+- clear-cache.sh: Limpiador de caché Laravel
+
+ELIMINAR ARCHIVOS TEMPORALES:
+----------------------------
+Una vez que funcione, eliminar:
+   public/test-cors.php
+   public/server-info.php
+   .htaccess-*
+   fix-cors-cpanel.sh
+
+CONTACTO SOPORTE:
+----------------
+Si persiste el error, proporcionar al hosting:
+1. Resultado de: curl -I -X OPTIONS https://api.documentacion.xpertiaplus.com/api/login
+2. Salida de: https://api.documentacion.xpertiaplus.com/server-info.php
+3. Logs de error de Apache
+
+===========================================
+ESTADO ACTUAL: OPTIONS devuelve 404 Not Found
+===========================================
+
+CAUSA PROBABLE:
+- mod_rewrite no habilitado
+- .htaccess no se procesa
+- Document Root incorrecto
+- PHP running as CGI/FPM sin configuración
+
+SOLUCIÓN PRIORITARIA:
+1. Habilitar módulos Apache en cPanel
+2. Verificar .htaccess en Document Root
+3. Probar con .htaccess-simple primero

@@ -1,0 +1,24 @@
+# SIMPLE CORS .htaccess for cPanel
+# Test this first - most basic version
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    
+    # Handle OPTIONS preflight directly in Apache
+    RewriteCond %{REQUEST_METHOD} OPTIONS
+    RewriteRule ^(.*)$ $1 [R=200,L]
+    
+    # Standard Laravel rewrites
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+    # CORS headers
+    Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN, Accept, Origin"
+    Header always set Access-Control-Allow-Credentials "true"
+    Header always set Access-Control-Max-Age "86400"
+</IfModule>
