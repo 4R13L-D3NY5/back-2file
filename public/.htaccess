@@ -13,9 +13,9 @@
     RewriteCond %{HTTP:x-xsrf-token} .
     RewriteRule .* - [E=HTTP_X_XSRF_TOKEN:%{HTTP:X-XSRF-Token}]
 
-    # Pass OPTIONS (CORS Preflight) directly to Laravel so HandleCors middleware handles it
+    # Return 200 for OPTIONS preflight directly from Apache (no PHP needed)
     RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule .* index.php [L]
+    RewriteRule .* - [R=200,L]
 
     # Redirect Trailing Slashes If Not A Folder...
     RewriteCond %{REQUEST_FILENAME} !-d
@@ -27,3 +27,19 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
+# CORS Headers - Apache sets these on ALL responses including OPTIONS 200
+# Using 'always unset' first prevents duplicate headers from PHP
+<IfModule mod_headers.c>
+    Header always unset Access-Control-Allow-Origin
+    Header always unset Access-Control-Allow-Methods
+    Header always unset Access-Control-Allow-Headers
+    Header always unset Access-Control-Allow-Credentials
+
+    Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com"
+    Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+    Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN, Accept, Origin"
+    Header always set Access-Control-Allow-Credentials "true"
+    Header always set Access-Control-Max-Age "86400"
+</IfModule>
+
