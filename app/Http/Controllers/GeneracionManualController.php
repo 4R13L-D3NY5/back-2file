@@ -21,6 +21,14 @@ class GeneracionManualController extends Controller
             $query->where('carrera_id', $request->carrera_id);
         }
 
+        if ($request->has('asignatura_id')) {
+            $query->where('asignatura_id', $request->asignatura_id);
+        }
+
+        if ($request->has('docente_id')) {
+            $query->where('docente_id', $request->docente_id);
+        }
+
         if ($request->has('fecha')) {
             $query->whereDate('fecha_examen', $request->fecha);
         }
