@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\BancoPregunta;
 use App\Models\LogroEsperado;
+use App\Models\BancoPreguntaConfiguracion;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -103,7 +104,9 @@ class BancoPreguntaController extends Controller
             $grupo = $request->grupo;
             $query->where(function($q) use ($grupo) {
                 $q->where('grupoTeorico', $grupo)
-                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%');
+                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%')
+                  ->orWhere('grupo', $grupo)
+                  ->orWhere('grupo', 'LIKE', '%' . $grupo . '%');
             });
         }
 
@@ -219,6 +222,7 @@ class BancoPreguntaController extends Controller
         $logroId = $request->input('logro_esperado_id');
         $sedeId = $request->input('sede_id');
         $grupoTeorico = $request->input('grupoTeorico');
+        $conCartilla = $request->boolean('con_cartilla', true);
 
         try {
             $modo = $request->input('modo', 'agregar');
@@ -237,7 +241,7 @@ class BancoPreguntaController extends Controller
                     $queryDelete->where('parcial', $this->normalizarTipoExamen($request->parcial));
                 }
 
-                \Log::info("Vaciando banco de preguntas filtrado", [
+                Log::info("Vaciando banco de preguntas filtrado", [
                     'asignatura' => $asignaturaId,
                     'docente' => $docenteId,
                     'grupo' => $grupoTeorico,
@@ -388,10 +392,13 @@ class BancoPreguntaController extends Controller
                     'dificultad' => mb_strtoupper($dificultad),
                     'parcial' => $parcial,
                     'peso' => 1,
+                    'con_cartilla' => $conCartilla,
                     'created_by' => auth()->id()
                 ]);
                 $count++;
             }
+
+            $this->updateOrCreateConfig($asignaturaId, $grupoTeorico, $request->parcial, $conCartilla);
 
             return response()->json([
                 'success' => true,
@@ -405,6 +412,77 @@ class BancoPreguntaController extends Controller
                 'error' => 'Error al procesar el archivo Excel: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Guardar configuración de cartilla (independiente de la importación)
+     */
+    public function saveConfig(Request $request)
+    {
+        $request->validate([
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'grupo_teorico' => 'required|string',
+            'parcial' => 'required|string',
+            'con_cartilla' => 'required|boolean'
+        ]);
+
+        $asignaturaId = $request->asignatura_id;
+        $grupoTeorico = $request->grupo_teorico;
+        $parcial = $request->parcial;
+        $conCartilla = $request->con_cartilla;
+
+        // Si es Sin Cartilla (false), procedemos a limpiar el banco de preguntas para este grupo/parcial
+        if (!$conCartilla) {
+            $docenteId = \App\Models\Docente::where('user_id', auth()->id())->first()?->id;
+            
+            $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
+                ->where('grupoTeorico', $grupoTeorico)
+                ->where('parcial', $this->normalizarTipoExamen($parcial));
+            
+            if ($docenteId) {
+                $queryDelete->where('docente_id', $docenteId);
+            }
+
+            $deletedCount = $queryDelete->delete();
+            
+            Log::info("Preferencia Sin Cartilla: Se eliminaron {$deletedCount} preguntas", [
+                'asignatura' => $asignaturaId,
+                'grupo' => $grupoTeorico,
+                'parcial' => $parcial
+            ]);
+        }
+
+        $config = $this->updateOrCreateConfig(
+            $asignaturaId,
+            $grupoTeorico,
+            $parcial,
+            $conCartilla
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Configuración guardada correctamente',
+            'configuracion' => $config
+        ]);
+    }
+
+    private function updateOrCreateConfig($asignaturaId, $grupoTeorico, $parcial, $conCartilla)
+    {
+        if (!$parcial) return null;
+        
+        $parcialNormalizado = $this->normalizarTipoExamen($parcial);
+
+        return BancoPreguntaConfiguracion::updateOrCreate(
+            [
+                'asignatura_id' => $asignaturaId,
+                'grupo_teorico' => $grupoTeorico,
+                'parcial' => $parcialNormalizado,
+            ],
+            [
+                'con_cartilla' => $conCartilla,
+                'updated_by' => auth()->id()
+            ]
+        );
     }
 
     private function normalizarTipoExamen($tipo)

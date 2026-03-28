@@ -206,6 +206,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/logo-unitepc', [BancoPreguntaController::class, 'getLogo']);
         Route::post('/', [BancoPreguntaController::class, 'store']);
         Route::post('/import', [BancoPreguntaController::class, 'import']);
+        Route::post('/save-config', [BancoPreguntaController::class, 'saveConfig']);
         Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
     });
