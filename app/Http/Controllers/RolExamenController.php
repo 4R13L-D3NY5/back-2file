@@ -19,14 +19,14 @@ class RolExamenController extends Controller
         $query = RolExamen::query()
             ->select(
                 'rol_examenes.*',
-                \DB::raw('MAX(asignaturas.nombre) as materia'),
-                \DB::raw('MAX(carreras.nombre) as carrera'),
-                \DB::raw('MAX(sedes.nombre) as sede'),
-                \DB::raw('COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id)) as asignatura_id'),
-                \DB::raw('MAX(docentes.id) as docente_id'),
-                \DB::raw('MAX(docentes.nombre_completo) as docente'),
-                \DB::raw('MAX(asignatura_carrera.semestre) as semestre'),
-                \DB::raw("(SELECT COUNT(*) FROM banco_preguntas 
+                DB::raw('MAX(asignaturas.nombre) as materia'),
+                DB::raw('MAX(carreras.nombre) as carrera'),
+                DB::raw('MAX(sedes.nombre) as sede'),
+                DB::raw('COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id)) as asignatura_id'),
+                DB::raw('MAX(docentes.id) as docente_id'),
+                DB::raw('MAX(docentes.nombre_completo) as docente'),
+                DB::raw('MAX(asignatura_carrera.semestre) as semestre'),
+                DB::raw("(SELECT COUNT(*) FROM banco_preguntas 
                            WHERE banco_preguntas.asignatura_id = COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id))
                            AND (banco_preguntas.docente_id = MAX(docentes.id) OR MAX(docentes.id) IS NULL)
                            AND banco_preguntas.parcial = rol_examenes.tipo_examen 
@@ -38,7 +38,16 @@ class RolExamenController extends Controller
                                OR REPLACE(REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
                                   REPLACE(REPLACE(REPLACE(REPLACE(UPPER(banco_preguntas.grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '')
                            )
-                          ) as total_banco")
+                          ) as total_banco"),
+                DB::raw("(SELECT con_cartilla FROM banco_preguntas_configuraciones 
+                           WHERE banco_preguntas_configuraciones.asignatura_id = COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id))
+                           AND banco_preguntas_configuraciones.parcial = rol_examenes.tipo_examen 
+                           AND (
+                               REPLACE(REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
+                               REPLACE(REPLACE(REPLACE(REPLACE(UPPER(banco_preguntas_configuraciones.grupo_teorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '')
+                           )
+                           LIMIT 1
+                          ) as con_cartilla")
             )
             ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
             ->join('sedes', 'rol_examenes.sede_id', '=', 'sedes.id')
