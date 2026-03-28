@@ -452,7 +452,16 @@ class AsignaturaController extends Controller
                 $mySpecifiedGroup = $local->grupos->where('docente_id', $requestedDocenteId)->first();
             } elseif ($currentUser && $currentUser->docente) {
                 // Fallback: Use authenticated teacher context
-                $mySpecifiedGroup = $local->grupos->where('docente_id', $currentUser->docente->id)->first();
+                // Si se solicitó una sede_id específica, priorizar el grupo de esa sede
+                $docenteId = $currentUser->docente->id;
+                $requestedSede = $request->input('sede_id');
+                $docenteGrupos = $local->grupos->where('docente_id', $docenteId);
+                if ($requestedSede) {
+                    $mySpecifiedGroup = $docenteGrupos->firstWhere('sede_id', $requestedSede)
+                        ?? $docenteGrupos->first();
+                } else {
+                    $mySpecifiedGroup = $docenteGrupos->first();
+                }
             }
 
             // Explicit sede_id injection. PRIORITY: User's Group > Pivot > Career > Fallback
