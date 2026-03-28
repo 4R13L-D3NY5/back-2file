@@ -19,7 +19,7 @@ class RolExamenController extends Controller
         $query = RolExamen::query()
             ->select(
                 'rol_examenes.*',
-                DB::raw('MAX(asignaturas.nombre) as materia'),
+                DB::raw('COALESCE(MAX(rol_examenes.materia_nombre), MAX(asignaturas.nombre)) as materia'),
                 DB::raw('MAX(carreras.nombre) as carrera'),
                 DB::raw('MAX(sedes.nombre) as sede'),
                 DB::raw('COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id)) as asignatura_id'),
@@ -51,10 +51,15 @@ class RolExamenController extends Controller
             )
             ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
             ->join('sedes', 'rol_examenes.sede_id', '=', 'sedes.id')
-            ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
+            ->join('asignaturas', function ($join) {
+                $join->on('rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
+                     ->where('asignaturas.estado', '!=', 'cancelado')
+                     ->whereRaw("(rol_examenes.sede_id != 1 OR (rol_examenes.sede_id = 1 AND asignaturas.plan_estudios = 'N'))");
+            })
             ->join('asignatura_carrera', function ($join) {
                 $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
-                    ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id');
+                    ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id')
+                    ->on('rol_examenes.sede_id', '=', 'asignatura_carrera.sede_id');
             })
             ->leftJoin('grupos', function ($join) {
                 $join->on('rol_examenes.sede_id', '=', 'grupos.sede_id')
@@ -310,14 +315,25 @@ class RolExamenController extends Controller
 
                 // 1. Validar Materia
                 // Buscar la materia asegurando que pertenezca a la carrera seleccionada para obtener su nombre correcto
-                $asignatura = \App\Models\Asignatura::where('codigo', $codigo)
-                    ->whereHas('carreras', function ($q) use ($carreraId) {
-                        $q->where('asignatura_carrera.carrera_id', $carreraId);
-                    })->first();
+                $asignaturaQuery = \App\Models\Asignatura::where('codigo', $codigo)
+                    ->whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
+                        $q->where('asignatura_carrera.carrera_id', $carreraId)
+                          ->where('asignatura_carrera.sede_id', $sedeId);
+                    });
+                
+                if ((int)$sedeId === 1) {
+                    $asignaturaQuery->where('plan_estudios', 'N');
+                }
+                
+                $asignatura = $asignaturaQuery->first();
                 
                 // Fallback por si no está vinculada pero existe
                 if (!$asignatura) {
-                    $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+                    $fallbackQuery = \App\Models\Asignatura::where('codigo', $codigo);
+                    if ((int)$sedeId === 1) {
+                        $fallbackQuery->where('plan_estudios', 'N');
+                    }
+                    $asignatura = $fallbackQuery->first();
                 }
 
                 if (!$asignatura) {
