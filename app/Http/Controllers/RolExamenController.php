@@ -27,26 +27,37 @@ class RolExamenController extends Controller
                 \DB::raw('MAX(docentes.nombre_completo) as docente'),
                 \DB::raw('MAX(asignatura_carrera.semestre) as semestre'),
                 \DB::raw("(SELECT COUNT(*) FROM banco_preguntas 
-                           WHERE banco_preguntas.asignatura_id = MAX(asignaturas.id) 
-                           AND banco_preguntas.docente_id = MAX(docentes.id)
+                           WHERE banco_preguntas.asignatura_id = COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id))
+                           AND (banco_preguntas.docente_id = MAX(docentes.id) OR MAX(docentes.id) IS NULL)
                            AND banco_preguntas.parcial = rol_examenes.tipo_examen 
-                           AND (banco_preguntas.grupoTeorico = rol_examenes.grupo OR banco_preguntas.grupoTeorico LIKE CONCAT('%', rol_examenes.grupo, '%'))
+                           AND (
+                               banco_preguntas.grupoTeorico = rol_examenes.grupo 
+                               OR banco_preguntas.grupoTeorico LIKE CONCAT('%', rol_examenes.grupo, '%')
+                               OR rol_examenes.grupo LIKE CONCAT('%', banco_preguntas.grupoTeorico, '%')
+                               OR banco_preguntas.grupo = rol_examenes.grupo
+                               OR REPLACE(REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
+                                  REPLACE(REPLACE(REPLACE(REPLACE(UPPER(banco_preguntas.grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '')
+                           )
                           ) as total_banco")
             )
-            ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
             ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
             ->join('sedes', 'rol_examenes.sede_id', '=', 'sedes.id')
-            ->leftJoin('asignatura_carrera', function ($join) {
+            ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
+            ->join('asignatura_carrera', function ($join) {
                 $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
                     ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id');
             })
             ->leftJoin('grupos', function ($join) {
                 $join->on('rol_examenes.sede_id', '=', 'grupos.sede_id')
                     ->on('rol_examenes.carrera_id', '=', 'grupos.carrera_id')
-                    ->on('rol_examenes.grupo', '=', 'grupos.nombre')
                     ->on('asignaturas.id', '=', 'grupos.asignatura_id')
                     ->where('grupos.estado', 'ACTIVO')
-                    ->whereNull('grupos.deleted_at');
+                    ->whereNull('grupos.deleted_at')
+                    ->where(function($q) {
+                        $q->whereColumn('rol_examenes.grupo', '=', 'grupos.nombre')
+                          ->orWhereRaw("REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
+                                        REPLACE(REPLACE(REPLACE(UPPER(grupos.nombre), 'GRUPO ', ''), 'G-', ''), 'G', '')");
+                    });
             })
             ->leftJoin('docentes', 'grupos.docente_id', '=', 'docentes.id');
 

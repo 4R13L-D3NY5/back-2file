@@ -103,7 +103,9 @@ class BancoPreguntaController extends Controller
             $grupo = $request->grupo;
             $query->where(function($q) use ($grupo) {
                 $q->where('grupoTeorico', $grupo)
-                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%');
+                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%')
+                  ->orWhere('grupo', $grupo)
+                  ->orWhere('grupo', 'LIKE', '%' . $grupo . '%');
             });
         }
 
