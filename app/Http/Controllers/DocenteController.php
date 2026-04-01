@@ -359,6 +359,31 @@ class DocenteController extends Controller
     }
 
     /**
+     * Endpoint ligero para selectores: solo id, nombre_completo, sede_id.
+     * Sin relaciones pesadas → nunca provoca errores de memoria.
+     * GET /api/docentes-simple
+     */
+    public function listSimple(Request $request)
+    {
+        $query = Docente::query()->select('id', 'nombre_completo', 'sede_id');
+
+        if ($request->filled('sede_id')) {
+            $query->where('sede_id', $request->sede_id);
+        }
+
+        if ($request->filled('q')) {
+            $query->where('nombre_completo', 'like', "%{$request->q}%");
+        }
+
+        // Excluir docentes sin nombre
+        $query->whereNotNull('nombre_completo')->where('nombre_completo', '!=', '');
+
+        return response()->json(
+            $query->orderBy('nombre_completo')->get()
+        );
+    }
+
+    /**
      * Store a newly created resource in storage.
      */
     public function store(Request $request)

@@ -106,6 +106,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Docentes
     Route::post('/docentes/sync', [App\Http\Controllers\DocenteController::class, 'sync']);
+    Route::get('/docentes-simple', [App\Http\Controllers\DocenteController::class, 'listSimple']); // Endpoint ligero para selectores
     Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
 
     // Grupos
