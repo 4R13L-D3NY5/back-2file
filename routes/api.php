@@ -387,6 +387,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/carrera',              [\App\Http\Controllers\SyncController::class, 'syncCarrera']);
         Route::post('/sede',                 [\App\Http\Controllers\SyncController::class, 'syncSede']);
         Route::post('/materia',              [\App\Http\Controllers\SyncController::class, 'syncMateria']);
+        Route::post('/asignatura',           [\App\Http\Controllers\SyncController::class, 'syncAsignatura']);
         Route::get('/logs',                  [\App\Http\Controllers\SyncController::class, 'getLogs']);
         Route::get('/logs/{id}/diff',        [\App\Http\Controllers\SyncController::class, 'getDiff']);
         Route::post('/resolver-conflictos',  [\App\Http\Controllers\SyncController::class, 'resolverConflicto']);

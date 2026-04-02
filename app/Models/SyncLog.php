@@ -10,6 +10,8 @@ class SyncLog extends Model
     protected $fillable = [
         'sede_id',
         'carrera',
+        'codigo_asignatura',
+        'plan_estudios',
         'gestion',
         'modo',
         'estado',
