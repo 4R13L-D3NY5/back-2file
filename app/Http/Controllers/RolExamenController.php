@@ -19,34 +19,59 @@ class RolExamenController extends Controller
         $query = RolExamen::query()
             ->select(
                 'rol_examenes.*',
-                \DB::raw('MAX(asignaturas.nombre) as materia'),
-                \DB::raw('MAX(carreras.nombre) as carrera'),
-                \DB::raw('MAX(sedes.nombre) as sede'),
-                \DB::raw('COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id)) as asignatura_id'),
-                \DB::raw('MAX(docentes.id) as docente_id'),
-                \DB::raw('MAX(docentes.nombre_completo) as docente'),
-                \DB::raw('MAX(asignatura_carrera.semestre) as semestre'),
-                \DB::raw("(SELECT COUNT(*) FROM banco_preguntas 
-                           WHERE banco_preguntas.asignatura_id = MAX(asignaturas.id) 
-                           AND banco_preguntas.docente_id = MAX(docentes.id)
+                DB::raw('COALESCE(MAX(rol_examenes.materia_nombre), MAX(asignaturas.nombre)) as materia'),
+                DB::raw('MAX(carreras.nombre) as carrera'),
+                DB::raw('MAX(sedes.nombre) as sede'),
+                DB::raw('COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id)) as asignatura_id'),
+                DB::raw('MAX(docentes.id) as docente_id'),
+                DB::raw('MAX(docentes.nombre_completo) as docente'),
+                DB::raw('MAX(asignatura_carrera.semestre) as semestre'),
+                DB::raw("(SELECT COUNT(*) FROM banco_preguntas 
+                           WHERE banco_preguntas.asignatura_id = COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id))
+                           AND (banco_preguntas.docente_id = MAX(docentes.id) OR MAX(docentes.id) IS NULL)
                            AND banco_preguntas.parcial = rol_examenes.tipo_examen 
-                           AND (banco_preguntas.grupoTeorico = rol_examenes.grupo OR banco_preguntas.grupoTeorico LIKE CONCAT('%', rol_examenes.grupo, '%'))
-                          ) as total_banco")
+                           AND (
+                               banco_preguntas.grupoTeorico = rol_examenes.grupo 
+                               OR banco_preguntas.grupoTeorico LIKE CONCAT('%', rol_examenes.grupo, '%')
+                               OR rol_examenes.grupo LIKE CONCAT('%', banco_preguntas.grupoTeorico, '%')
+                               OR banco_preguntas.grupo = rol_examenes.grupo
+                               OR REPLACE(REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
+                                  REPLACE(REPLACE(REPLACE(REPLACE(UPPER(banco_preguntas.grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '')
+                           )
+                          ) as total_banco"),
+                DB::raw("(SELECT con_cartilla FROM banco_preguntas_configuraciones 
+                           WHERE banco_preguntas_configuraciones.asignatura_id = COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id))
+                           AND banco_preguntas_configuraciones.parcial = rol_examenes.tipo_examen 
+                           AND (
+                               REPLACE(REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
+                               REPLACE(REPLACE(REPLACE(REPLACE(UPPER(banco_preguntas_configuraciones.grupo_teorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '')
+                           )
+                           LIMIT 1
+                          ) as con_cartilla")
             )
-            ->join('asignaturas', 'rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
             ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
             ->join('sedes', 'rol_examenes.sede_id', '=', 'sedes.id')
-            ->leftJoin('asignatura_carrera', function ($join) {
+            ->join('asignaturas', function ($join) {
+                $join->on('rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
+                     ->where('asignaturas.estado', '!=', 'cancelado')
+                     ->whereRaw("(rol_examenes.sede_id != 1 OR (rol_examenes.sede_id = 1 AND asignaturas.plan_estudios = 'N'))");
+            })
+            ->join('asignatura_carrera', function ($join) {
                 $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
-                    ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id');
+                    ->on('rol_examenes.carrera_id', '=', 'asignatura_carrera.carrera_id')
+                    ->on('rol_examenes.sede_id', '=', 'asignatura_carrera.sede_id');
             })
             ->leftJoin('grupos', function ($join) {
                 $join->on('rol_examenes.sede_id', '=', 'grupos.sede_id')
                     ->on('rol_examenes.carrera_id', '=', 'grupos.carrera_id')
-                    ->on('rol_examenes.grupo', '=', 'grupos.nombre')
                     ->on('asignaturas.id', '=', 'grupos.asignatura_id')
                     ->where('grupos.estado', 'ACTIVO')
-                    ->whereNull('grupos.deleted_at');
+                    ->whereNull('grupos.deleted_at')
+                    ->where(function($q) {
+                        $q->whereColumn('rol_examenes.grupo', '=', 'grupos.nombre')
+                          ->orWhereRaw("REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
+                                        REPLACE(REPLACE(REPLACE(UPPER(grupos.nombre), 'GRUPO ', ''), 'G-', ''), 'G', '')");
+                    });
             })
             ->leftJoin('docentes', 'grupos.docente_id', '=', 'docentes.id');
 
@@ -81,11 +106,11 @@ class RolExamenController extends Controller
             if ($request->has('sede_id')) {
                 $query->where('rol_examenes.sede_id', $request->sede_id);
             }
-        } elseif ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+        } elseif ($user && $user->rol && in_array($user->rol->codigo, ['DIRECTOR_CARRERA', 'VICERRECTORADO', 'VICERRECTOR_SEDE', 'DIRECCION_ACADEMICA', 'DIRECCIÓN ACADÉMICA'])) {
+            $sedeId = $user->director?->sede_id ?? $user->docente?->sede_id ?? $user->sede_id;
             if ($sedeId) {
                 $query->where('rol_examenes.sede_id', $sedeId);
-                Log::info("Filtrando RolExamen por sede del Director: {$sedeId}");
+                Log::info("Filtrando RolExamen por sede de Autoridad ({$user->rol->codigo}): {$sedeId}");
             }
         } elseif ($user && $user->load('rol') && $user->rol->codigo === 'EVALUACIONES' && $user->campus_id) {
             // Filtrar por las carreras del campus asignado
@@ -152,9 +177,9 @@ class RolExamenController extends Controller
               ->orWhereRaw('UPPER(materia_codigo) = ?', [strtoupper($materiaId)]);
         })->where('gestion', $gestion);
 
-        // Restricción por Sede para Directores
-        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+        // Restricción por Sede para Directores y Autoridades
+        if ($user && $user->rol && in_array($user->rol->codigo, ['DIRECTOR_CARRERA', 'VICERRECTORADO', 'VICERRECTOR_SEDE', 'DIRECCION_ACADEMICA', 'DIRECCIÓN ACADÉMICA'])) {
+            $sedeId = $user->director?->sede_id ?? $user->docente?->sede_id ?? $user->sede_id;
             if ($sedeId) {
                 $query->where('sede_id', $sedeId);
             }
@@ -290,14 +315,25 @@ class RolExamenController extends Controller
 
                 // 1. Validar Materia
                 // Buscar la materia asegurando que pertenezca a la carrera seleccionada para obtener su nombre correcto
-                $asignatura = \App\Models\Asignatura::where('codigo', $codigo)
-                    ->whereHas('carreras', function ($q) use ($carreraId) {
-                        $q->where('asignatura_carrera.carrera_id', $carreraId);
-                    })->first();
+                $asignaturaQuery = \App\Models\Asignatura::where('codigo', $codigo)
+                    ->whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
+                        $q->where('asignatura_carrera.carrera_id', $carreraId)
+                          ->where('asignatura_carrera.sede_id', $sedeId);
+                    });
+                
+                if ((int)$sedeId === 1) {
+                    $asignaturaQuery->where('plan_estudios', 'N');
+                }
+                
+                $asignatura = $asignaturaQuery->first();
                 
                 // Fallback por si no está vinculada pero existe
                 if (!$asignatura) {
-                    $asignatura = \App\Models\Asignatura::where('codigo', $codigo)->first();
+                    $fallbackQuery = \App\Models\Asignatura::where('codigo', $codigo);
+                    if ((int)$sedeId === 1) {
+                        $fallbackQuery->where('plan_estudios', 'N');
+                    }
+                    $asignatura = $fallbackQuery->first();
                 }
 
                 if (!$asignatura) {

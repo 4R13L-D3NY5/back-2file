@@ -251,6 +251,87 @@ class SyncController extends Controller
     }
 
     /**
+     * Sincronizar una asignatura específica en una sede y carrera.
+     * POST /api/sync/asignatura
+     * Body: { gestion, sede_id, carrera, codigo_asignatura, plan_estudios (opcional, default 'N') }
+     */
+    public function syncAsignatura(Request $request)
+    {
+        $request->validate([
+            'gestion'            => 'required|string',
+            'sede_id'            => 'required|integer|exists:sedes,id',
+            'carrera'            => 'required|string|in:' . implode(',', self::CARRERAS),
+            'codigo_asignatura'  => 'required|string',
+            'plan_estudios'      => 'nullable|string',
+        ]);
+
+        $sede    = Sede::findOrFail($request->sede_id);
+        $carrera = strtoupper($request->carrera);
+        $gestion = $request->gestion;
+        $codigoAsignatura = $request->codigo_asignatura;
+        $planEstudios = $request->plan_estudios ?? 'N';
+
+        $inicio = microtime(true);
+
+        try {
+            $stats = $this->callApiAndSync($gestion, $sede, $carrera, $codigoAsignatura, $planEstudios);
+
+            $duracion = round(microtime(true) - $inicio, 2);
+
+            $log = SyncLog::create([
+                'sede_id'               => $sede->id,
+                'carrera'               => $carrera,
+                'gestion'               => $gestion,
+                'modo'                  => 'asignatura',
+                'codigo_asignatura'     => $codigoAsignatura,
+                'plan_estudios'         => $planEstudios,
+                'estado'                => 'ok',
+                'total_registros'       => $stats['total'],
+                'docentes_creados'      => $stats['docentes'],
+                'grupos_creados'        => $stats['grupos'],
+                'horarios_actualizados' => $stats['horarios'],
+                'diff_data'             => $stats['diff'] ?? null,
+                'duracion_segundos'     => $duracion,
+                'user_id'               => Auth::id(),
+            ]);
+
+            return response()->json([
+                'ok'                 => true,
+                'sede'               => $sede->nombre,
+                'carrera'            => $carrera,
+                'gestion'            => $gestion,
+                'codigo_asignatura'  => $codigoAsignatura,
+                'plan_estudios'      => $planEstudios,
+                'stats'              => $stats,
+                'diff'               => $stats['diff'] ?? null,
+                'log_id'             => $log->id,
+                'duracion'           => $duracion,
+            ]);
+        } catch (\Throwable $e) {
+            $duracion = round(microtime(true) - $inicio, 2);
+            Log::error("SyncController::syncAsignatura error: {$e->getMessage()}");
+
+            SyncLog::create([
+                'sede_id'           => $sede->id,
+                'carrera'           => $carrera,
+                'gestion'           => $gestion,
+                'modo'              => 'asignatura',
+                'codigo_asignatura' => $codigoAsignatura,
+                'plan_estudios'     => $planEstudios,
+                'estado'            => 'error',
+                'error_mensaje'     => $e->getMessage(),
+                'duracion_segundos' => $duracion,
+                'user_id'           => Auth::id(),
+            ]);
+
+            return response()->json([
+                'ok'    => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Obtener historial de sincronizaciones.
      * GET /api/sync/logs
      */
@@ -274,6 +355,8 @@ class SyncController extends Controller
             'sede'                  => $l->sede?->nombre ?? '—',
             'sede_id'               => $l->sede_id,
             'carrera'               => $l->carrera ?? 'TODAS',
+            'codigo_asignatura'     => $l->codigo_asignatura,
+            'plan_estudios'         => $l->plan_estudios,
             'gestion'               => $l->gestion,
             'modo'                  => $l->modo,
             'estado'                => $l->estado,
@@ -302,13 +385,15 @@ class SyncController extends Controller
         $log = SyncLog::with('sede', 'user')->findOrFail($id);
 
         return response()->json([
-            'id'       => $log->id,
-            'sede'     => $log->sede?->nombre ?? '—',
-            'carrera'  => $log->carrera,
-            'gestion'  => $log->gestion,
-            'fecha'    => $log->created_at->format('d/m/Y H:i:s'),
-            'estado'   => $log->estado,
-            'diff'     => $log->diff_data,
+            'id'                => $log->id,
+            'sede'              => $log->sede?->nombre ?? '—',
+            'carrera'           => $log->carrera,
+            'codigo_asignatura' => $log->codigo_asignatura,
+            'plan_estudios'     => $log->plan_estudios,
+            'gestion'           => $log->gestion,
+            'fecha'             => $log->created_at->format('d/m/Y H:i:s'),
+            'estado'            => $log->estado,
+            'diff'              => $log->diff_data,
         ]);
     }
 
@@ -316,7 +401,7 @@ class SyncController extends Controller
     // PRIVADO: llama a la API externa y procesa con PlanningSyncService
     // ─────────────────────────────────────────────────────────────────────────
 
-    private function callApiAndSync(string $gestion, Sede $sede, string $carrera): array
+    private function callApiAndSync(string $gestion, Sede $sede, string $carrera, ?string $codigoAsignatura = null, ?string $planEstudios = null): array
     {
         $apiSedeId = $sede->id_api ?? $sede->id;
 
@@ -334,17 +419,30 @@ class SyncController extends Controller
             );
         }
 
-        $items = $response->json();
+        $allItems = $response->json();
 
-        if (!is_array($items) || empty($items)) {
+        if (!is_array($allItems) || empty($allItems)) {
             return ['total' => 0, 'docentes' => 0, 'grupos' => 0, 'horarios' => 0, 'diff' => null];
+        }
+
+        // Filtrar por asignatura si se especificó
+        $itemsToSync = $allItems;
+        if ($codigoAsignatura !== null) {
+            $plan = $planEstudios ?? 'N';
+            $itemsToSync = array_filter($allItems, function ($item) use ($codigoAsignatura, $plan) {
+                $sigla = trim($item['siglaP'] ?? '');
+                $itemPlan = isset($item['planEst']) ? trim((string)$item['planEst']) : 'N';
+                return $sigla === $codigoAsignatura && $itemPlan === $plan;
+            });
+            // Reindexar array
+            $itemsToSync = array_values($itemsToSync);
         }
 
         // ── Snapshot ANTES ──────────────────────────────────────────────────
         $snapshotAntes = $this->capturarSnapshot($sede->id, $carrera);
 
         $service = app(\App\Services\PlanningSyncService::class);
-        $stats   = $service->syncBatch($items);
+        $stats   = $service->syncBatch($itemsToSync);
 
         // ── Snapshot DESPUÉS ─────────────────────────────────────────────────
         $snapshotDespues = $this->capturarSnapshot($sede->id, $carrera);
@@ -360,7 +458,7 @@ class SyncController extends Controller
                     $carreraModel->id,
                     $sede->id,
                     $gestion,
-                    $items
+                    $allItems
                 );
 
                 // Extender el diff con los resultados de la reconciliación
@@ -383,7 +481,7 @@ class SyncController extends Controller
         }
 
         return [
-            'total'    => count($items),
+            'total'    => count($itemsToSync),
             'docentes' => $stats['docentes']      ?? 0,
             'grupos'   => $stats['grupos']        ?? 0,
             'horarios' => $stats['horarios']      ?? 0,

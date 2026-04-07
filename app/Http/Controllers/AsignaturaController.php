@@ -203,37 +203,126 @@ class AsignaturaController extends Controller
                     // Calcular progreso por docente utilizando la misma lógica del progreso general
                     $progresoDocente = $userId ? $a->getProgresoPorDocente($userId) : $progreso;
                     
-                    // Estadísticas de preguntas 1P por docente
-                    $preguntasDocente1P = $a->bancoPreguntas
-                        ->where('docente_id', $d->id)
-                        ->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1);
+                    // Solo los grupos TEORICO tienen preguntas ligadas
+                    $gruposTeoricoDocente = $gruposDocente->filter(
+                        fn($g) => in_array(strtoupper($g->tipo ?? ''), ['TEORICO', 'TEO'])
+                    );
                     
-                    $stats1P = [
-                        'faciles' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'FACIL' || $p->dificultad == 1)->count(),
-                        'medias' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == 2)->count(),
-                        'dificiles' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'DIFICIL' || $p->dificultad == 3)->count(),
-                        'total' => $preguntasDocente1P->count()
-                    ];
+                    // Obtener el primer grupo teórico del docente (para mostrar en la UI)
+                    $grupoTeorico = $gruposTeoricoDocente->first();
+                    
+                    // Estadísticas de preguntas 1P por docente: SOLO si tiene grupo teórico
+                    $stats1P = null;
+                    if ($grupoTeorico !== null) {
+                        // Nombres de todos los grupos TEORICO de este docente
+                        $nombresGruposTeorico = $gruposTeoricoDocente->pluck('nombre')->filter()->values()->toArray();
+
+                        // Estrategia 1: docente_id + asignatura_id + sede_id (más preciso)
+                        $q1P = \App\Models\BancoPregunta::where('asignatura_id', $a->id)
+                            ->where('docente_id', $d->id)
+                            ->where(function ($q) {
+                                $q->where('parcial', '1er Parcial')
+                                  ->orWhere('parcial', '1')
+                                  ->orWhere('parcial', 1);
+                            });
+                        if ($sedeId) $q1P->where('sede_id', $sedeId);
+                        $preguntasDocente1P = $q1P->get();
+
+                        // Estrategia 2: created_by (user_id del docente) + asignatura_id + sede_id
+                        if ($preguntasDocente1P->isEmpty() && $userId) {
+                            $q2 = \App\Models\BancoPregunta::where('asignatura_id', $a->id)
+                                ->where('created_by', $userId)
+                                ->where(function ($q) {
+                                    $q->where('parcial', '1er Parcial')
+                                      ->orWhere('parcial', '1')
+                                      ->orWhere('parcial', 1);
+                                });
+                            if ($sedeId) $q2->where('sede_id', $sedeId);
+                            $preguntasDocente1P = $q2->get();
+                        }
+
+                        // Estrategia 3: grupoTeorico SOLO si hay sede_id (sin sede es muy ambiguo)
+                        if ($preguntasDocente1P->isEmpty() && !empty($nombresGruposTeorico) && $sedeId) {
+                            $preguntasDocente1P = \App\Models\BancoPregunta::where('asignatura_id', $a->id)
+                                ->whereIn('grupoTeorico', $nombresGruposTeorico)
+                                ->where('sede_id', $sedeId)
+                                ->where(function ($q) {
+                                    $q->where('parcial', '1er Parcial')
+                                      ->orWhere('parcial', '1')
+                                      ->orWhere('parcial', 1);
+                                })
+                                ->get();
+                        }
+                        
+                        $stats1P = [
+                            'faciles'      => $preguntasDocente1P->filter(fn($p) => in_array($p->dificultad, ['FACIL', '1', 1]))->count(),
+                            'medias'       => $preguntasDocente1P->filter(fn($p) => in_array($p->dificultad, ['MEDIA', 'MEDIO', '2', 2]))->count(),
+                            'dificiles'    => $preguntasDocente1P->filter(fn($p) => in_array($p->dificultad, ['DIFICIL', '3', 3]))->count(),
+                            'total'        => $preguntasDocente1P->count(),
+                            'grupo_teorico'=> $grupoTeorico->nombre ?? null,
+                        ];
+                    }
 
                     return [
-                        'id' => $d->id,
-                        'user_id' => $userId,
-                        'nombre' => $d->nombre_completo,
-                        'descripcion_grupos' => $desc,
-                        'carrera_id' => $carreraId,
-                        'sede_id' => $sedeId,
-                        'progreso_documentacion' => $progresoDocente,
+                        'id'                      => $d->id,
+                        'user_id'                 => $userId,
+                        'nombre'                  => $d->nombre_completo,
+                        'descripcion_grupos'      => $desc,
+                        'carrera_id'              => $carreraId,
+                        'sede_id'                 => $sedeId,
+                        'tiene_grupo_teorico'     => $grupoTeorico !== null,
+                        'grupo_teorico_nombre'    => $grupoTeorico->nombre ?? null,
+                        'progreso_documentacion'  => $progresoDocente,
                         'indicadores_documentacion' => $indicadoresDocente,
-                        'preguntas_1p_stats' => $stats1P
+                        'preguntas_1p_stats'      => $stats1P
                     ];
                 })->values(),
-                // Estadísticas consolidadas de la asignatura (Parcial 1)
-                'preguntas_1p_stats' => [
-                    'faciles' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'FACIL' || $p->dificultad == 1))->count(),
-                    'medias' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == 2))->count(),
-                    'dificiles' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'DIFICIL' || $p->dificultad == 3))->count(),
-                    'total' => $a->bancoPreguntas->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1)->count()
-                ]
+                // Estadísticas consolidadas: suma de todos los grupos TEORICO, filtrada por sede
+                'preguntas_1p_stats' => (function () use ($a, $docentes) {
+                    // Para cada docente TEORICO, recolectar grupoTeorico+sede_id combinados
+                    // y hacer una consulta que respete ambos
+                    $gruposSedeCombos = $docentes->flatMap(function ($d) use ($a) {
+                        $gruposTeorico = $a->grupos->where('docente_id', $d->id)->filter(
+                            fn($g) => in_array(strtoupper($g->tipo ?? ''), ['TEORICO', 'TEO'])
+                        );
+                        return $gruposTeorico->map(fn($g) => [
+                            'nombre'  => $g->nombre,
+                            'sede_id' => $g->sede_id,
+                        ]);
+                    })->filter(fn($c) => $c['nombre'] !== null);
+
+                    if ($gruposSedeCombos->isEmpty()) {
+                        // Sin grupos TEORICO: mostrar global de la asignatura
+                        $preguntasTeorico1P = $a->bancoPreguntas
+                            ->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1);
+                    } else {
+                        // Construir query con OR por cada (grupoTeorico, sede_id) combinación
+                        $preguntasTeorico1P = \App\Models\BancoPregunta::where('asignatura_id', $a->id)
+                            ->where(function ($q) use ($gruposSedeCombos) {
+                                foreach ($gruposSedeCombos as $combo) {
+                                    $q->orWhere(function ($sub) use ($combo) {
+                                        $sub->where('grupoTeorico', $combo['nombre']);
+                                        if ($combo['sede_id']) {
+                                            $sub->where('sede_id', $combo['sede_id']);
+                                        }
+                                    });
+                                }
+                            })
+                            ->where(function ($q) {
+                                $q->where('parcial', '1er Parcial')
+                                  ->orWhere('parcial', '1')
+                                  ->orWhere('parcial', 1);
+                            })
+                            ->get();
+                    }
+
+                    return [
+                        'faciles'   => $preguntasTeorico1P->filter(fn($p) => in_array($p->dificultad, ['FACIL',   '1', 1]))->count(),
+                        'medias'    => $preguntasTeorico1P->filter(fn($p) => in_array($p->dificultad, ['MEDIA', 'MEDIO', '2', 2]))->count(),
+                        'dificiles' => $preguntasTeorico1P->filter(fn($p) => in_array($p->dificultad, ['DIFICIL', '3', 3]))->count(),
+                        'total'     => $preguntasTeorico1P->count(),
+                    ];
+                })()
             ];
         })); // END MAP
     }
@@ -363,7 +452,16 @@ class AsignaturaController extends Controller
                 $mySpecifiedGroup = $local->grupos->where('docente_id', $requestedDocenteId)->first();
             } elseif ($currentUser && $currentUser->docente) {
                 // Fallback: Use authenticated teacher context
-                $mySpecifiedGroup = $local->grupos->where('docente_id', $currentUser->docente->id)->first();
+                // Si se solicitó una sede_id específica, priorizar el grupo de esa sede
+                $docenteId = $currentUser->docente->id;
+                $requestedSede = $request->input('sede_id');
+                $docenteGrupos = $local->grupos->where('docente_id', $docenteId);
+                if ($requestedSede) {
+                    $mySpecifiedGroup = $docenteGrupos->firstWhere('sede_id', $requestedSede)
+                        ?? $docenteGrupos->first();
+                } else {
+                    $mySpecifiedGroup = $docenteGrupos->first();
+                }
             }
 
             // Explicit sede_id injection. PRIORITY: User's Group > Pivot > Career > Fallback

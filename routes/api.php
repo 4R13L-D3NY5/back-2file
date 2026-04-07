@@ -116,6 +116,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Docentes
     Route::post('/docentes/sync', [App\Http\Controllers\DocenteController::class, 'sync']);
+    Route::get('/docentes-simple', [App\Http\Controllers\DocenteController::class, 'listSimple']); // Endpoint ligero para selectores
     Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
 
     // Grupos
@@ -216,6 +217,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/logo-unitepc', [BancoPreguntaController::class, 'getLogo']);
         Route::post('/', [BancoPreguntaController::class, 'store']);
         Route::post('/import', [BancoPreguntaController::class, 'import']);
+        Route::post('/save-config', [BancoPreguntaController::class, 'saveConfig']);
         Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
     });
@@ -395,6 +397,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/carrera',              [\App\Http\Controllers\SyncController::class, 'syncCarrera']);
         Route::post('/sede',                 [\App\Http\Controllers\SyncController::class, 'syncSede']);
         Route::post('/materia',              [\App\Http\Controllers\SyncController::class, 'syncMateria']);
+        Route::post('/asignatura',           [\App\Http\Controllers\SyncController::class, 'syncAsignatura']);
         Route::get('/logs',                  [\App\Http\Controllers\SyncController::class, 'getLogs']);
         Route::get('/logs/{id}/diff',        [\App\Http\Controllers\SyncController::class, 'getDiff']);
         Route::post('/resolver-conflictos',  [\App\Http\Controllers\SyncController::class, 'resolverConflicto']);
