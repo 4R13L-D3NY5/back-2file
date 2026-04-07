@@ -1,26 +1,10 @@
-# ===========================================
-# CORS FIX FOR cPanel/Laravel - ULTIMATE VERSION
-# ===========================================
-# If OPTIONS returns 404, mod_rewrite is likely disabled
-# Solution: Enable rewrite_module in cPanel → Apache Modules
-
-# Force processing of .htaccess
-AllowOverride All
-
-# Enable rewrite engine (critical for OPTIONS handling)
 <IfModule mod_rewrite.c>
     RewriteEngine On
     
-    # DEBUG: Uncomment to test if .htaccess is processed
-    # ErrorDocument 404 "HTACCESS IS WORKING - RewriteEngine On"
-    
-    # ========== OPTIONS PREFLIGHT HANDLING ==========
-    # Handle CORS preflight OPTIONS requests
-    # This MUST return 200 OK with CORS headers
+    # Manejar preflight OPTIONS para CORS - enviar a index.php
     RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule ^(.*)$ $1 [R=200,L]
+    RewriteRule ^(.*)$ index.php [L]
     
-    # ========== STANDARD LARAVEL REWRITES ==========
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
@@ -40,10 +24,8 @@ AllowOverride All
     RewriteRule ^ index.php [L]
 </IfModule>
 
-# ========== CORS HEADERS ==========
-# These headers are sent with EVERY response
+# CORS Headers - Apache debe enviar estos headers
 <IfModule mod_headers.c>
-    # CORS Configuration
     Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com"
     Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
     Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN, Accept, Origin"
@@ -51,56 +33,13 @@ AllowOverride All
     Header always set Access-Control-Max-Age "86400"
 </IfModule>
 
-# ========== FALLBACK IF mod_rewrite NOT AVAILABLE ==========
-# If mod_rewrite is disabled, we need alternative OPTIONS handling
-# This uses mod_headers with SetEnvIf
-<IfModule mod_setenvif.c>
-    # Mark OPTIONS requests
-    SetEnvIf Request_Method OPTIONS IS_OPTIONS=1
-</IfModule>
-
-<IfModule mod_headers.c>
-    # Force 200 OK for OPTIONS when mod_rewrite fails
-    Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com" env=IS_OPTIONS
-    
-    # If we detect OPTIONS without proper response, force 200
-    RewriteEngine On
-    RewriteCond %{REQUEST_METHOD} OPTIONS
-    RewriteRule .* - [E=FORCE_OPTIONS:1]
-    Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com" env=FORCE_OPTIONS
-</IfModule>
-
-# ========== SECURITY HEADERS ==========
+# Security Headers
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
     Header always set X-Frame-Options "SAMEORIGIN"
     Header always set X-XSS-Protection "1; mode=block"
 </IfModule>
 
-# ========== CGI/FPM COMPATIBILITY ==========
-# If PHP runs as CGI or FPM, these help
-<IfModule mod_env.c>
-    SetEnvIf Authorization "(.*)" HTTP_AUTHORIZATION=$1
-    SetEnvIf X-XSRF-Token "(.*)" HTTP_X_XSRF_TOKEN=$1
-</IfModule>
-
 # Prevent directory listing
 Options -Indexes
-
-# ========== TROUBLESHOOTING ==========
-# To test if .htaccess is working:
-# 1. Uncomment line below
-# 2. Access any non-existent URL
-# 3. Should see "HTACCESS TEST PASSED"
-# ErrorDocument 404 "HTACCESS TEST PASSED - .htaccess is being processed"
-
-# ===========================================
-# REQUIRED cPanel CONFIGURATION:
-# 1. cPanel → Apache Modules → Enable:
-#    - rewrite_module
-#    - headers_module
-#    - env_module (optional)
-#    - setenvif_module (optional)
-# 2. If modules can't be enabled, contact hosting support
-# ===========================================
 

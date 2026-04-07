@@ -14,15 +14,7 @@ use App\Http\Controllers\PlanificacionController;
 use App\Http\Controllers\PlanificacionSemestralController;
 use App\Http\Controllers\GeneracionManualController;
 
-// Manejar preflight OPTIONS para todas las rutas API
-Route::options('/{any}', function () {
-    return response()->make('', 204)
-        ->header('Access-Control-Allow-Origin', 'https://documentacion.xpertiaplus.com')
-        ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN, Accept, Origin')
-        ->header('Access-Control-Allow-Credentials', 'true')
-        ->header('Access-Control-Max-Age', '86400');
-})->where('any', '.*');
+
 
 // Public Routes
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle:6,1')->name('login');
