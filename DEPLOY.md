@@ -194,3 +194,62 @@ php artisan serve --port=8000
 ### Storage
 - Verificar que `storage/` tenga permisos de escritura
 - Ejecutar `php artisan storage:link` para enlace simbólico
+
+## Solución de Problemas CORS
+
+### Síntomas
+- Error en navegador: "No 'Access-Control-Allow-Origin' header is present"
+- Preflight OPTIONS falla con error de red
+
+### Verificación Rápida
+1. **Probar preflight OPTIONS:**
+   ```bash
+   curl -X OPTIONS -I https://api.documentacion.xpertiaplus.com/api/login
+   ```
+   Debe retornar:
+   - `HTTP/1.1 204 No Content`
+   - `Access-Control-Allow-Origin: https://documentacion.xpertiaplus.com`
+   - `Access-Control-Allow-Credentials: true`
+
+2. **Diagnóstico detallado:**
+   - Acceder a: `https://api.documentacion.xpertiaplus.com/cors-diagnose.php`
+   - Este archivo muestra información del servidor y verifica configuración CORS
+
+### Soluciones Comunes
+
+#### 1. Módulos Apache
+```bash
+# Habilitar módulos necesarios (cPanel)
+a2enmod rewrite headers
+systemctl restart apache2
+```
+
+#### 2. Permisos .htaccess
+- Verificar que el directorio tenga `AllowOverride All` en configuración Apache
+- Asegurar que `.htaccess` esté en `/public/`
+
+#### 3. Cache Laravel
+```bash
+php artisan config:clear
+php artisan cache:clear
+php artisan route:clear
+```
+
+#### 4. Configuración de Sesión
+- Verificar `.env.production` tiene:
+  ```
+  SESSION_DOMAIN=.xpertiaplus.com
+  SESSION_SAME_SITE=none
+  SANCTUM_STATEFUL_DOMAINS=documentacion.xpertiaplus.com
+  ```
+
+### Archivos de Configuración Clave
+1. `public/.htaccess` - Headers CORS de Apache
+2. `config/cors.php` - Configuración CORS de Laravel
+3. `public/index.php` - Manejo PHP de preflight OPTIONS
+4. `routes/api.php` - Ruta OPTIONS específica
+
+### Si persiste el error
+1. Revisar logs de error de Apache
+2. Verificar que el servidor no sea Nginx (usar `cors-diagnose.php`)
+3. Probar con el archivo `test-cors-simple.php`

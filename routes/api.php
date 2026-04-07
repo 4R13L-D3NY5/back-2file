@@ -14,6 +14,16 @@ use App\Http\Controllers\PlanificacionController;
 use App\Http\Controllers\PlanificacionSemestralController;
 use App\Http\Controllers\GeneracionManualController;
 
+// Handle OPTIONS preflight requests for all API routes
+Route::options('{any}', function () {
+    return response()->noContent()
+        ->header('Access-Control-Allow-Origin', 'https://documentacion.xpertiaplus.com')
+        ->header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
+        ->header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-XSRF-TOKEN, X-CSRF-TOKEN, Accept, Origin')
+        ->header('Access-Control-Allow-Credentials', 'true')
+        ->header('Access-Control-Max-Age', '86400');
+})->where('any', '.*')->middleware(\Illuminate\Http\Middleware\HandleCors::class);
+
 
 
 // Public Routes

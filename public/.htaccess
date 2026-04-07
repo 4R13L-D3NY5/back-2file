@@ -1,7 +1,7 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
     
-    # Manejar preflight OPTIONS para CORS - enviar a index.php
+    # Handle OPTIONS preflight requests - send to Laravel
     RewriteCond %{REQUEST_METHOD} OPTIONS
     RewriteRule ^(.*)$ index.php [L]
     
@@ -24,7 +24,7 @@
     RewriteRule ^ index.php [L]
 </IfModule>
 
-# CORS Headers - Apache debe enviar estos headers
+# CORS Headers - Apache must send these headers for ALL responses
 <IfModule mod_headers.c>
     Header always set Access-Control-Allow-Origin "https://documentacion.xpertiaplus.com"
     Header always set Access-Control-Allow-Methods "GET, POST, PUT, PATCH, DELETE, OPTIONS"
