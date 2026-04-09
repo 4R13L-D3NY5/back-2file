@@ -432,13 +432,13 @@ class Asignatura extends Model
                         if ($userId !== null) {
                             $plan = $tema->relationLoaded('planificacionesPersonales')
                                 ? $tema->planificacionesPersonales->where('user_id', $userId)->first()
-                                : ($tema->relationLoaded('planificacionPersonal') &&
-                                   $tema->planificacionPersonal &&
-                                   $tema->planificacionPersonal->user_id == $userId
-                                    ? $tema->planificacionPersonal : null);
+                                : null;
                         } else {
-                            $plan = $tema->relationLoaded('planificacionPersonal')
-                                ? $tema->planificacionPersonal : null;
+                            $plan = $tema->relationLoaded('planificacionesPersonales')
+                                ? $tema->planificacionesPersonales->first()
+                                : ($tema->relationLoaded('planificacionPersonal')
+                                    ? $tema->planificacionPersonal
+                                    : null);
                         }
 
                         $progreso_temas_suma += $this->calcularProgresoTemaBase($tema, $plan);

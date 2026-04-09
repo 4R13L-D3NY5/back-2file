@@ -2465,4 +2465,118 @@ class ReporteController extends Controller
             'reincidentes' => $docentesReincidentes
         ]);
     }
+
+    /**
+     * NIVEL 4: Reporte de Monitoreo de Carreras
+     * Muestra el avance real de documentación por carrera:
+     * - Materias completas (100%)
+     * - Materias con avance significativo (>=50% y <100%)
+     * - Materias con poco o nulo avance (<50%)
+     */
+    public function monitoreoCarreras(Request $request)
+    {
+        $user = Auth::user();
+        $sedeId = $request->input('sede_id');
+        $carreraId = $request->input('carrera_id');
+
+        // Determinar sede válida
+        if (!$sedeId && $user->hasRole('VICERRECTOR_SEDE')) {
+            $sedeId = $user->sede_id;
+        }
+
+        if (!$sedeId) {
+            return response()->json(['error' => 'Sede no especificada'], 400);
+        }
+
+        // Cargar relaciones necesarias
+        $withRelations = [
+            'carreras',
+            'unidades.temas.planificacionesPersonales',
+            'grupos.docente',
+            'grupos.carrera',
+            'grupos.sede'
+        ];
+
+        // Obtener carreras
+        $carrerasQuery = Carrera::query()
+            ->with($withRelations)
+            ->where('sede_id', $sedeId);
+
+        if ($carreraId) {
+            $carrerasQuery->where('id', $carreraId);
+        }
+
+        $carreras = $carrerasQuery->get();
+
+        $result = [];
+
+        foreach ($carreras as $carrera) {
+            // Obtener asignaturas de esta carrera
+            $asignaturas = Asignatura::whereHas('carreras', function ($q) use ($carrera) {
+                $q->where('carreras.id', $carrera->id);
+            })->with($withRelations)->get();
+
+            $completas = [];
+            $avanceAlto = [];
+            $avanceBajo = [];
+
+            foreach ($asignaturas as $asig) {
+                // Cargar indicadores de documentación
+                $indicadores = $asig->indicadores_documentacion;
+                $planClasePct = $indicadores['plan_clase']['porcentaje'] ?? 0;
+                $analiticoPct = $indicadores['programa_analitico']['porcentaje'] ?? 0;
+                $pacPct = $indicadores['programa_asignatura']['porcentaje'] ?? 0;
+
+                // Calcular progreso general como promedio de los 3 criterios
+                $progreso = round(($pacPct + $analiticoPct + $planClasePct) / 3);
+
+                $docentesAsig = $asig->grupos->map(fn($g) => $g->docente)->filter()->unique('id')->pluck('nombre_completo')->implode(', ');
+
+                $materiaData = [
+                    'id' => $asig->id,
+                    'codigo' => $asig->codigo,
+                    'nombre' => $asig->nombre,
+                    'progreso' => $progreso,
+                    'indicadores' => $indicadores,
+                    'docentes' => $docentesAsig
+                ];
+
+                if ($progreso >= 100) {
+                    $completas[] = $materiaData;
+                } elseif ($progreso >= 50) {
+                    $avanceAlto[] = $materiaData;
+                } else {
+                    $avanceBajo[] = $materiaData;
+                }
+            }
+
+            $result[] = [
+                'carrera' => [
+                    'id' => $carrera->id,
+                    'nombre' => $carrera->nombre,
+                    'codigo' => $carrera->codigo
+                ],
+                'sede_id' => $carrera->sede_id,
+                'total_materias' => $asignaturas->count(),
+                'completas' => [
+                    'count' => count($completas),
+                    'materias' => $completas
+                ],
+                'avance_alto' => [
+                    'count' => count($avanceAlto),
+                    'materias' => $avanceAlto
+                ],
+                'avance_bajo' => [
+                    'count' => count($avanceBajo),
+                    'materias' => $avanceBajo
+                ]
+            ];
+        }
+
+        return response()->json([
+            'sede_id' => $sedeId,
+            'sede_nombre' => Sede::find($sedeId)?->nombre ?? 'Desconocida',
+            'carreras' => $result
+        ]);
+    }
 }

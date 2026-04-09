@@ -59,7 +59,7 @@ class AsignaturaController extends Controller
                 $q->where('sede_id', $sedeId);
             }
             if ($carreraId) {
-                // Durante la transición, mostramos los de la carrera O los que aún son NULL
+                // Durante la transiciÃ³n, mostramos los de la carrera O los que aÃºn son NULL
                 $q->where(function ($sub) use ($carreraId) {
                     $sub->where('carrera_id', $carreraId)
                         ->orWhereNull('carrera_id');
@@ -81,7 +81,7 @@ class AsignaturaController extends Controller
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
             });
 
-            // Cargar contexto específico para mostrar los datos correctos
+            // Cargar contexto especÃ­fico para mostrar los datos correctos
             $query->with(['carreras' => function ($q) use ($request) {
                 if ($request->filled('sede_id')) {
                     $q->where(function ($sub) use ($request) {
@@ -91,9 +91,9 @@ class AsignaturaController extends Controller
                 }
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
-            }, 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes', 'bancoPreguntas']);
+            }, 'unidades.temas.planificacionesPersonales', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes', 'bancoPreguntas']);
         } else {
-            $query->with(['carreras', 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes', 'bancoPreguntas']);
+            $query->with(['carreras', 'unidades.temas.planificacionesPersonales', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes', 'bancoPreguntas']);
         }
 
         if ($request->filled('search')) {
@@ -112,8 +112,8 @@ class AsignaturaController extends Controller
 
             $docentes = $a->grupos->map(fn($g) => $g->docente)->filter()->unique('id');
 
-            // Fallback: si no hay docentes directos, buscar por grupos con asignatura de código variante
-            // Ej: subject DER-112 → grupos con asignatura DER-112-COC-CARDER en la misma sede/carrera
+            // Fallback: si no hay docentes directos, buscar por grupos con asignatura de cÃ³digo variante
+            // Ej: subject DER-112 â†’ grupos con asignatura DER-112-COC-CARDER en la misma sede/carrera
             if ($docentes->isEmpty()) {
                 $codigoBase = $a->codigo;
                 $fallbackGrupos = \App\Models\Grupo::query()
@@ -132,7 +132,7 @@ class AsignaturaController extends Controller
                 }
             }
 
-            // Calcular progreso de documentación usando el accesor centralizado del modelo (que incluye planes de clase)
+            // Calcular progreso de documentaciÃ³n usando el accesor centralizado del modelo (que incluye planes de clase)
             $progreso = $a->progreso;
 
             // Context resolution: Priority to the Group's Sede (Actual Assignment)
@@ -185,8 +185,8 @@ class AsignaturaController extends Controller
                 'grupos_count' => $a->grupos->count(),
                 'progreso_documentacion' => $progreso,
                 'indicadores_documentacion' => $a->indicadores_documentacion,
-                'docentes_data' => $docentes->map(function ($d) use ($a, $progreso) { // Para el diálogo de selección y lista individual
-                    // Calcular descripción de grupos para este docente
+                'docentes_data' => $docentes->map(function ($d) use ($a, $progreso) { // Para el diÃ¡logo de selecciÃ³n y lista individual
+                    // Calcular descripciÃ³n de grupos para este docente
                     $gruposDocente = $a->grupos->where('docente_id', $d->id);
                     $desc = $gruposDocente->map(fn($g) => ($g->nombre ?? 'S/N') . ' (' . ($g->tipo ?? 'TEO') . ')')->implode(', ');
 
@@ -200,10 +200,10 @@ class AsignaturaController extends Controller
                     $userId = $d->user_id;
                     $indicadoresDocente = $userId ? $a->getIndicadoresDocumentacionPorDocente($userId) : $a->indicadores_documentacion;
                     
-                    // Calcular progreso por docente utilizando la misma lógica del progreso general
+                    // Calcular progreso por docente utilizando la misma lÃ³gica del progreso general
                     $progresoDocente = $userId ? $a->getProgresoPorDocente($userId) : $progreso;
                     
-                    // Estadísticas de preguntas 1P por docente
+                    // EstadÃ­sticas de preguntas 1P por docente
                     $preguntasDocente1P = $a->bancoPreguntas
                         ->where('docente_id', $d->id)
                         ->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1);
@@ -227,7 +227,7 @@ class AsignaturaController extends Controller
                         'preguntas_1p_stats' => $stats1P
                     ];
                 })->values(),
-                // Estadísticas consolidadas de la asignatura (Parcial 1)
+                // EstadÃ­sticas consolidadas de la asignatura (Parcial 1)
                 'preguntas_1p_stats' => [
                     'faciles' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'FACIL' || $p->dificultad == 1))->count(),
                     'medias' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == 2))->count(),
@@ -254,7 +254,7 @@ class AsignaturaController extends Controller
             }
         }
 
-        // 1. Busqueda local por ID con relaciones anidadas profundas para métricas
+        // 1. Busqueda local por ID con relaciones anidadas profundas para mÃ©tricas
         $local = Asignatura::with([
             'unidades.temas' => function ($query) use ($targetUserId) {
                 $query->with(['logros.indicadores', 'planificacionPersonal' => function ($q) use ($targetUserId) {
@@ -276,7 +276,7 @@ class AsignaturaController extends Controller
             $mainCarrera = $local->carreras->first(); // Asumimos una carrera principal por ahora
 
             if ($local->unidades()->count() === 0) {
-                // ... (código existente de sync service) ...
+                // ... (cÃ³digo existente de sync service) ...
                 $actualBranchCode = $mainCarrera->sede->codigo ?? $branchCode; // Use ->sede->codigo safely
                 $actualCareerCode = $mainCarrera->codigo ?? $careerCode;
                 $this->syncService->syncAnalyticalProgram($local, $actualBranchCode, $actualCareerCode);
@@ -317,7 +317,7 @@ class AsignaturaController extends Controller
             $response = $local->toArray();
 
             // Mapear temas para incluir los campos aplastados (estrategias, evaluacion, secuencia_didactica)
-            // de modo que el frontend pueda calcular el porcentaje idénticamente a getFullTema
+            // de modo que el frontend pueda calcular el porcentaje idÃ©nticamente a getFullTema
             if (isset($response['unidades'])) {
                 foreach ($response['unidades'] as &$u) {
                     if (isset($u['temas'])) {
@@ -416,7 +416,7 @@ class AsignaturaController extends Controller
                      $gruposQuery->where('docente_id', $currentUser->docente->id);
                  }
                  
-                 // 2. DIRECTORES (Rol 3, 4, 5): Ver grupos de su Sede (Jurisdicción)
+                 // 2. DIRECTORES (Rol 3, 4, 5): Ver grupos de su Sede (JurisdicciÃ³n)
                  // IMPORTANTE: Relajar filtro de carrera para ver materias compartidas/servicio
                  if (in_array($currentUser->rol_id, [3, 4, 5])) {
                      $director = $currentUser->director;
@@ -452,9 +452,9 @@ class AsignaturaController extends Controller
                     ];
                 });
 
-            // === PROGRESO E INDICADORES DE DOCUMENTACIÓN ===
+            // === PROGRESO E INDICADORES DE DOCUMENTACIÃ“N ===
             // Necesario para la vista "Mis Asignaturas" del docente.
-            // Se calcula *después* de haber cargado las relaciones unidades.temas.planificacionPersonal.
+            // Se calcula *despuÃ©s* de haber cargado las relaciones unidades.temas.planificacionPersonal.
             $progresoDocente = $targetUserId
                 ? $local->getProgresoPorDocente($targetUserId)
                 : $local->progreso;
@@ -469,17 +469,17 @@ class AsignaturaController extends Controller
             return response()->json($response);
         }
 
-        // 4. Si NO existe localmente, retornamos 404 inmediato (Optimización: No Lazy Sync)
+        // 4. Si NO existe localmente, retornamos 404 inmediato (OptimizaciÃ³n: No Lazy Sync)
         return response()->json(['message' => 'Asignatura no encontrada o no sincronizada.'], 404);
     }
 
     /**
-     * Sincroniza Unidades, Temas y Bibliografía desde la API al modelo Local.
+     * Sincroniza Unidades, Temas y BibliografÃ­a desde la API al modelo Local.
      */
-    // Método syncAnalyticalProgram eliminado y movido a AsignaturaSyncService
+    // MÃ©todo syncAnalyticalProgram eliminado y movido a AsignaturaSyncService
 
     /**
-     * Actualizar campos extendidos (Justificación, Metodología, etc).
+     * Actualizar campos extendidos (JustificaciÃ³n, MetodologÃ­a, etc).
      */
     public function update(Request $request, $id)
     {
@@ -528,7 +528,7 @@ class AsignaturaController extends Controller
             $local->requisitos = $request->saberes_previos;
         }
 
-        // FIX: Justificación no se estaba mapeando porque no está en $request->only() ni aquí
+        // FIX: JustificaciÃ³n no se estaba mapeando porque no estÃ¡ en $request->only() ni aquÃ­
         if ($request->has('justificacion')) $local->justificacion = $request->justificacion;
 
         // FIX: Nuevos campos de Programa de Asignatura que faltaban en el update manual
@@ -570,15 +570,15 @@ class AsignaturaController extends Controller
 
         // Necesario reload para relaciones si se ocupara, pero aqui es update simple
         // Necesario reload para relaciones si se ocupara
-        // Si el frontend necesita carrera/sede, habría que cargarlas:
+        // Si el frontend necesita carrera/sede, habrÃ­a que cargarlas:
         // load carreras instead of carrera
         $local->load(['carreras.sede']);
         $mainCarrera = $local->carreras->first();
         $response['carrera'] = $mainCarrera; // Para compatibilidad frontend si usa .carrera
         $response['semestre'] = $mainCarrera?->pivot?->semestre; // Fix: Include semestre
 
-        // ── FUSIÓN DE DUPLICADOS POR CÓDIGO ──────────────────────────────────────
-        // Si se actualizó plan_estudios, buscar duplicados del mismo código y fusionarlos
+        // â”€â”€ FUSIÃ“N DE DUPLICADOS POR CÃ“DIGO â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        // Si se actualizÃ³ plan_estudios, buscar duplicados del mismo cÃ³digo y fusionarlos
         // moviendo sus grupos a esta asignatura y eliminando el duplicado.
         if ($request->has('plan_estudios')) {
             $duplicados = Asignatura::where('codigo', $local->codigo)
@@ -603,7 +603,7 @@ class AsignaturaController extends Controller
                     // Soft delete del duplicado
                     $dup->delete();
 
-                    Log::info("Fusión de asignaturas: duplicado ID {$dup->id} ({$dup->nombre}) fusionado en ID {$local->id}");
+                    Log::info("FusiÃ³n de asignaturas: duplicado ID {$dup->id} ({$dup->nombre}) fusionado en ID {$local->id}");
                 });
             }
         }
@@ -624,7 +624,7 @@ class AsignaturaController extends Controller
                 ]);
         }
 
-        // SINCRONIZACIÓN MATERIAS COMUNES: Propagar a materias vinculadas del mismo docente
+        // SINCRONIZACIÃ“N MATERIAS COMUNES: Propagar a materias vinculadas del mismo docente
         $synced = $this->materiasComunesSyncService->syncAllDocumentationToLinked($local);
         $response['synced_to_comunes'] = $synced;
 
@@ -657,7 +657,7 @@ class AsignaturaController extends Controller
         $carrera = Carrera::findOrFail($request->carrera_id);
 
         $data = $request->except(['carrera_id', 'semestre', 'sede_id']);
-        // Si no se especifica modificado_localmente, establecer en true (creación local)
+        // Si no se especifica modificado_localmente, establecer en true (creaciÃ³n local)
         if (!isset($data['modificado_localmente'])) {
             $data['modificado_localmente'] = true;
         }
@@ -688,8 +688,8 @@ class AsignaturaController extends Controller
     {
         // DEPRECATED: Docentes are now assigned via Grupos using 'hasManyThrough'
         return response()->json([
-            'error' => 'La asignación directa de docentes ha sido deprecada. Por favor, asigne el docente a un Grupo específico.',
-            'action_required' => 'Use el endpoint de creación/edición de Grupos.'
+            'error' => 'La asignaciÃ³n directa de docentes ha sido deprecada. Por favor, asigne el docente a un Grupo especÃ­fico.',
+            'action_required' => 'Use el endpoint de creaciÃ³n/ediciÃ³n de Grupos.'
         ], 400);
     }
 
@@ -700,14 +700,14 @@ class AsignaturaController extends Controller
     {
         $asignatura = Asignatura::findOrFail($id);
 
-        // SOBERANÍA DE SEDE: Validar basado en el usuario autenticado, NO en los metadatos de la materia
-        // Esto corrige el bug donde materias con metadatos erróneos (ej: ADM-321) bloqueaban a docentes legítimos
+        // SOBERANÃA DE SEDE: Validar basado en el usuario autenticado, NO en los metadatos de la materia
+        // Esto corrige el bug donde materias con metadatos errÃ³neos (ej: ADM-321) bloqueaban a docentes legÃ­timos
         $userSedeId = auth()->user()->sede_id ?? 1;
 
-        // Solo permitir importación a usuarios de Sede Central (Cochabamba = ID 1)
+        // Solo permitir importaciÃ³n a usuarios de Sede Central (Cochabamba = ID 1)
         if ($userSedeId != 1) {
             return response()->json([
-                'error' => 'La importación solo está permitida para la Sede Central (Cochabamba).'
+                'error' => 'La importaciÃ³n solo estÃ¡ permitida para la Sede Central (Cochabamba).'
             ], 403);
         }
 
@@ -715,13 +715,13 @@ class AsignaturaController extends Controller
         \Illuminate\Support\Facades\Log::debug('ImportWord: Usuario sede_id=' . $userSedeId . ', Asignatura=' . $asignatura->codigo);
 
         if (!$request->hasFile('file')) {
-            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+            return response()->json(['error' => 'No se ha subido ningÃºn archivo.'], 400);
         }
 
         try {
             $data = $parser->parseWord($request->file('file'));
 
-            // Flags de importación (Refined split: Word only for Units/Themes)
+            // Flags de importaciÃ³n (Refined split: Word only for Units/Themes)
             $importDatos = false;
             $importUnidades = true;
             $importBiblio = false;
@@ -760,12 +760,12 @@ class AsignaturaController extends Controller
 
             // 2. IMPORTAR BIBLIOGRAFIA
             if ($importBiblio) {
-                Log::info("Procesando Bibliografía...");
-                // MODO SOBRESCRITURA: Borramos la bibliografía anterior para evitar duplicados o basura
+                Log::info("Procesando BibliografÃ­a...");
+                // MODO SOBRESCRITURA: Borramos la bibliografÃ­a anterior para evitar duplicados o basura
                 // (Opcional: Solo borrar si hay nueva data?)
                 if (!empty($data['bibliografia_basica']) || !empty($data['bibliografia_complementaria'])) {
                     $asignatura->bibliografias()->delete();
-                    Log::info("Bibliografía anterior eliminada.");
+                    Log::info("BibliografÃ­a anterior eliminada.");
                 }
 
                 $this->saveBibliografias($asignatura, $data['bibliografia_basica'], 'BASICA');
@@ -791,8 +791,8 @@ class AsignaturaController extends Controller
                         [
                             'titulo' => $tituloUnidad,
                             'horas' => 0
-                            // 'elemento_competencia' => ... ? No viene explícito en este formato,
-                            // tal vez podríamos usar el contenido_raw como descripción general o competencia
+                            // 'elemento_competencia' => ... ? No viene explÃ­cito en este formato,
+                            // tal vez podrÃ­amos usar el contenido_raw como descripciÃ³n general o competencia
                             // $unidad->elemento_competencia = substr($uData['contenido_raw'], 0, 500);
                         ]
                     );
@@ -813,7 +813,7 @@ class AsignaturaController extends Controller
                             // Logica de Truncado seguro
                             if (strlen($rawTitle) > 190) {
                                 $tituloFinal = substr($rawTitle, 0, 187) . '...';
-                                // Si el título era gigante, probablemente contenía parte del contenido.
+                                // Si el tÃ­tulo era gigante, probablemente contenÃ­a parte del contenido.
                                 // Lo concatenamos al inicio del contenido para no perderlo.
                                 $contenidoFinal = $rawTitle . "\n" . $rawContent;
                             } else {
@@ -837,7 +837,7 @@ class AsignaturaController extends Controller
             app(\App\Services\MateriasComunesSyncService::class)->syncBibliografias($asignatura);
 
             return response()->json([
-                'message' => 'Importación completada correctamente.',
+                'message' => 'ImportaciÃ³n completada correctamente.',
                 'imported_units' => $importedUnits
             ]);
 
@@ -852,7 +852,7 @@ class AsignaturaController extends Controller
         $asignatura = Asignatura::findOrFail($id);
 
         if (!$request->hasFile('file')) {
-            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+            return response()->json(['error' => 'No se ha subido ningÃºn archivo.'], 400);
         }
 
         try {
@@ -1009,7 +1009,7 @@ class AsignaturaController extends Controller
         $asignatura = Asignatura::findOrFail($id);
 
         if (!$request->hasFile('file')) {
-            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+            return response()->json(['error' => 'No se ha subido ningÃºn archivo.'], 400);
         }
 
         try {
@@ -1020,7 +1020,7 @@ class AsignaturaController extends Controller
             $sheet = $spreadsheet->getSheetByName('PAC') ?: $spreadsheet->getActiveSheet();
             $rows = $sheet->toArray(null, false, false, false);
 
-            // LOG DEPURACIÓN: Ver qué datos hay realmente en el archivo subido
+            // LOG DEPURACIÃ“N: Ver quÃ© datos hay realmente en el archivo subido
             \Illuminate\Support\Facades\Log::info("--- EXCEL CONTENT DUMP (First 100 rows) ---");
             foreach (array_slice($rows, 0, 100) as $rIdx => $row) {
                 foreach ($row as $cIdx => $cell) {
@@ -1032,8 +1032,8 @@ class AsignaturaController extends Controller
                 }
             }
             \Illuminate\Support\Facades\Log::info("--- END DUMP ---");
-            // FUNCIÓN DE BÚSQUEDA GLOBAL: Busca una etiqueta en TODO el grid
-            // y devuelve el primer valor no vacío que NO sea la etiqueta misma NI un título de sección.
+            // FUNCIÃ“N DE BÃšSQUEDA GLOBAL: Busca una etiqueta en TODO el grid
+            // y devuelve el primer valor no vacÃ­o que NO sea la etiqueta misma NI un tÃ­tulo de secciÃ³n.
             $searchGrid = function ($label, $limitCols = 15, $limitRows = 10, $strictHeaderSkip = true) use ($rows) {
                 $labelLower = mb_strtolower(trim($label));
                 foreach ($rows as $rIdx => $row) {
@@ -1041,7 +1041,7 @@ class AsignaturaController extends Controller
                     foreach ($row as $cIdx => $cell) {
                         $cellVal = mb_strtolower(trim($cell ?? ''));
                         if ($cellVal !== '' && str_contains($cellVal, $labelLower)) {
-                            // Una vez encontrada la etiqueta, buscamos el primer contenido útil en un radio grande
+                            // Una vez encontrada la etiqueta, buscamos el primer contenido Ãºtil en un radio grande
                             for ($dr = 0; $dr < $limitRows; $dr++) {
                                 for ($dc = 0; $dc < $limitCols; $dc++) {
                                     $checkRow = $rIdx + $dr;
@@ -1052,21 +1052,23 @@ class AsignaturaController extends Controller
                                     if ($v === '') continue;
 
                                     // REGLAS PARA DESCARTAR:
-                                    // 1. No es la etiqueta misma ni contiene la etiqueta si es muy corto (título)
+                                    // 1. No es la etiqueta misma ni contiene la etiqueta si es muy corto (tÃ­tulo)
                                     $vLower = mb_strtolower($v);
                                     if ($vLower === $labelLower) continue;
                                     if (str_contains($vLower, $labelLower) && strlen($v) < 80) continue;
 
-                                    // 2. FILTRO DE TÍTULO (CRÍTICO): Ignorar si empieza con número (3. o 3.- o 3) y es corto
+                                    // 2. FILTRO DE TÃTULO (CRÃTICO): Ignorar si empieza con nÃºmero (3. o 3.- o 3) y es corto
                                     if ($strictHeaderSkip && preg_match('/^\d+[\.\-\s\)]+/', $v)) {
                                         // Si el contenido largo es mayor a 100 caracteres, probablemente es contenido real
                                         if (strlen($v) < 100) continue;
-                                    }
+    }
+
+
 
                                     // 2. No parece otra etiqueta (contiene :) a menos que sea muy largo
                                     if (str_contains($v, ':') && strlen($v) < 30) continue;
 
-                                    // 3. No es un número de sección solo (ej: "4.-")
+                                    // 3. No es un nÃºmero de secciÃ³n solo (ej: "4.-")
                                     if (preg_match('/^\d+[\.\)-]\s*$/', $v)) continue;
 
                                     return $v;
@@ -1078,47 +1080,47 @@ class AsignaturaController extends Controller
                 return null;
             };
 
-            // 1. Identificación de la Asignatura
+            // 1. IdentificaciÃ³n de la Asignatura
             $val = $searchGrid('modalidad');
             if ($val) $asignatura->modalidad = $val;
             $val = $searchGrid('tipo de curso');
             if ($val) $asignatura->tipo_curso = $val;
-            $val = $searchGrid('área de desempeño');
+            $val = $searchGrid('Ã¡rea de desempeÃ±o');
             if ($val) $asignatura->area_desempenio = $val;
             $val = $searchGrid('pre-requisito');
             if ($val) $asignatura->requisitos = $val;
 
             // Sesiones
-            $teoricas = $searchGrid('teóricas:');
+            $teoricas = $searchGrid('teÃ³ricas:');
             if ($teoricas) $asignatura->sesiones_semanales_teoricas = intval($teoricas);
 
-            $practicas = $searchGrid('prácticas:');
+            $practicas = $searchGrid('prÃ¡cticas:');
             if ($practicas) $asignatura->sesiones_semanales_practicas = intval($practicas);
 
             // 2. Docente Responsable
             $val = $searchGrid('email') ?: $searchGrid('correo');
             if ($val) $asignatura->docente_email = $val;
-            $val = $searchGrid('formación');
+            $val = $searchGrid('formaciÃ³n');
             if ($val) $asignatura->docente_formacion = $val;
-            $val = $searchGrid('teléfono');
+            $val = $searchGrid('telÃ©fono');
             if ($val) $asignatura->docente_telefono = $val;
 
-            // 3. Justificación
-            $just = $searchGrid('justificación de la asignatura', 15, 10, true);
+            // 3. JustificaciÃ³n
+            $just = $searchGrid('justificaciÃ³n de la asignatura', 15, 10, true);
             if ($just) $asignatura->justificacion = $just;
 
-            // 4. Propósito General
-            $prop = $searchGrid('propósito general de la unidad', 15, 10, true);
+            // 4. PropÃ³sito General
+            $prop = $searchGrid('propÃ³sito general de la unidad', 15, 10, true);
             if ($prop) $asignatura->proposito_general = $prop;
 
-            // 5. Competencias (CRÍTICO - BÚSQUEDA FUZZY PERO DISTINTA)
-            $global = $searchGrid('competencia global específica');
+            // 5. Competencias (CRÃTICO - BÃšSQUEDA FUZZY PERO DISTINTA)
+            $global = $searchGrid('competencia global especÃ­fica');
             if ($global) $asignatura->competencia_global_especifica = $global;
 
-            $unidad = $searchGrid('unidad de competencia específica');
+            $unidad = $searchGrid('unidad de competencia especÃ­fica');
             if ($unidad) $asignatura->competencia_asignatura = $unidad;
 
-            // 6. Elementos de Competencia (EXTRACCIÓN ÚNICAMENTE DEL PUNTO 6)
+            // 6. Elementos de Competencia (EXTRACCIÃ“N ÃšNICAMENTE DEL PUNTO 6)
             $ec = [];
             $foundSec6 = false;
             foreach ($rows as $rIdx => $row) {
@@ -1130,9 +1132,9 @@ class AsignaturaController extends Controller
                 }
 
                 if ($foundSec6) {
-                    // STOP: Detección de siguiente sección (7 u 8)
+                    // STOP: DetecciÃ³n de siguiente secciÃ³n (7 u 8)
                     if (preg_match('/^\d+\.-/', trim(implode('', $row))) && !str_contains($lineStr, '6.-')) {
-                        // Si detectamos un nuevo número de sección que no sea el 6, salimos.
+                        // Si detectamos un nuevo nÃºmero de secciÃ³n que no sea el 6, salimos.
                         break;
                     }
 
@@ -1147,7 +1149,7 @@ class AsignaturaController extends Controller
                             for ($dc = 1; $dc < 15; $dc++) {
                                 $v = trim($row[$cIdx + $dc] ?? '');
                                 if (strlen($v) > 5) {
-                                    // NO capturar si es otra etiqueta de sección o de elemento
+                                    // NO capturar si es otra etiqueta de secciÃ³n o de elemento
                                     if (str_contains(mb_strtolower($v), 'elemento de competencia')) continue;
                                     if (preg_match('/^\d+\.-/i', $v)) continue;
 
@@ -1155,11 +1157,11 @@ class AsignaturaController extends Controller
                                     break;
                                 }
                             }
-                            // El usuario solicitó no buscar en otras filas si la derecha está vacía.
+                            // El usuario solicitÃ³ no buscar en otras filas si la derecha estÃ¡ vacÃ­a.
 
                             if ($foundContent !== '') {
                                 $ec[] = $foundContent;
-                                // Sincronización con Unidades para la UI
+                                // SincronizaciÃ³n con Unidades para la UI
                                 $asignatura->unidades()->updateOrCreate(
                                     ['numero' => $num],
                                     [
@@ -1177,13 +1179,13 @@ class AsignaturaController extends Controller
                 $asignatura->elementos_competencia = array_values(array_unique($ec));
             }
 
-            // 8. Metodología General
+            // 8. MetodologÃ­a General
             $metodologia = [];
-            // Búsqueda específica para metodologías ignorando etiquetas de "Si corresponde"
+            // BÃºsqueda especÃ­fica para metodologÃ­as ignorando etiquetas de "Si corresponde"
             $vAula = $searchGrid('en el aula');
             if ($vAula && strlen($vAula) > 5) $metodologia['aula'] = $vAula;
 
-            $vSim = $searchGrid('centro de simulación');
+            $vSim = $searchGrid('centro de simulaciÃ³n');
             if ($vSim && strlen($vSim) > 5) $metodologia['simulacion'] = $vSim;
 
             $vHosp = $searchGrid('hospital y centros de salud');
@@ -1193,7 +1195,7 @@ class AsignaturaController extends Controller
                 $asignatura->metodologia_general = $metodologia;
             }
 
-            // 9. Sistema de Evaluación (EXTRACCIÓN ESTRUCTURADA)
+            // 9. Sistema de EvaluaciÃ³n (EXTRACCIÃ“N ESTRUCTURADA)
             $evaluacion = [
                 'intro' => '',
                 'diagnostica' => '',
@@ -1206,7 +1208,7 @@ class AsignaturaController extends Controller
             foreach ($rows as $rIdx => $row) {
                 foreach ($row as $cIdx => $cell) {
                     $cellVal = mb_strtolower(trim($cell ?? ''));
-                    if (str_contains($cellVal, '9. sistema de evaluación')) {
+                    if (str_contains($cellVal, '9. sistema de evaluaciÃ³n')) {
                         // BLOQUE 1: Intro y Fases (Suelen estar 2 filas abajo)
                         $rIntro = $rIdx + 2;
                         if (isset($rows[$rIntro])) {
@@ -1225,14 +1227,14 @@ class AsignaturaController extends Controller
                             }
                         }
 
-                        // BLOQUE 2: Ponderación y Final (Suelen estar 3-4 filas abajo)
+                        // BLOQUE 2: PonderaciÃ³n y Final (Suelen estar 3-4 filas abajo)
                         $rPond = $rIdx + 3;
                         if (isset($rows[$rPond])) {
                             $fullBlock = trim($rows[$rPond][1] ?? ''); // Col B
-                            if (str_contains($fullBlock, 'La evaluación final')) {
-                                $parts = explode('La evaluación final', $fullBlock);
+                            if (str_contains($fullBlock, 'La evaluaciÃ³n final')) {
+                                $parts = explode('La evaluaciÃ³n final', $fullBlock);
                                 $evaluacion['ponderacion'] = trim($parts[0]);
-                                $evaluacion['final'] = 'La evaluación final ' . trim($parts[1]);
+                                $evaluacion['final'] = 'La evaluaciÃ³n final ' . trim($parts[1]);
                             } else {
                                 $evaluacion['ponderacion'] = $fullBlock;
                             }
@@ -1245,7 +1247,7 @@ class AsignaturaController extends Controller
                 $asignatura->sistema_evaluacion = $evaluacion;
             }
 
-            // 12. Criterios y Normativa (EXTRACCIÓN ESTRUCTURADA)
+            // 12. Criterios y Normativa (EXTRACCIÃ“N ESTRUCTURADA)
             $normativaObj = [
                 'clase' => '',
                 'laboratorio' => ''
@@ -1261,8 +1263,8 @@ class AsignaturaController extends Controller
                         for ($dr = 1; $dr <= 9; $dr++) {
                             if (isset($rows[$rIdx + $dr])) {
                                 $rowStr = mb_strtolower(implode(' ', array_filter($rows[$rIdx + $dr])));
-                                // Si detectamos el inicio de la siguiente sección, paramos
-                                if (str_contains($rowStr, '14.- bibliografía')) break;
+                                // Si detectamos el inicio de la siguiente secciÃ³n, paramos
+                                if (str_contains($rowStr, '14.- bibliografÃ­a')) break;
 
                                 foreach ($rows[$rIdx + $dr] as $cVal) {
                                     $v = trim($cVal ?? '');
@@ -1273,10 +1275,10 @@ class AsignaturaController extends Controller
 
                         if ($allText !== "") {
                             // Separamos por el delimitador clave
-                            if (str_contains($allText, 'Además, en laboratorio')) {
-                                $parts = explode('Además, en laboratorio', $allText);
+                            if (str_contains($allText, 'AdemÃ¡s, en laboratorio')) {
+                                $parts = explode('AdemÃ¡s, en laboratorio', $allText);
                                 $normativaObj['clase'] = trim($parts[0]);
-                                $normativaObj['laboratorio'] = 'Además, en laboratorio' . trim($parts[1]);
+                                $normativaObj['laboratorio'] = 'AdemÃ¡s, en laboratorio' . trim($parts[1]);
                             } else {
                                 $normativaObj['clase'] = trim($allText);
                             }
@@ -1290,7 +1292,7 @@ class AsignaturaController extends Controller
                 $asignatura->reglamento_normativa = $normativaObj;
             }
 
-            // 14. Bibliografía (ESTRATEGIA REFORZADA CON DIVISIÓN POR TIPO)
+            // 14. BibliografÃ­a (ESTRATEGIA REFORZADA CON DIVISIÃ“N POR TIPO)
             $especifica = [];
             $complementaria = [];
             $currentMode = ''; // 'basica' or 'complementaria'
@@ -1299,15 +1301,15 @@ class AsignaturaController extends Controller
             foreach ($rows as $rIdx => $row) {
                 $rowCombined = mb_strtolower(implode(' ', array_filter($row)));
 
-                // Detección de cabecera de sección
-                if (str_contains($rowCombined, '14.- bibliografía')) {
+                // DetecciÃ³n de cabecera de secciÃ³n
+                if (str_contains($rowCombined, '14.- bibliografÃ­a')) {
                     $foundBiblioHeader = true;
                     continue;
                 }
 
                 if ($foundBiblioHeader) {
-                    // Cambio de modo por sub-cabecera (Específica o Complementaria)
-                    if (str_contains($rowCombined, 'específica:')) {
+                    // Cambio de modo por sub-cabecera (EspecÃ­fica o Complementaria)
+                    if (str_contains($rowCombined, 'especÃ­fica:')) {
                         $currentMode = 'basica';
                         continue;
                     }
@@ -1325,10 +1327,10 @@ class AsignaturaController extends Controller
                     // Captura de contenido de la fila
                     $line = trim(implode(' ', array_filter($row)));
 
-                    // Filtramos ruido: longitud mínima y que no sean los propios encabezados
+                    // Filtramos ruido: longitud mÃ­nima y que no sean los propios encabezados
                     if ($currentMode !== '' && $line !== '' && strlen($line) > 3) {
-                        // Evitar capturar accidentalmente el título de la sección
-                        if (str_contains(mb_strtolower($line), 'bibliografía') && strlen($line) < 25) continue;
+                        // Evitar capturar accidentalmente el tÃ­tulo de la secciÃ³n
+                        if (str_contains(mb_strtolower($line), 'bibliografÃ­a') && strlen($line) < 25) continue;
 
                         if ($currentMode === 'basica') {
                             $especifica[] = $line;
@@ -1345,12 +1347,12 @@ class AsignaturaController extends Controller
                 if (!empty($complementaria)) $this->saveBibliografias($asignatura, $complementaria, 'Complementaria');
             }
 
-            // LOG DE RESULTADOS PARA DEPURACIÓN
+            // LOG DE RESULTADOS PARA DEPURACIÃ“N
             \Illuminate\Support\Facades\Log::info("PAC IMPORT SUCCESS: " . $asignatura->id . " | Biblio count: " . (count($especifica) + count($complementaria)));
 
             $asignatura->save();
 
-            return response()->json(['message' => 'Programa de Asignatura importado con éxito total', 'asignatura' => $asignatura]);
+            return response()->json(['message' => 'Programa de Asignatura importado con Ã©xito total', 'asignatura' => $asignatura]);
         } catch (\Exception $e) {
             \Illuminate\Support\Facades\Log::error("Excel PAC Import Error: " . $e->getMessage());
             return response()->json(['error' => 'Error al procesar el PAC Excel: ' . $e->getMessage()], 500);
@@ -1401,7 +1403,7 @@ class AsignaturaController extends Controller
         $grupoId = $request->input('grupo_id');
 
         if (!$request->hasFile('file')) {
-            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+            return response()->json(['error' => 'No se ha subido ningÃºn archivo.'], 400);
         }
 
         try {
@@ -1413,7 +1415,7 @@ class AsignaturaController extends Controller
             $sesionesParsed = $parsedData['sesiones'];
 
             // 2. Obtener cronogramas existentes (SOLO MASTER PLAN)
-            // La importación siempre debe actualizar el plan maestro.
+            // La importaciÃ³n siempre debe actualizar el plan maestro.
             $query = $asignatura->cronogramas()
                 ->whereNull('grupo_id')
                 ->orderBy('numero_sesion');
@@ -1423,10 +1425,10 @@ class AsignaturaController extends Controller
             $existingCronogramas = $query->get();
 
             if ($existingCronogramas->isEmpty()) {
-                throw new \Exception("No hay planificación generada para este grupo. Genere la planificación primero.");
+                throw new \Exception("No hay planificaciÃ³n generada para este grupo. Genere la planificaciÃ³n primero.");
             }
 
-            // 3. Mapeo y Actualización (Matching por Semana + Secuencia)
+            // 3. Mapeo y ActualizaciÃ³n (Matching por Semana + Secuencia)
             // Agrupar ambos por semana
             $existingByWeek = $existingCronogramas->groupBy('semana_academica');
             $parsedByWeek = collect($sesionesParsed)->groupBy('semana');
@@ -1439,7 +1441,7 @@ class AsignaturaController extends Controller
                     $existingItems = $existingByWeek[$semana];
                     
                     if ($soloTeoricas) {
-                        $existingItems = $existingItems->where('tipo_clase', 'Teórica');
+                        $existingItems = $existingItems->where('tipo_clase', 'TeÃ³rica');
                     }
                     
                     $existingItems = $existingItems->values(); // Reset keys to 0,1,2...
@@ -1474,7 +1476,7 @@ class AsignaturaController extends Controller
             DB::commit();
 
             return response()->json([
-                'message' => "Importación completada. Se actualizaron $updatedCount sesiones.",
+                'message' => "ImportaciÃ³n completada. Se actualizaron $updatedCount sesiones.",
                 'debug_parsed' => count($sesionesParsed),
                 'debug_existing' => $existingCronogramas->count()
             ]);
@@ -1488,22 +1490,22 @@ class AsignaturaController extends Controller
 
 
     /**
-     * Endpoint público para obtener todas las materias con sus programas analíticos completos.
+     * Endpoint pÃºblico para obtener todas las materias con sus programas analÃ­ticos completos.
      * GET /api/programas-analiticos?sede_id=1&carrera_id=5&semestre=3
      */
     public function programasAnaliticos(Request $request)
     {
-        // Validar token estático (sin Sanctum)
+        // Validar token estÃ¡tico (sin Sanctum)
         $expectedToken = env('PROGRAMAS_API_TOKEN', 'unitepc-programas-2026');
         $providedToken = $request->bearerToken() ?? $request->query('token');
 
         if (!$providedToken || $providedToken !== $expectedToken) {
-            return response()->json(['error' => 'Token inválido o no proporcionado.'], 401);
+            return response()->json(['error' => 'Token invÃ¡lido o no proporcionado.'], 401);
         }
 
         $query = Asignatura::query();
 
-        // Eager load: estructura completa del programa analítico
+        // Eager load: estructura completa del programa analÃ­tico
         $query->with([
             'unidades.temas.logros.indicadores',
             'unidades.temas.secuencias',
@@ -1526,7 +1528,7 @@ class AsignaturaController extends Controller
             });
         }
 
-        // Búsqueda por nombre o código
+        // BÃºsqueda por nombre o cÃ³digo
         if ($request->filled('search')) {
             $term = $request->search;
             $query->where(function ($q) use ($term) {
@@ -1566,7 +1568,7 @@ class AsignaturaController extends Controller
                     'sistema_evaluacion' => $a->sistema_evaluacion,
                     'requisitos' => $a->requisitos,
 
-                    // Estructura del programa analítico
+                    // Estructura del programa analÃ­tico
                     'unidades' => $a->unidades->map(function ($u) {
                         return [
                             'id' => $u->id,
@@ -1612,7 +1614,7 @@ class AsignaturaController extends Controller
                         ];
                     }),
 
-                    // Bibliografía general de la asignatura
+                    // BibliografÃ­a general de la asignatura
                     'bibliografias' => $a->bibliografias->map(fn($b) => [
                         'id' => $b->id,
                         'titulo' => $b->titulo,
@@ -1630,7 +1632,339 @@ class AsignaturaController extends Controller
     }
 
     /**
-     * Descargar plantilla Excel para Planificación Personal (Pre-llenada con temas)
+     * Exportación completa de documentación por carrera (incluye planificaciones personales de todos los docentes)
+     * GET /api/export/documentacion-carrera?carrera_id=X&sede_id=Y&token=TOKEN
+     */
+    public function documentacionCarrera(Request $request)
+    {
+        // Validar token estático (sin Sanctum)
+        $expectedToken = env('PROGRAMAS_API_TOKEN', 'unitepc-programas-2026');
+        $providedToken = $request->bearerToken() ?? $request->query('token');
+
+        if (!$providedToken || $providedToken !== $expectedToken) {
+            return response()->json(['error' => 'Token inválido o no proporcionado.'], 401);
+        }
+
+        $request->validate([
+            'carrera_id' => 'required|integer',
+            'sede_id' => 'nullable|integer',
+        ]);
+
+        $query = Asignatura::query();
+
+        // Eager load: estructura completa + planificaciones personales
+        $query->with([
+            'unidades.temas.logros.indicadores',
+            'unidades.temas.secuencias',
+            'unidades.temas.bibliografias',
+            'unidades.temas.planificacionesPersonales.user.docente',
+            'bibliografias',
+            'carreras.sede',
+            'grupos.docente.user',
+        ]);
+
+        // Filtrar por carrera y sede
+        $query->whereHas('carreras', function ($q) use ($request) {
+            $q->where('carreras.id', $request->carrera_id);
+            if ($request->filled('sede_id')) {
+                $q->where(function ($sub) use ($request) {
+                    $sub->where('asignatura_carrera.sede_id', $request->sede_id)
+                        ->orWhere('carreras.sede_id', $request->sede_id);
+                });
+            }
+        });
+
+        $asignaturas = $query->orderBy('nombre')->get();
+
+        return response()->json([
+            'total' => $asignaturas->count(),
+            'carrera_id' => $request->carrera_id,
+            'sede_id' => $request->sede_id,
+            'data' => $asignaturas->map(function ($a) {
+                $mainCarrera = $a->carreras->first();
+                // Obtener todos los docentes únicos asignados a esta materia
+                $docentes = $a->grupos->map(function ($grupo) {
+                    if (!$grupo->docente) return null;
+                    return [
+                        'id' => $grupo->docente->id,
+                        'nombre_completo' => $grupo->docente->nombre_completo,
+                        'user_id' => $grupo->docente->user_id,
+                        'email' => $grupo->docente->email,
+                    ];
+                })->filter()->unique('id')->values();
+
+                return [
+                    'id' => $a->id,
+                    'codigo' => $a->codigo,
+                    'nombre' => $a->nombre,
+                    'creditos' => $a->creditos,
+                    'semestre' => $mainCarrera?->pivot?->semestre,
+                    'carrera' => $mainCarrera ? [
+                        'id' => $mainCarrera->id,
+                        'nombre' => $mainCarrera->nombre,
+                        'sede' => $mainCarrera->sede?->nombre,
+                    ] : null,
+
+                    // Datos generales del programa
+                    'descripcion' => $a->descripcion,
+                    'justificacion' => $a->justificacion,
+                    'proposito_general' => $a->proposito_general,
+                    'competencia_asignatura' => $a->competencia_asignatura,
+                    'competencia_global_especifica' => $a->competencia_global_especifica,
+                    'elementos_competencia' => $a->elementos_competencia,
+                    'contenido_minimo' => $a->contenido_minimo,
+                    'metodologia_general' => $a->metodologia_general,
+                    'sistema_evaluacion' => $a->sistema_evaluacion,
+                    'requisitos' => $a->requisitos,
+
+                    // Estructura del programa analítico con planificaciones personales
+                    'unidades' => $a->unidades->map(function ($u) {
+                        return [
+                            'id' => $u->id,
+                            'numero' => $u->numero,
+                            'titulo' => $u->titulo,
+                            'elemento_competencia' => $u->elemento_competencia,
+                            'temas' => $u->temas->map(function ($t) {
+                                // Agrupar planificaciones personales por docente
+                                $planificacionesPorDocente = $t->planificacionesPersonales->map(function ($pp) {
+                                    return [
+                                        'docente_id' => $pp->user->docente->id ?? null,
+                                        'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
+                                        'user_id' => $pp->user_id,
+                                        'estrategias_metodologicas' => $pp->estrategias_metodologicas,
+                                        'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
+                                        'estrategias_recursos' => $pp->estrategias_recursos,
+                                        'evaluacion_formativa' => $pp->evaluacion_formativa,
+                                        'evaluacion_sumativa' => $pp->evaluacion_sumativa,
+                                        'secuencia_didactica' => $pp->secuencia_didactica,
+                                    ];
+                                });
+
+                                return [
+                                    'id' => $t->id,
+                                    'titulo' => $t->titulo,
+                                    'orden' => $t->orden,
+                                    'resultado_aprendizaje' => $t->resultado_aprendizaje,
+                                    'contenido_items' => $t->contenido_items,
+                                    'contenido_conceptual' => $t->contenido_conceptual,
+                                    'contenido_procedimental' => $t->contenido_procedimental,
+                                    'contenido_actitudinal' => $t->contenido_actitudinal,
+                                    'estrategias_metodologicas' => $t->estrategias_metodologicas,
+                                    'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
+                                    'estrategias_recursos' => $t->estrategias_recursos,
+                                    'evaluacion_formativa' => $t->evaluacion_formativa,
+                                    'evaluacion_sumativa' => $t->evaluacion_sumativa,
+                                    'horas_teoricas' => $t->horas_teoricas,
+                                    'horas_practicas' => $t->horas_practicas,
+
+                                    'logros_esperados' => $t->logros->map(function ($l) {
+                                        return [
+                                            'id' => $l->id,
+                                            'descripcion' => $l->descripcion,
+                                            'tipo_logro' => $l->tipo_logro,
+                                            'indicadores' => $l->indicadores->map(fn($i) => [
+                                                'id' => $i->id,
+                                                'descripcion' => $i->descripcion,
+                                            ]),
+                                        ];
+                                    }),
+                                    'bibliografias' => $t->bibliografias->map(fn($b) => [
+                                        'id' => $b->id,
+                                        'titulo' => $b->titulo,
+                                        'autor' => $b->autor,
+                                    ]),
+                                    'planificaciones_personales' => $planificacionesPorDocente,
+                                ];
+                            }),
+                        ];
+                    }),
+
+                    // Bibliografía general de la asignatura
+                    'bibliografias' => $a->bibliografias->map(fn($b) => [
+                        'id' => $b->id,
+                        'titulo' => $b->titulo,
+                        'autor' => $b->autor,
+                        'editorial' => $b->editorial,
+                        'anio' => $b->anio,
+                        'tipo' => $b->tipo,
+                    ]),
+
+                    // Docentes asignados
+                    'docentes' => $docentes,
+
+                    // Progreso
+                    'progreso' => $a->estadisticas_progreso,
+                ];
+            }),
+        ]);
+    }
+
+    /**
+     * Exportación completa de documentación por asignatura (incluye planificaciones personales de todos los docentes)
+     * GET /api/export/documentacion-asignatura?codigo=XXX&sede_id=Y&token=TOKEN
+     */
+    public function documentacionAsignatura(Request $request)
+    {
+        // Validar token estático (sin Sanctum)
+        $expectedToken = env('PROGRAMAS_API_TOKEN', 'unitepc-programas-2026');
+        $providedToken = $request->bearerToken() ?? $request->query('token');
+
+        if (!$providedToken || $providedToken !== $expectedToken) {
+            return response()->json(['error' => 'Token inválido o no proporcionado.'], 401);
+        }
+
+        $request->validate([
+            'codigo' => 'required|string',
+            'sede_id' => 'nullable|integer',
+        ]);
+
+        $query = Asignatura::query();
+
+        // Eager load: estructura completa + planificaciones personales
+        $query->with([
+            'unidades.temas.logros.indicadores',
+            'unidades.temas.secuencias',
+            'unidades.temas.bibliografias',
+            'unidades.temas.planificacionesPersonales.user.docente',
+            'bibliografias',
+            'carreras.sede',
+            'grupos.docente.user',
+        ]);
+
+        // Filtrar por código y sede
+        $query->where('codigo', $request->codigo);
+        if ($request->filled('sede_id')) {
+            $query->whereHas('carreras', function ($q) use ($request) {
+                $q->where(function ($sub) use ($request) {
+                    $sub->where('asignatura_carrera.sede_id', $request->sede_id)
+                        ->orWhere('carreras.sede_id', $request->sede_id);
+                });
+            });
+        }
+
+        $asignatura = $query->first();
+
+        if (!$asignatura) {
+            return response()->json(['error' => 'Asignatura no encontrada.'], 404);
+        }
+
+        $mainCarrera = $asignatura->carreras->first();
+        $docentes = $asignatura->grupos->map(function ($grupo) {
+            if (!$grupo->docente) return null;
+            return [
+                'id' => $grupo->docente->id,
+                'nombre_completo' => $grupo->docente->nombre_completo,
+                'user_id' => $grupo->docente->user_id,
+                'email' => $grupo->docente->email,
+            ];
+        })->filter()->unique('id')->values();
+
+        return response()->json([
+            'id' => $asignatura->id,
+            'codigo' => $asignatura->codigo,
+            'nombre' => $asignatura->nombre,
+            'creditos' => $asignatura->creditos,
+            'semestre' => $mainCarrera?->pivot?->semestre,
+            'carrera' => $mainCarrera ? [
+                'id' => $mainCarrera->id,
+                'nombre' => $mainCarrera->nombre,
+                'sede' => $mainCarrera->sede?->nombre,
+            ] : null,
+
+            // Datos generales del programa
+            'descripcion' => $asignatura->descripcion,
+            'justificacion' => $asignatura->justificacion,
+            'proposito_general' => $asignatura->proposito_general,
+            'competencia_asignatura' => $asignatura->competencia_asignatura,
+            'competencia_global_especifica' => $asignatura->competencia_global_especifica,
+            'elementos_competencia' => $asignatura->elementos_competencia,
+            'contenido_minimo' => $asignatura->contenido_minimo,
+            'metodologia_general' => $asignatura->metodologia_general,
+            'sistema_evaluacion' => $asignatura->sistema_evaluacion,
+            'requisitos' => $asignatura->requisitos,
+
+            // Estructura del programa analítico con planificaciones personales
+            'unidades' => $asignatura->unidades->map(function ($u) {
+                return [
+                    'id' => $u->id,
+                    'numero' => $u->numero,
+                    'titulo' => $u->titulo,
+                    'elemento_competencia' => $u->elemento_competencia,
+                    'temas' => $u->temas->map(function ($t) {
+                        // Agrupar planificaciones personales por docente
+                        $planificacionesPorDocente = $t->planificacionesPersonales->map(function ($pp) {
+                            return [
+                                'docente_id' => $pp->user->docente->id ?? null,
+                                'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
+                                'user_id' => $pp->user_id,
+                                'estrategias_metodologicas' => $pp->estrategias_metodologicas,
+                                'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
+                                'estrategias_recursos' => $pp->estrategias_recursos,
+                                'evaluacion_formativa' => $pp->evaluacion_formativa,
+                                'evaluacion_sumativa' => $pp->evaluacion_sumativa,
+                                'secuencia_didactica' => $pp->secuencia_didactica,
+                            ];
+                        });
+
+                        return [
+                            'id' => $t->id,
+                            'titulo' => $t->titulo,
+                            'orden' => $t->orden,
+                            'resultado_aprendizaje' => $t->resultado_aprendizaje,
+                            'contenido_items' => $t->contenido_items,
+                            'contenido_conceptual' => $t->contenido_conceptual,
+                            'contenido_procedimental' => $t->contenido_procedimental,
+                            'contenido_actitudinal' => $t->contenido_actitudinal,
+                            'estrategias_metodologicas' => $t->estrategias_metodologicas,
+                            'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
+                            'estrategias_recursos' => $t->estrategias_recursos,
+                            'evaluacion_formativa' => $t->evaluacion_formativa,
+                            'evaluacion_sumativa' => $t->evaluacion_sumativa,
+                            'horas_teoricas' => $t->horas_teoricas,
+                            'horas_practicas' => $t->horas_practicas,
+
+                            'logros_esperados' => $t->logros->map(function ($l) {
+                                return [
+                                    'id' => $l->id,
+                                    'descripcion' => $l->descripcion,
+                                    'tipo_logro' => $l->tipo_logro,
+                                    'indicadores' => $l->indicadores->map(fn($i) => [
+                                        'id' => $i->id,
+                                        'descripcion' => $i->descripcion,
+                                    ]),
+                                ];
+                            }),
+                            'bibliografias' => $t->bibliografias->map(fn($b) => [
+                                'id' => $b->id,
+                                'titulo' => $b->titulo,
+                                'autor' => $b->autor,
+                            ]),
+                            'planificaciones_personales' => $planificacionesPorDocente,
+                        ];
+                    }),
+                ];
+            }),
+
+            // Bibliografía general de la asignatura
+            'bibliografias' => $asignatura->bibliografias->map(fn($b) => [
+                'id' => $b->id,
+                'titulo' => $b->titulo,
+                'autor' => $b->autor,
+                'editorial' => $b->editorial,
+                'anio' => $b->anio,
+                'tipo' => $b->tipo,
+            ]),
+
+            // Docentes asignados
+            'docentes' => $docentes,
+
+            // Progreso
+            'progreso' => $asignatura->estadisticas_progreso,
+        ]);
+    }
+
+    /**
+     * Descargar plantilla Excel para PlanificaciÃ³n Personal (Pre-llenada con temas)
      */
     public function templatePersonal($id)
     {
@@ -1641,8 +1975,8 @@ class AsignaturaController extends Controller
 
         // 1. Cabeceras
         $headers = [
-            'Unidad (#)', 'Tema (#)', 'Título (Referencial)',
-            'Estrategias Metodológicas', 'Actividades de Aprendizaje', 'Recursos (1 x línea)',
+            'Unidad (#)', 'Tema (#)', 'TÃ­tulo (Referencial)',
+            'Estrategias MetodolÃ³gicas', 'Actividades de Aprendizaje', 'Recursos (1 x lÃ­nea)',
             'Eval. Formativa: Actividades', 'Eval. Formativa: Instrumentos', 'Eval. Formativa: Evidencias',
             'Eval. Sumativa: Actividades', 'Eval. Sumativa: Instrumentos', 'Eval. Sumativa: Evidencias',
             'Secuencia: Intro (Actividad)', 'Secuencia: Intro (Min)',
@@ -1673,14 +2007,14 @@ class AsignaturaController extends Controller
                     $unidad->numero,
                     $tema->orden,
                     $tema->titulo,
-                    // El resto de columnas vacías para que el docente las llene
+                    // El resto de columnas vacÃ­as para que el docente las llene
                 ];
                 $sheet->fromArray($data, NULL, 'A' . $row);
                 $row++;
             }
         }
 
-        // Si no hay temas, dejar una fila de ejemplo vacía o al menos asegurar el formato
+        // Si no hay temas, dejar una fila de ejemplo vacÃ­a o al menos asegurar el formato
         if ($row == 2) {
             $sheet->setCellValue('A2', '1');
             $sheet->setCellValue('B2', '1');
@@ -1694,7 +2028,7 @@ class AsignaturaController extends Controller
     }
 
     /**
-     * Importar Planificación Personal desde Excel
+     * Importar PlanificaciÃ³n Personal desde Excel
      */
     public function importPersonal(Request $request, $id)
     {
@@ -1702,7 +2036,7 @@ class AsignaturaController extends Controller
         $userId = \Illuminate\Support\Facades\Auth::id();
 
         if (!$request->hasFile('file')) {
-            return response()->json(['error' => 'No se ha subido ningún archivo.'], 400);
+            return response()->json(['error' => 'No se ha subido ningÃºn archivo.'], 400);
         }
 
         try {
@@ -1730,7 +2064,7 @@ class AsignaturaController extends Controller
 
                 if (!$tema) {
                     $stats['errors']++;
-                    $errors[] = "Fila " . ($index + 2) . ": No se encontró Unidad $uNum - Tema $tNum en esta asignatura.";
+                    $errors[] = "Fila " . ($index + 2) . ": No se encontrÃ³ Unidad $uNum - Tema $tNum en esta asignatura.";
                     continue;
                 }
 

@@ -21,6 +21,8 @@ Route::post('/register', [AuthController::class, 'register']);
 // Programas Analíticos (público con token estático)
 // Programas Analíticos (público con token estático)
 Route::get('/programas-analiticos', [\App\Http\Controllers\AsignaturaController::class, 'programasAnaliticos']);
+Route::get('/export/documentacion-carrera', [\App\Http\Controllers\AsignaturaController::class, 'documentacionCarrera']);
+Route::get('/export/documentacion-asignatura', [\App\Http\Controllers\AsignaturaController::class, 'documentacionAsignatura']);
 Route::get('/reportes/semanal/print', [\App\Http\Controllers\ReporteController::class, 'exportWeeklyReportHtml']);
 Route::get('/asignaturas/{id}/template-personal', [AsignaturaController::class, 'templatePersonal']);
 
@@ -344,6 +346,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/resumen-sede', [\App\Http\Controllers\ReporteController::class, 'resumenEjecutivoSede']);
 
     // Reportes Nivel 4: Vicerrector
+    Route::get('/reportes/monitoreo-carreras', [\App\Http\Controllers\ReporteController::class, 'monitoreoCarreras']);
     Route::get('/reportes/sedes-criticas', [\App\Http\Controllers\ReporteController::class, 'sedesCriticas']);
     Route::get('/reportes/ranking-sedes', [\App\Http\Controllers\ReporteController::class, 'rankingSedes']);
     Route::get('/reportes/director/resumen-carrera', [\App\Http\Controllers\ReporteController::class, 'getResumenCarreraSemanal']);
