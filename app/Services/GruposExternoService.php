@@ -265,6 +265,11 @@ class GruposExternoService
         $horariosUnicos = [];
 
         foreach ($rawData as $item) {
+            // Requerimiento: omitir asignaturas donde plan_estudios sea null o vacío
+            if (empty($item['planEst'])) {
+                continue;
+            }
+
             // Crear un identificador único para evitar duplicados
             $horarioKey = sprintf(
                 '%s-%s-%s-%s-%s-%s',

@@ -389,8 +389,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/carrera',       [\App\Http\Controllers\SyncController::class, 'syncCarrera']);
         Route::post('/sede',          [\App\Http\Controllers\SyncController::class, 'syncSede']);
         Route::post('/materia',       [\App\Http\Controllers\SyncController::class, 'syncMateria']);
-        Route::get('/logs',           [\App\Http\Controllers\SyncController::class, 'getLogs']);
-        Route::get('/logs/{id}/diff', [\App\Http\Controllers\SyncController::class, 'getDiff']);
     });
+
+    // Módulo de Restauración Académica
+    Route::post('/restauracion/asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'restaurarAsignatura']);
 
 });
