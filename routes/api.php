@@ -106,6 +106,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/asignaturas/{id}/import-cronograma', [AsignaturaController::class, 'importCronograma']);
     Route::get('/asignaturas/{id}/export-json', [AsignaturaController::class, 'exportJson'])->middleware('role:DIRECTOR_CARRERA,SUPER_ADMIN');
     Route::get('/asignaturas/codigo/{codigo}/export-json', [AsignaturaController::class, 'exportJsonByCode'])->middleware('role:DIRECTOR_CARRERA,SUPER_ADMIN');
+    Route::get('/asignaturas/{id}/json', [AsignaturaController::class, 'showJson'])->middleware('role:DIRECTOR_CARRERA,SUPER_ADMIN');
+    Route::get('/asignaturas/codigo/{codigo}/json', [AsignaturaController::class, 'showJsonByCode'])->middleware('role:DIRECTOR_CARRERA,SUPER_ADMIN');
 
 
     // Docentes
