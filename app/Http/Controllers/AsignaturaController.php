@@ -1964,6 +1964,327 @@ class AsignaturaController extends Controller
     }
 
     /**
+     * Exportar documentación completa de una asignatura en formato JSON (descarga directa)
+     * GET /api/asignaturas/{id}/export-json
+     * Acceso: Solo DIRECTOR_CARRERA y SUPER_ADMIN (controlado por middleware)
+     */
+    public function exportJson(Request $request, $id)
+    {
+        Log::info('AsignaturaController::exportJson invoked', [
+            'id' => $id,
+            'user_id' => $request->user()?->id,
+            'user_role' => $request->user()?->rol?->codigo,
+        ]);
+        
+        // El middleware auth:sanctum ya valida la autenticación
+        // El middleware de rol valida que sea DIRECTOR_CARRERA o SUPER_ADMIN
+
+        // Reutilizar la lógica de documentacionAsignatura pero sin parámetros de sede
+        $asignatura = Asignatura::query();
+        
+        // Eager load: estructura completa + planificaciones personales
+        $asignatura->with([
+            'unidades.temas.logros.indicadores',
+            'unidades.temas.secuencias',
+            'unidades.temas.bibliografias',
+            'unidades.temas.planificacionesPersonales.user.docente',
+            'bibliografias',
+            'carreras.sede',
+            'grupos.docente.user',
+        ]);
+
+        $asignatura = $asignatura->find($id);
+
+        if (!$asignatura) {
+            return response()->json(['error' => 'Asignatura no encontrada.'], 404);
+        }
+
+        $mainCarrera = $asignatura->carreras->first();
+        $docentes = $asignatura->grupos->map(function ($grupo) {
+            if (!$grupo->docente) return null;
+            return [
+                'id' => $grupo->docente->id,
+                'nombre_completo' => $grupo->docente->nombre_completo,
+                'user_id' => $grupo->docente->user_id,
+                'email' => $grupo->docente->email,
+            ];
+        })->filter()->unique('id')->values();
+
+        $jsonData = [
+            'id' => $asignatura->id,
+            'codigo' => $asignatura->codigo,
+            'nombre' => $asignatura->nombre,
+            'creditos' => $asignatura->creditos,
+            'semestre' => $mainCarrera?->pivot?->semestre,
+            'carrera' => $mainCarrera ? [
+                'id' => $mainCarrera->id,
+                'nombre' => $mainCarrera->nombre,
+                'sede' => $mainCarrera->sede?->nombre,
+            ] : null,
+
+            // Datos generales del programa
+            'descripcion' => $asignatura->descripcion,
+            'justificacion' => $asignatura->justificacion,
+            'proposito_general' => $asignatura->proposito_general,
+            'competencia_asignatura' => $asignatura->competencia_asignatura,
+            'competencia_global_especifica' => $asignatura->competencia_global_especifica,
+            'elementos_competencia' => $asignatura->elementos_competencia,
+            'contenido_minimo' => $asignatura->contenido_minimo,
+            'metodologia_general' => $asignatura->metodologia_general,
+            'sistema_evaluacion' => $asignatura->sistema_evaluacion,
+            'requisitos' => $asignatura->requisitos,
+
+            // Estructura del programa analítico con planificaciones personales
+            'unidades' => $asignatura->unidades->map(function ($u) {
+                return [
+                    'id' => $u->id,
+                    'numero' => $u->numero,
+                    'titulo' => $u->titulo,
+                    'elemento_competencia' => $u->elemento_competencia,
+                    'temas' => $u->temas->map(function ($t) {
+                        // Agrupar planificaciones personales por docente
+                        $planificacionesPorDocente = $t->planificacionesPersonales->map(function ($pp) {
+                            return [
+                                'docente_id' => $pp->user->docente->id ?? null,
+                                'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
+                                'user_id' => $pp->user_id,
+                                'estrategias_metodologicas' => $pp->estrategias_metodologicas,
+                                'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
+                                'estrategias_recursos' => $pp->estrategias_recursos,
+                                'evaluacion_formativa' => $pp->evaluacion_formativa,
+                                'evaluacion_sumativa' => $pp->evaluacion_sumativa,
+                                'secuencia_didactica' => $pp->secuencia_didactica,
+                            ];
+                        });
+
+                        return [
+                            'id' => $t->id,
+                            'titulo' => $t->titulo,
+                            'orden' => $t->orden,
+                            'resultado_aprendizaje' => $t->resultado_aprendizaje,
+                            'contenido_items' => $t->contenido_items,
+                            'contenido_conceptual' => $t->contenido_conceptual,
+                            'contenido_procedimental' => $t->contenido_procedimental,
+                            'contenido_actitudinal' => $t->contenido_actitudinal,
+                            'estrategias_metodologicas' => $t->estrategias_metodologicas,
+                            'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
+                            'estrategias_recursos' => $t->estrategias_recursos,
+                            'evaluacion_formativa' => $t->evaluacion_formativa,
+                            'evaluacion_sumativa' => $t->evaluacion_sumativa,
+                            'horas_teoricas' => $t->horas_teoricas,
+                            'horas_practicas' => $t->horas_practicas,
+
+                            'logros_esperados' => $t->logros->map(function ($l) {
+                                return [
+                                    'id' => $l->id,
+                                    'descripcion' => $l->descripcion,
+                                    'tipo_logro' => $l->tipo_logro,
+                                    'indicadores' => $l->indicadores->map(fn($i) => [
+                                        'id' => $i->id,
+                                        'descripcion' => $i->descripcion,
+                                    ]),
+                                ];
+                            }),
+                            'bibliografias' => $t->bibliografias->map(fn($b) => [
+                                'id' => $b->id,
+                                'titulo' => $b->titulo,
+                                'autor' => $b->autor,
+                            ]),
+                            'planificaciones_personales' => $planificacionesPorDocente,
+                        ];
+                    }),
+                ];
+            }),
+
+            // Bibliografía general de la asignatura
+            'bibliografias' => $asignatura->bibliografias->map(fn($b) => [
+                'id' => $b->id,
+                'titulo' => $b->titulo,
+                'autor' => $b->autor,
+                'editorial' => $b->editorial,
+                'anio' => $b->anio,
+                'tipo' => $b->tipo,
+            ]),
+
+            // Docentes asignados
+            'docentes' => $docentes,
+
+            // Progreso
+            'progreso' => $asignatura->estadisticas_progreso,
+        ];
+
+        // Generar nombre de archivo
+        $filename = 'asignatura_' . $asignatura->codigo . '_' . date('Y-m-d') . '.json';
+
+        // Devolver como descarga de archivo JSON
+        return response()->json($jsonData, 200, [
+            'Content-Type' => 'application/json',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Exportar documentación completa de una asignatura en formato JSON (descarga directa) por código
+     * GET /api/asignaturas/codigo/{codigo}/export-json
+     * Acceso: Solo DIRECTOR_CARRERA y SUPER_ADMIN (controlado por middleware)
+     */
+    public function exportJsonByCode(Request $request, $codigo)
+    {
+        // El middleware auth:sanctum ya valida la autenticación
+        // El middleware de rol valida que sea DIRECTOR_CARRERA o SUPER_ADMIN
+
+        // Reutilizar la lógica de documentacionAsignatura pero con autenticación y descarga
+        $query = Asignatura::query();
+        
+        // Eager load: estructura completa + planificaciones personales
+        $query->with([
+            'unidades.temas.logros.indicadores',
+            'unidades.temas.secuencias',
+            'unidades.temas.bibliografias',
+            'unidades.temas.planificacionesPersonales.user.docente',
+            'bibliografias',
+            'carreras.sede',
+            'grupos.docente.user',
+        ]);
+
+        // Filtrar por código
+        $query->where('codigo', $codigo);
+        
+        // Opcional: filtrar por sede del usuario si es director
+        // (Se puede implementar según la sede del director)
+        // Por ahora, toma la primera asignatura encontrada
+
+        $asignatura = $query->first();
+
+        if (!$asignatura) {
+            return response()->json(['error' => 'Asignatura no encontrada.'], 404);
+        }
+
+        $mainCarrera = $asignatura->carreras->first();
+        $docentes = $asignatura->grupos->map(function ($grupo) {
+            if (!$grupo->docente) return null;
+            return [
+                'id' => $grupo->docente->id,
+                'nombre_completo' => $grupo->docente->nombre_completo,
+                'user_id' => $grupo->docente->user_id,
+                'email' => $grupo->docente->email,
+            ];
+        })->filter()->unique('id')->values();
+
+        $jsonData = [
+            'id' => $asignatura->id,
+            'codigo' => $asignatura->codigo,
+            'nombre' => $asignatura->nombre,
+            'creditos' => $asignatura->creditos,
+            'semestre' => $mainCarrera?->pivot?->semestre,
+            'carrera' => $mainCarrera ? [
+                'id' => $mainCarrera->id,
+                'nombre' => $mainCarrera->nombre,
+                'sede' => $mainCarrera->sede?->nombre,
+            ] : null,
+
+            // Datos generales del programa
+            'descripcion' => $asignatura->descripcion,
+            'justificacion' => $asignatura->justificacion,
+            'proposito_general' => $asignatura->proposito_general,
+            'competencia_asignatura' => $asignatura->competencia_asignatura,
+            'competencia_global_especifica' => $asignatura->competencia_global_especifica,
+            'elementos_competencia' => $asignatura->elementos_competencia,
+            'contenido_minimo' => $asignatura->contenido_minimo,
+            'metodologia_general' => $asignatura->metodologia_general,
+            'sistema_evaluacion' => $asignatura->sistema_evaluacion,
+            'requisitos' => $asignatura->requisitos,
+
+            // Estructura del programa analítico con planificaciones personales
+            'unidades' => $asignatura->unidades->map(function ($u) {
+                return [
+                    'id' => $u->id,
+                    'numero' => $u->numero,
+                    'titulo' => $u->titulo,
+                    'elemento_competencia' => $u->elemento_competencia,
+                    'temas' => $u->temas->map(function ($t) {
+                        // Agrupar planificaciones personales por docente
+                        $planificacionesPorDocente = $t->planificacionesPersonales->map(function ($pp) {
+                            return [
+                                'docente_id' => $pp->user->docente->id ?? null,
+                                'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
+                                'user_id' => $pp->user_id,
+                                'estrategias_metodologicas' => $pp->estrategias_metodologicas,
+                                'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
+                                'estrategias_recursos' => $pp->estrategias_recursos,
+                                'evaluacion_formativa' => $pp->evaluacion_formativa,
+                                'evaluacion_sumativa' => $pp->evaluacion_sumativa,
+                                'secuencia_didactica' => $pp->secuencia_didactica,
+                            ];
+                        });
+
+                        return [
+                            'id' => $t->id,
+                            'titulo' => $t->titulo,
+                            'orden' => $t->orden,
+                            'resultado_aprendizaje' => $t->resultado_aprendizaje,
+                            'contenido_items' => $t->contenido_items,
+                            'contenido_conceptual' => $t->contenido_conceptual,
+                            'contenido_procedimental' => $t->contenido_procedimental,
+                            'contenido_actitudinal' => $t->contenido_actitudinal,
+                            'estrategias_metodologicas' => $t->estrategias_metodologicas,
+                            'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
+                            'estrategias_recursos' => $t->estrategias_recursos,
+                            'evaluacion_formativa' => $t->evaluacion_formativa,
+                            'evaluacion_sumativa' => $t->evaluacion_sumativa,
+                            'horas_teoricas' => $t->horas_teoricas,
+                            'horas_practicas' => $t->horas_practicas,
+
+                            'logros_esperados' => $t->logros->map(function ($l) {
+                                return [
+                                    'id' => $l->id,
+                                    'descripcion' => $l->descripcion,
+                                    'tipo_logro' => $l->tipo_logro,
+                                    'indicadores' => $l->indicadores->map(fn($i) => [
+                                        'id' => $i->id,
+                                        'descripcion' => $i->descripcion,
+                                    ]),
+                                ];
+                            }),
+                            'bibliografias' => $t->bibliografias->map(fn($b) => [
+                                'id' => $b->id,
+                                'titulo' => $b->titulo,
+                                'autor' => $b->autor,
+                            ]),
+                            'planificaciones_personales' => $planificacionesPorDocente,
+                        ];
+                    }),
+                ];
+            }),
+
+            // Bibliografía general de la asignatura
+            'bibliografias' => $asignatura->bibliografias->map(fn($b) => [
+                'id' => $b->id,
+                'titulo' => $b->titulo,
+                'autor' => $b->autor,
+                'editorial' => $b->editorial,
+                'anio' => $b->anio,
+                'tipo' => $b->tipo,
+            ]),
+
+            // Docentes asignados
+            'docentes' => $docentes,
+
+            // Progreso
+            'progreso' => $asignatura->estadisticas_progreso,
+        ];
+
+        // Generar nombre de archivo
+        $filename = 'asignatura_' . $asignatura->codigo . '_' . date('Y-m-d') . '.json';
+
+        // Devolver como descarga de archivo JSON
+        return response()->json($jsonData, 200, [
+            'Content-Type' => 'application/json',
+            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
      * Descargar plantilla Excel para PlanificaciÃ³n Personal (Pre-llenada con temas)
      */
     public function templatePersonal($id)
