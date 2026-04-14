@@ -394,6 +394,9 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // Módulo de Restauración Académica
-    Route::post('/restauracion/asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'restaurarAsignatura']);
+    Route::post('/restauracion/estado-asignaturas', [\App\Http\Controllers\RestauracionAcademicaController::class, 'estadoAsignaturas'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'restaurarAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
 
 });

@@ -1689,16 +1689,20 @@ class AsignaturaController extends Controller
                         'id' => $grupo->docente->id,
                         'nombre_completo' => $grupo->docente->nombre_completo,
                         'user_id' => $grupo->docente->user_id,
-                        'email' => $grupo->docente->email,
+                        'email' => $grupo->docente->user->email ?? $grupo->docente->email,
+                        'ci' => $grupo->docente->ci ?? $grupo->docente->user->ci ?? null,
                     ];
                 })->filter()->unique('id')->values();
 
                 return [
                     'id' => $a->id,
                     'codigo' => $a->codigo,
+                    'plan_estudios' => $a->plan_estudios,
                     'nombre' => $a->nombre,
                     'creditos' => $a->creditos,
                     'semestre' => $mainCarrera?->pivot?->semestre,
+                    'carrera_id' => $mainCarrera?->id,
+                    'sede_id' => $mainCarrera?->pivot?->sede_id ?? $mainCarrera?->sede?->id,
                     'carrera' => $mainCarrera ? [
                         'id' => $mainCarrera->id,
                         'nombre' => $mainCarrera->nombre,
@@ -1731,6 +1735,8 @@ class AsignaturaController extends Controller
                                         'docente_id' => $pp->user->docente->id ?? null,
                                         'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
                                         'user_id' => $pp->user_id,
+                                        'docente_email' => $pp->user->email ?? $pp->user->docente->email ?? null,
+                                        'docente_ci' => $pp->user->ci ?? $pp->user->docente->ci ?? null,
                                         'estrategias_metodologicas' => $pp->estrategias_metodologicas,
                                         'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
                                         'estrategias_recursos' => $pp->estrategias_recursos,
@@ -1756,12 +1762,19 @@ class AsignaturaController extends Controller
                                     'evaluacion_sumativa' => $t->evaluacion_sumativa,
                                     'horas_teoricas' => $t->horas_teoricas,
                                     'horas_practicas' => $t->horas_practicas,
+                                    'secuencias' => $t->secuencias->map(fn($s) => [
+                                        'id' => $s->id,
+                                        'momento' => $s->momento,
+                                        'descripcion' => $s->descripcion,
+                                        'duracion_minutos' => $s->duracion_minutos,
+                                    ]),
 
                                     'logros_esperados' => $t->logros->map(function ($l) {
                                         return [
                                             'id' => $l->id,
                                             'descripcion' => $l->descripcion,
                                             'tipo_logro' => $l->tipo_logro,
+                                            'periodo' => $l->periodo,
                                             'indicadores' => $l->indicadores->map(fn($i) => [
                                                 'id' => $i->id,
                                                 'descripcion' => $i->descripcion,
@@ -1772,6 +1785,17 @@ class AsignaturaController extends Controller
                                         'id' => $b->id,
                                         'titulo' => $b->titulo,
                                         'autor' => $b->autor,
+                                        'descripcion' => $b->descripcion,
+                                        'editorial' => $b->editorial,
+                                        'edicion' => $b->edicion,
+                                        'anio' => $b->anio,
+                                        'tipo' => $b->tipo,
+                                        'isbn' => $b->isbn,
+                                        'paginas' => $b->paginas,
+                                        'pivot' => [
+                                            'pagina_desde' => $b->pivot?->pagina_desde,
+                                            'pagina_hasta' => $b->pivot?->pagina_hasta,
+                                        ],
                                     ]),
                                     'planificaciones_personales' => $planificacionesPorDocente,
                                 ];
