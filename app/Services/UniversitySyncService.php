@@ -106,9 +106,12 @@ class UniversitySyncService
         $courseCode = $data['courseCode'] ?? null;
         if (!$courseCode) return;
 
-        // Find or create asignatura
+        // Find or create asignatura (evitar valores nulos en plan_estudios)
         $asignatura = Asignatura::updateOrCreate(
-            ['codigo' => $courseCode],
+            [
+                'codigo' => $courseCode,
+                'plan_estudios' => 'N'
+            ],
             [
                 'nombre' => $data['courseName'] ?? $courseCode,
                 'creditos' => $data['credits'] ?? 0,

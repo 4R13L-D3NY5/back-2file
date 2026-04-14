@@ -45,6 +45,11 @@ class PlanningSyncService
                 try {
                     $dto = AcademicDataDTO::fromArray($rawItem);
 
+                    // Requerimiento: omitir asignaturas donde plan_estudios sea null o vacío
+                    if (empty($dto->planEst)) {
+                        continue;
+                    }
+
                     // 1. Sede
                     $sede = Sede::firstOrCreate(
                         ['id' => $dto->idSede],
