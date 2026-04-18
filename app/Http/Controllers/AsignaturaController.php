@@ -1740,6 +1740,253 @@ class AsignaturaController extends Controller
     }
 
     /**
+     * Exportacion completa de documentacion por carrera.
+     * GET /api/export/documentacion-carrera?carrera_id=X&sede_id=Y&token=TOKEN
+     */
+    public function documentacionCarrera(Request $request)
+    {
+        $invalidTokenResponse = $this->validateProgramasApiToken($request);
+        if ($invalidTokenResponse) {
+            return $invalidTokenResponse;
+        }
+
+        $request->validate([
+            'carrera_id' => 'required|integer',
+            'sede_id' => 'nullable|integer',
+        ]);
+
+        $query = Asignatura::query()->with([
+            'unidades.temas.logros.indicadores',
+            'unidades.temas.secuencias',
+            'unidades.temas.bibliografias',
+            'unidades.temas.planificacionesPersonales.user.docente',
+            'bibliografias',
+            'carreras.sede',
+            'grupos.docente.user',
+        ]);
+
+        $query->whereHas('carreras', function ($q) use ($request) {
+            $q->where('carreras.id', $request->integer('carrera_id'));
+
+            if ($request->filled('sede_id')) {
+                $q->where(function ($sub) use ($request) {
+                    $sub->where('asignatura_carrera.sede_id', $request->integer('sede_id'))
+                        ->orWhere('carreras.sede_id', $request->integer('sede_id'));
+                });
+            }
+        });
+
+        $asignaturas = $query->orderBy('nombre')->get();
+
+        return response()->json([
+            'status' => 'success',
+            'total' => $asignaturas->count(),
+            'carrera_id' => $request->integer('carrera_id'),
+            'sede_id' => $request->filled('sede_id') ? $request->integer('sede_id') : null,
+            'data' => [
+                'asignaturas' => $asignaturas->map(function ($asignatura) {
+                    return $this->buildAsignaturaDocumentacionPayload($asignatura);
+                }),
+            ],
+        ]);
+    }
+
+    /**
+     * Exportacion completa de documentacion por asignatura.
+     * GET /api/export/documentacion-asignatura?codigo=XXX&sede_id=Y&token=TOKEN
+     */
+    public function documentacionAsignatura(Request $request)
+    {
+        $invalidTokenResponse = $this->validateProgramasApiToken($request);
+        if ($invalidTokenResponse) {
+            return $invalidTokenResponse;
+        }
+
+        $request->validate([
+            'codigo' => 'required|string',
+            'sede_id' => 'nullable|integer',
+        ]);
+
+        $query = Asignatura::query()->with([
+            'unidades.temas.logros.indicadores',
+            'unidades.temas.secuencias',
+            'unidades.temas.bibliografias',
+            'unidades.temas.planificacionesPersonales.user.docente',
+            'bibliografias',
+            'carreras.sede',
+            'grupos.docente.user',
+        ])->where('codigo', $request->input('codigo'));
+
+        if ($request->filled('sede_id')) {
+            $query->whereHas('carreras', function ($q) use ($request) {
+                $q->where(function ($sub) use ($request) {
+                    $sub->where('asignatura_carrera.sede_id', $request->integer('sede_id'))
+                        ->orWhere('carreras.sede_id', $request->integer('sede_id'));
+                });
+            });
+        }
+
+        $asignatura = $query->first();
+
+        if (!$asignatura) {
+            return response()->json(['status' => 'error', 'message' => 'Asignatura no encontrada.'], 404);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $this->buildAsignaturaDocumentacionPayload($asignatura),
+        ]);
+    }
+
+    private function validateProgramasApiToken(Request $request)
+    {
+        $expectedToken = env('PROGRAMAS_API_TOKEN', 'unitepc-programas-2026');
+        $providedToken = $request->bearerToken() ?? $request->query('token');
+
+        if (!$providedToken || $providedToken !== $expectedToken) {
+            return response()->json(['status' => 'error', 'message' => 'Token invalido o no proporcionado.'], 401);
+        }
+
+        return null;
+    }
+
+    private function buildAsignaturaDocumentacionPayload(Asignatura $asignatura): array
+    {
+        $mainCarrera = $asignatura->carreras->first();
+        $docentes = $asignatura->grupos
+            ->map(function ($grupo) {
+                if (!$grupo->docente) {
+                    return null;
+                }
+
+                return [
+                    'id' => $grupo->docente->id,
+                    'nombre_completo' => $grupo->docente->nombre_completo,
+                    'user_id' => $grupo->docente->user_id,
+                    'email' => $grupo->docente->user->email ?? $grupo->docente->email,
+                    'ci' => $grupo->docente->ci ?? $grupo->docente->user->ci ?? null,
+                ];
+            })
+            ->filter()
+            ->unique('id')
+            ->values();
+
+        return [
+            'id' => $asignatura->id,
+            'codigo' => $asignatura->codigo,
+            'plan_estudios' => $asignatura->plan_estudios,
+            'nombre' => $asignatura->nombre,
+            'creditos' => $asignatura->creditos,
+            'semestre' => $mainCarrera?->pivot?->semestre,
+            'carrera_id' => $mainCarrera?->id,
+            'sede_id' => $mainCarrera?->pivot?->sede_id ?? $mainCarrera?->sede?->id,
+            'carrera' => $mainCarrera ? [
+                'id' => $mainCarrera->id,
+                'nombre' => $mainCarrera->nombre,
+                'sede' => $mainCarrera->sede?->nombre,
+            ] : null,
+            'descripcion' => $asignatura->descripcion,
+            'justificacion' => $asignatura->justificacion,
+            'proposito_general' => $asignatura->proposito_general,
+            'competencia_asignatura' => $asignatura->competencia_asignatura,
+            'competencia_global_especifica' => $asignatura->competencia_global_especifica,
+            'elementos_competencia' => $asignatura->elementos_competencia,
+            'contenido_minimo' => $asignatura->contenido_minimo,
+            'metodologia_general' => $asignatura->metodologia_general,
+            'sistema_evaluacion' => $asignatura->sistema_evaluacion,
+            'requisitos' => $asignatura->requisitos,
+            'unidades' => $asignatura->unidades->map(function ($unidad) {
+                return [
+                    'id' => $unidad->id,
+                    'numero' => $unidad->numero,
+                    'titulo' => $unidad->titulo,
+                    'elemento_competencia' => $unidad->elemento_competencia,
+                    'temas' => $unidad->temas->map(function ($tema) {
+                        $planificaciones = $tema->planificacionesPersonales->map(function ($planificacion) {
+                            return [
+                                'docente_id' => $planificacion->user->docente->id ?? null,
+                                'docente_nombre' => $planificacion->user->docente->nombre_completo ?? 'N/A',
+                                'user_id' => $planificacion->user_id,
+                                'docente_email' => $planificacion->user->email ?? $planificacion->user->docente->email ?? null,
+                                'docente_ci' => $planificacion->user->ci ?? $planificacion->user->docente->ci ?? null,
+                                'estrategias_metodologicas' => $planificacion->estrategias_metodologicas,
+                                'estrategias_aprendizaje' => $planificacion->estrategias_aprendizaje,
+                                'estrategias_recursos' => $planificacion->estrategias_recursos,
+                                'evaluacion_formativa' => $planificacion->evaluacion_formativa,
+                                'evaluacion_sumativa' => $planificacion->evaluacion_sumativa,
+                                'secuencia_didactica' => $planificacion->secuencia_didactica,
+                            ];
+                        });
+
+                        return [
+                            'id' => $tema->id,
+                            'titulo' => $tema->titulo,
+                            'orden' => $tema->orden,
+                            'resultado_aprendizaje' => $tema->resultado_aprendizaje,
+                            'contenido_items' => $tema->contenido_items,
+                            'contenido_conceptual' => $tema->contenido_conceptual,
+                            'contenido_procedimental' => $tema->contenido_procedimental,
+                            'contenido_actitudinal' => $tema->contenido_actitudinal,
+                            'estrategias_metodologicas' => $tema->estrategias_metodologicas,
+                            'estrategias_aprendizaje' => $tema->estrategias_aprendizaje,
+                            'estrategias_recursos' => $tema->estrategias_recursos,
+                            'evaluacion_formativa' => $tema->evaluacion_formativa,
+                            'evaluacion_sumativa' => $tema->evaluacion_sumativa,
+                            'horas_teoricas' => $tema->horas_teoricas,
+                            'horas_practicas' => $tema->horas_practicas,
+                            'secuencias' => $tema->secuencias->map(fn($secuencia) => [
+                                'id' => $secuencia->id,
+                                'momento' => $secuencia->momento,
+                                'descripcion' => $secuencia->descripcion,
+                                'duracion_minutos' => $secuencia->duracion_minutos,
+                            ]),
+                            'logros_esperados' => $tema->logros->map(function ($logro) {
+                                return [
+                                    'id' => $logro->id,
+                                    'descripcion' => $logro->descripcion,
+                                    'tipo_logro' => $logro->tipo_logro,
+                                    'periodo' => $logro->periodo,
+                                    'indicadores' => $logro->indicadores->map(fn($indicador) => [
+                                        'id' => $indicador->id,
+                                        'descripcion' => $indicador->descripcion,
+                                    ]),
+                                ];
+                            }),
+                            'bibliografias' => $tema->bibliografias->map(fn($bibliografia) => [
+                                'id' => $bibliografia->id,
+                                'titulo' => $bibliografia->titulo,
+                                'autor' => $bibliografia->autor,
+                                'descripcion' => $bibliografia->descripcion,
+                                'editorial' => $bibliografia->editorial,
+                                'edicion' => $bibliografia->edicion,
+                                'anio' => $bibliografia->anio,
+                                'tipo' => $bibliografia->tipo,
+                                'isbn' => $bibliografia->isbn,
+                                'paginas' => $bibliografia->paginas,
+                                'pivot' => [
+                                    'pagina_desde' => $bibliografia->pivot?->pagina_desde,
+                                    'pagina_hasta' => $bibliografia->pivot?->pagina_hasta,
+                                ],
+                            ]),
+                            'planificaciones_personales' => $planificaciones,
+                        ];
+                    }),
+                ];
+            }),
+            'bibliografias' => $asignatura->bibliografias->map(fn($bibliografia) => [
+                'id' => $bibliografia->id,
+                'titulo' => $bibliografia->titulo,
+                'autor' => $bibliografia->autor,
+                'editorial' => $bibliografia->editorial,
+                'anio' => $bibliografia->anio,
+                'tipo' => $bibliografia->tipo,
+            ]),
+            'docentes' => $docentes,
+            'progreso' => $asignatura->estadisticas_progreso,
+        ];
+    }
+
+    /**
      * Descargar plantilla Excel para Planificación Personal (Pre-llenada con temas)
      */
     public function templatePersonal($id)

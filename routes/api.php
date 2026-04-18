@@ -21,6 +21,8 @@ Route::post('/register', [AuthController::class, 'register']);
 // Programas Analíticos (público con token estático)
 // Programas Analíticos (público con token estático)
 Route::get('/programas-analiticos', [\App\Http\Controllers\AsignaturaController::class, 'programasAnaliticos']);
+Route::get('/export/documentacion-carrera', [\App\Http\Controllers\AsignaturaController::class, 'documentacionCarrera']);
+Route::get('/export/documentacion-asignatura', [\App\Http\Controllers\AsignaturaController::class, 'documentacionAsignatura']);
 Route::get('/reportes/semanal/print', [\App\Http\Controllers\ReporteController::class, 'exportWeeklyReportHtml']);
 Route::get('/asignaturas/{id}/template-personal', [AsignaturaController::class, 'templatePersonal']);
 
@@ -392,5 +394,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/logs/{id}/diff',        [\App\Http\Controllers\SyncController::class, 'getDiff']);
         Route::post('/resolver-conflictos',  [\App\Http\Controllers\SyncController::class, 'resolverConflicto']);
     });
+
+    // Modulo de Restauracion Academica
+    Route::post('/restauracion/extraccion-api', [\App\Http\Controllers\RestauracionAcademicaController::class, 'extraerDesdeApiExterna'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/estado-asignaturas', [\App\Http\Controllers\RestauracionAcademicaController::class, 'estadoAsignaturas'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'restaurarAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
 
 });
