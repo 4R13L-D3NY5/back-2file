@@ -127,32 +127,33 @@ class RestauracionAcademicaController extends Controller
                     $planEstudios,
                 );
 
+            $identity = $this->resolveRestoreTargetIdentity(
+                $asignatura,
+                $validated,
+                $data,
+                $planEstudios,
+            );
+
             $asignaturaData = [
-                'nombre' => $data['nombre'] ?? ($asignatura->nombre ?? 'Sin nombre'),
-                'sigla' => $data['sigla'] ?? ($asignatura->sigla ?? null),
-                'plan_estudios' => $planEstudios,
-                'descripcion' => $data['descripcion'] ?? ($asignatura->descripcion ?? null),
-                'justificacion' => $data['justificacion'] ?? ($asignatura->justificacion ?? null),
-                'proposito_general' => $data['proposito_general'] ?? ($asignatura->proposito_general ?? null),
-                'metodologia_general' => $this->toDatabaseValue(
-                    $data['metodologia_general'] ?? ($asignatura->metodologia_general ?? null)
-                ),
-                'sistema_evaluacion' => $this->toDatabaseValue(
-                    $data['sistema_evaluacion'] ?? ($asignatura->sistema_evaluacion ?? null)
-                ),
-                'contenido_minimo' => $data['contenido_minimo'] ?? ($asignatura->contenido_minimo ?? null),
-                'requisitos' => $data['requisitos'] ?? ($asignatura->requisitos ?? null),
-                'competencia_asignatura' => $data['competencia_asignatura'] ?? ($asignatura->competencia_asignatura ?? null),
-                'competencia_global_especifica' => $data['competencia_global_especifica'] ?? ($asignatura->competencia_global_especifica ?? null),
-                'elementos_competencia' => $this->toDatabaseValue(
-                    $data['elementos_competencia'] ?? ($asignatura->elementos_competencia ?? null)
-                ),
+                'nombre' => $identity['nombre'],
+                'sigla' => $identity['sigla'],
+                'plan_estudios' => $identity['plan_estudios'],
+                'descripcion' => $this->extractRestoreField($data, 'descripcion'),
+                'justificacion' => $this->extractRestoreField($data, 'justificacion'),
+                'proposito_general' => $this->extractRestoreField($data, 'proposito_general'),
+                'metodologia_general' => $this->extractRestoreField($data, 'metodologia_general', true),
+                'sistema_evaluacion' => $this->extractRestoreField($data, 'sistema_evaluacion', true),
+                'contenido_minimo' => $this->extractRestoreField($data, 'contenido_minimo'),
+                'requisitos' => $this->extractRestoreField($data, 'requisitos'),
+                'competencia_asignatura' => $this->extractRestoreField($data, 'competencia_asignatura'),
+                'competencia_global_especifica' => $this->extractRestoreField($data, 'competencia_global_especifica'),
+                'elementos_competencia' => $this->extractRestoreField($data, 'elementos_competencia', true),
                 'modificado_localmente' => true,
                 'updated_at' => now(),
             ];
 
             if (!$asignatura) {
-                $asignaturaData['codigo'] = $validated['codigo'];
+                $asignaturaData['codigo'] = $identity['codigo'];
                 $asignaturaData['created_at'] = now();
                 $asignaturaId = DB::table('asignaturas')->insertGetId($asignaturaData);
             } else {
@@ -631,6 +632,46 @@ class RestauracionAcademicaController extends Controller
         }
 
         return $map;
+    }
+
+    private function resolveRestoreTargetIdentity(
+        ?object $asignatura,
+        array $validated,
+        array $data,
+        string $planEstudios
+    ): array {
+        if ($asignatura) {
+            return [
+                'codigo' => $asignatura->codigo,
+                'nombre' => $asignatura->nombre ?? 'Sin nombre',
+                'sigla' => $asignatura->sigla ?? ($data['sigla'] ?? $asignatura->codigo),
+                'plan_estudios' => $asignatura->plan_estudios ?: $planEstudios,
+            ];
+        }
+
+        $codigo = trim((string) ($validated['codigo'] ?? $data['codigo'] ?? ''));
+
+        return [
+            'codigo' => $codigo,
+            'nombre' => trim((string) ($data['nombre'] ?? '')) ?: 'Sin nombre',
+            'sigla' => $data['sigla'] ?? $codigo,
+            'plan_estudios' => $planEstudios,
+        ];
+    }
+
+    private function extractRestoreField(array $data, string $key, bool $encodeStructured = false): mixed
+    {
+        if (!array_key_exists($key, $data)) {
+            return null;
+        }
+
+        $value = $data[$key];
+
+        if ($encodeStructured) {
+            return $this->toDatabaseValue($value);
+        }
+
+        return $value;
     }
 
     private function resolveLocalUserId(array $persona, array &$resolverCache): ?int
