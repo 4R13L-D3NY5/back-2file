@@ -242,15 +242,23 @@ class GrupoController extends Controller
         $asignatura = $grupo->asignatura;
         $docente = $grupo->docente;
 
-        // Context Logic: Determine Sede from Schedules if possible
-        $sedeIdFromGroup = $grupo->horarios->first()?->aula?->bloque?->sede_id;
+        // Context Logic: prefer the academic assignment stored on the group itself.
+        $sedeIdFromGroup = $grupo->sede_id ?: $grupo->horarios->first()?->aula?->bloque?->sede_id;
 
-        // Find the Carrera context that matches the sede of the group
-        $carreraPivot = null;
-        if ($sedeIdFromGroup) {
-            $carreraPivot = $asignatura->carreras->filter(function ($c) use ($sedeIdFromGroup) {
-                return $c->pivot->sede_id == $sedeIdFromGroup;
-            })->first();
+        // Find the Carrera context that matches the group's academic assignment.
+        $carreraPivot = $asignatura->carreras->first(function ($c) use ($grupo, $sedeIdFromGroup) {
+            return (int) $c->id === (int) $grupo->carrera_id
+                && (int) $c->pivot->sede_id === (int) $sedeIdFromGroup;
+        });
+
+        if (!$carreraPivot && $grupo->carrera_id) {
+            $carreraPivot = $asignatura->carreras->firstWhere('id', $grupo->carrera_id);
+        }
+
+        if (!$carreraPivot && $sedeIdFromGroup) {
+            $carreraPivot = $asignatura->carreras->first(function ($c) use ($sedeIdFromGroup) {
+                return (int) $c->pivot->sede_id === (int) $sedeIdFromGroup;
+            });
         }
 
         // Fallback to first if not found by sede
@@ -266,9 +274,54 @@ class GrupoController extends Controller
 
         // Load full related data for PDF generation
         $asignatura->load([
-            'unidades.temas',
-            'bibliografias'
+            'unidades' => function ($query) {
+                $query->orderByRaw('CAST(numero AS UNSIGNED), numero')
+                    ->with(['temas' => function ($temaQuery) {
+                        $temaQuery->orderBy('orden')->orderBy('id');
+                    }]);
+            },
+            'bibliografias' => function ($query) {
+                $query->orderByRaw("CASE WHEN LOWER(tipo) LIKE 'bas%' THEN 0 ELSE 1 END")
+                    ->orderBy('id');
+            }
         ]);
+
+        $horasTeoricas = (int) ($asignatura->horas_teoricas ?? 0);
+        $horasPracticas = (int) ($asignatura->horas_practicas ?? 0);
+        $planEstudios = strtoupper((string) ($asignatura->plan_estudios ?: $grupo->plan_estudios ?: 'N'));
+        $hrsSemestreImpresion = $this->calcularHrsSemestreImpresion($asignatura);
+
+        $unidadesImpresion = $asignatura->unidades->map(function ($unidad) {
+            return [
+                'id' => $unidad->id,
+                'numero' => $unidad->numero,
+                'titulo' => $unidad->titulo,
+                'temas' => $unidad->temas->map(function ($tema) {
+                    return [
+                        'id' => $tema->id,
+                        'orden' => $tema->orden,
+                        'titulo' => $tema->titulo,
+                        'contenido_impresion' => $this->construirContenidoImpresionTema($tema),
+                        'contenido_items' => $this->normalizarFragmentosTexto($tema->contenido_items),
+                        'horas_teoricas' => (int) ($tema->horas_teoricas ?? 0),
+                        'horas_practicas' => (int) ($tema->horas_practicas ?? 0),
+                    ];
+                })->values(),
+            ];
+        })->values();
+
+        $bibliografiasImpresion = $asignatura->bibliografias->map(function ($bibliografia) {
+            return [
+                'id' => $bibliografia->id,
+                'tipo' => $bibliografia->tipo,
+                'titulo' => $bibliografia->titulo,
+                'autor' => $bibliografia->autor,
+                'editorial' => $bibliografia->editorial,
+                'edicion' => $bibliografia->edicion,
+                'anio' => $bibliografia->anio,
+                'texto' => $this->formatearBibliografiaImpresion($bibliografia),
+            ];
+        })->values();
 
         $horarios = $grupo->horarios->map(function ($h) {
             return [
@@ -311,8 +364,14 @@ class GrupoController extends Controller
                 'nombre' => $asignatura->nombre,
                 'codigo' => $asignatura->codigo,
                 'creditos' => $asignatura->creditos,
-                'unidades' => $asignatura->unidades,
-                'bibliografia' => $asignatura->bibliografias->pluck('titulo'), // Simplificado para PA
+                'semestre' => $semestre,
+                'plan_estudios' => $planEstudios,
+                'horas_teoricas' => $horasTeoricas,
+                'horas_practicas' => $horasPracticas,
+                'hrs_semestre_impresion' => $hrsSemestreImpresion,
+                'unidades' => $unidadesImpresion,
+                'bibliografias' => $bibliografiasImpresion,
+                'bibliografia' => $bibliografiasImpresion->pluck('texto')->filter()->values(),
                 'objetivo_general' => $asignatura->objetivo_general ?? 'Desarrollar competencias profesionales en el área.'
             ],
             'codigo_asignatura' => $asignatura->codigo,
@@ -322,6 +381,76 @@ class GrupoController extends Controller
             'horarios' => $horarios,
             'examenes' => $examenes
         ]);
+    }
+
+    private function calcularHrsSemestreImpresion(Asignatura $asignatura): int
+    {
+        $horasSemanales = (int) ($asignatura->horas_teoricas ?? 0) + (int) ($asignatura->horas_practicas ?? 0);
+
+        if ($horasSemanales > 0) {
+            return $horasSemanales * 20;
+        }
+
+        $cargaHoraria = (int) ($asignatura->carga_horaria_total ?? 0);
+        if ($cargaHoraria > 0) {
+            return $cargaHoraria;
+        }
+
+        return 0;
+    }
+
+    private function construirContenidoImpresionTema($tema): string
+    {
+        $partes = [];
+
+        foreach ($this->normalizarFragmentosTexto($tema->contenido_items) as $fragmento) {
+            $partes[] = $fragmento;
+        }
+
+        $texto = implode('. ', array_unique(array_filter($partes)));
+        $texto = preg_replace('/\s+/', ' ', trim((string) $texto));
+
+        if ($texto === '') {
+            return '';
+        }
+
+        return rtrim($texto, '. ') . '.';
+    }
+
+    private function normalizarFragmentosTexto($valor): array
+    {
+        if (is_string($valor)) {
+            $decodificado = json_decode($valor, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decodificado)) {
+                return $this->normalizarFragmentosTexto($decodificado);
+            }
+
+            $limpio = trim(preg_replace('/\s+/', ' ', preg_replace('/^[\p{Pd}\p{Po}\x{2022}o]+\s*/u', '', strip_tags($valor))));
+            return $limpio !== '' ? [$limpio] : [];
+        }
+
+        if (is_array($valor)) {
+            $resultado = [];
+            foreach ($valor as $item) {
+                $resultado = array_merge($resultado, $this->normalizarFragmentosTexto($item));
+            }
+            return $resultado;
+        }
+
+        return [];
+    }
+
+    private function formatearBibliografiaImpresion($bibliografia): string
+    {
+        $partes = array_filter([
+            trim((string) ($bibliografia->autor ?? '')),
+            trim((string) ($bibliografia->titulo ?? '')),
+            trim((string) ($bibliografia->editorial ?? '')),
+            trim((string) ($bibliografia->edicion ?? '')),
+            trim((string) ($bibliografia->anio ?? '')),
+        ]);
+
+        return implode('. ', $partes);
     }
 
     /**
