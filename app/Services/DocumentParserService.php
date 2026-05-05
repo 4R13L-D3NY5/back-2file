@@ -252,21 +252,20 @@ class DocumentParserService
     private function extractTextFromElement($element): string
     {
         $text = '';
-        if (method_exists($element, 'getText')) {
-            $text .= $element->getText();
-        } elseif (method_exists($element, 'getElements')) {
+        if (method_exists($element, 'getElements')) {
             foreach ($element->getElements() as $child) {
-                $text .= $this->extractTextFromElement($child);
+                $text .= $this->extractTextFromElement($child) . ' ';
+            }
+        } elseif (method_exists($element, 'getText')) {
+            $value = $element->getText();
+            if (is_object($value)) {
+                $text .= $this->extractTextFromElement($value);
+            } else {
+                $text .= (string) $value;
             }
         }
 
-        // Ensure some spacing/formatting? ProgramaAnaliticoParser didn't add extra space.
-        // DocumentParserService's previous TextRun extractor added space.
-        // Let's stick to true raw extraction to avoid merging words if elements are tight,
-        // but adding space might be safer for "TextElement" + "TextElement" in same run.
-        // However, ProgramaAnaliticoParser worked without explicit space.
-
-        return $text;
+        return trim($text);
     }
 
     // extractTextFromTextRun removed/replaced by extractTextFromElement
@@ -398,10 +397,10 @@ class DocumentParserService
     {
         // Regex para Básica/Oficial (Más flexible)
         // Captura: "BIBLIOGRAFIA" + espacio opcional + "BASICA" ó "OFICIAL" o simplemente "BIBLIOGRAFIA" si luego se detecta Complementaria
-        $basicaRegex = '/BIBLIOGRAF[ÍI]A(?:\s+(?:B[ÁA]SICA|OFICIAL))?/ui';
+        $basicaRegex = '/BIBLIOGR[ÁA]F[ÍI]A(?:\s+(?:B[ÁA]SICA|OFICIAL))?/ui';
 
         // Regex para Complementaria
-        $complRegex = '/(?:BIBLIOGRAF[ÍI]A\s+)?COMPLEMENTARIA/ui';
+        $complRegex = '/(?:BIBLIOGR[ÁA]F[ÍI]A\s+)?COMPLEMENTARIA/ui';
 
         // Buscar Básica
         if (preg_match($basicaRegex, $fullText, $matches, PREG_OFFSET_CAPTURE)) {
@@ -461,10 +460,12 @@ class DocumentParserService
             $line = trim($line);
             if (strlen($line) > 10 && !preg_match('/^[\d\.\s:-]+$/', $line)) {
                 $line = preg_replace('/^[\d\.\)\-•✔]+\s*/u', '', $line); // Added ✔ check
+                $line = preg_replace('/\s+([.,;:])/u', '$1', $line);
+                $line = preg_replace('/\s{2,}/u', ' ', $line);
                 $entries[] = trim($line);
             }
         }
-        return array_values(array_unique($entries));
+        return array_values($entries);
     }
 
     private function parseElementosCompetenciaPorUnidad(array &$data): void
@@ -598,6 +599,18 @@ class DocumentParserService
             $line = trim($line);
             if (empty($line)) continue;
 
+            if ($this->isBibliographyBoundary($line)) {
+                if ($currentTema && $currentUnidad) {
+                    $this->finalizeTema($currentTema);
+                    $currentUnidad['temas'][] = $currentTema;
+                    $currentTema = null;
+                }
+                if ($currentUnidad) {
+                    $structure[$currentUnidadNum] = $currentUnidad;
+                }
+                break;
+            }
+
             // Debug LOG con encoding check
             // Log::info("Line: " . mb_convert_encoding($line, 'UTF-8', 'UTF-8')); 
 
@@ -678,6 +691,14 @@ class DocumentParserService
         }
 
         return $structure;
+    }
+
+    private function isBibliographyBoundary(string $line): bool
+    {
+        return preg_match(
+            '/^(?:REFERENCIAS?\s+BIBLIOGR[ÁA]FICAS?|BIBLIOGR[ÁA]F[ÍI]A(?:\s+(?:OFICIAL|B[ÁA]SICA|COMPLEMENTARIA))?)\b/ui',
+            trim($line)
+        ) === 1;
     }
 
     private function finalizeTema(array &$tema)

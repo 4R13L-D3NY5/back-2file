@@ -39,11 +39,13 @@ class BibliografiaController extends Controller
     {
         $request->validate([
             'asignatura_id' => 'required|exists:asignaturas,id',
-            'titulo' => 'required|string',
+            'titulo' => 'nullable|string',
+            'descripcion' => 'required_without:titulo|string',
             'autor' => 'nullable|string',
         ]);
 
-        $bibliografia = Bibliografia::create($request->all());
+        $data = $this->normalizarBibliografiaData($request->all());
+        $bibliografia = Bibliografia::create($data);
 
         if ($bibliografia->asignatura) {
             $this->syncService->syncBibliografias($bibliografia->asignatura);
@@ -58,7 +60,7 @@ class BibliografiaController extends Controller
     public function update(Request $request, $id)
     {
         $bibliografia = Bibliografia::findOrFail($id);
-        $bibliografia->update($request->all());
+        $bibliografia->update($this->normalizarBibliografiaData($request->all()));
 
         if ($bibliografia->asignatura) {
             $this->syncService->syncBibliografias($bibliografia->asignatura);
@@ -81,5 +83,27 @@ class BibliografiaController extends Controller
         }
 
         return response()->json(['message' => 'Eliminado correctamente']);
+    }
+
+    private function normalizarBibliografiaData(array $data): array
+    {
+        $descripcion = trim((string) ($data['descripcion'] ?? ''));
+        $titulo = trim((string) ($data['titulo'] ?? ''));
+
+        if ($descripcion !== '' && ($titulo === '' || !array_key_exists('titulo', $data))) {
+            $data['titulo'] = mb_substr($descripcion, 0, 180);
+        }
+
+        if ($descripcion !== '') {
+            $data['descripcion'] = $descripcion;
+            $data['autor'] = null;
+            $data['editorial'] = null;
+            $data['edicion'] = null;
+            $data['anio'] = null;
+            $data['isbn'] = null;
+            $data['paginas'] = null;
+        }
+
+        return $data;
     }
 }
