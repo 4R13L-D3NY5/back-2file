@@ -834,7 +834,7 @@ class AsignaturaController extends Controller
             // Flags de importación (Refined split: Word only for Units/Themes)
             $importDatos = false;
             $importUnidades = true;
-            $importBiblio = false;
+            $importBiblio = true;
 
             // 1. IMPORTAR DATOS GENERALES (Plan de Asignatura)
             if ($importDatos) {
@@ -1450,9 +1450,9 @@ class AsignaturaController extends Controller
             }
 
             if (!empty($especifica) || !empty($complementaria)) {
-                $asignatura->bibliografias()->delete();
-                if (!empty($especifica)) $this->saveBibliografias($asignatura, $especifica, 'Basica');
-                if (!empty($complementaria)) $this->saveBibliografias($asignatura, $complementaria, 'Complementaria');
+                \Illuminate\Support\Facades\Log::info(
+                    "PAC bibliografia detectada pero omitida: la fuente oficial ahora es el Programa Analitico Word."
+                );
             }
 
             // LOG DE RESULTADOS PARA DEPURACIÓN
@@ -1476,26 +1476,20 @@ class AsignaturaController extends Controller
                 $item = trim($item);
                 if (empty($item)) continue;
 
-                // Truncado estricto a 180 caracteres
-                $titulo = substr($item, 0, 180);
-                $descripcion = (strlen($item) > 180) ? $item : null;
+                $titulo = mb_substr($item, 0, 180);
+                $descripcion = $item;
 
-                // Verificar duplicados simples
-                $exists = $asignatura->bibliografias()
-                    ->where('titulo', $titulo)
-                    ->where('tipo', $tipo)
-                    ->exists();
-
-                if (!$exists) {
-                    $asignatura->bibliografias()->create([
-                        'titulo' => $titulo,
-                        'descripcion' => $descripcion,
-                        'tipo' => $tipo,
-                        'autor' => 'AA.VV.',
-                        'anio' => 'S/F',
-                        'editorial' => 'S/E'
-                    ]);
-                }
+                $asignatura->bibliografias()->create([
+                    'titulo' => $titulo,
+                    'descripcion' => $descripcion,
+                    'tipo' => $tipo,
+                    'autor' => null,
+                    'anio' => null,
+                    'editorial' => null,
+                    'edicion' => null,
+                    'isbn' => null,
+                    'paginas' => null,
+                ]);
             } catch (\Exception $e) {
                 \Illuminate\Support\Facades\Log::warning("Error guardando bibliografia '$item': " . $e->getMessage());
             }
@@ -1726,10 +1720,14 @@ class AsignaturaController extends Controller
                     'bibliografias' => $a->bibliografias->map(fn($b) => [
                         'id' => $b->id,
                         'titulo' => $b->titulo,
+                        'descripcion' => $b->descripcion,
                         'autor' => $b->autor,
                         'editorial' => $b->editorial,
+                        'edicion' => $b->edicion,
                         'anio' => $b->anio,
                         'tipo' => $b->tipo,
+                        'isbn' => $b->isbn,
+                        'paginas' => $b->paginas,
                     ]),
 
                     // Progreso
@@ -1976,10 +1974,14 @@ class AsignaturaController extends Controller
             'bibliografias' => $asignatura->bibliografias->map(fn($bibliografia) => [
                 'id' => $bibliografia->id,
                 'titulo' => $bibliografia->titulo,
+                'descripcion' => $bibliografia->descripcion,
                 'autor' => $bibliografia->autor,
                 'editorial' => $bibliografia->editorial,
+                'edicion' => $bibliografia->edicion,
                 'anio' => $bibliografia->anio,
                 'tipo' => $bibliografia->tipo,
+                'isbn' => $bibliografia->isbn,
+                'paginas' => $bibliografia->paginas,
             ]),
             'docentes' => $docentes,
             'progreso' => $asignatura->estadisticas_progreso,

@@ -315,6 +315,7 @@ class GrupoController extends Controller
                 'id' => $bibliografia->id,
                 'tipo' => $bibliografia->tipo,
                 'titulo' => $bibliografia->titulo,
+                'descripcion' => $bibliografia->descripcion,
                 'autor' => $bibliografia->autor,
                 'editorial' => $bibliografia->editorial,
                 'edicion' => $bibliografia->edicion,
@@ -442,6 +443,11 @@ class GrupoController extends Controller
 
     private function formatearBibliografiaImpresion($bibliografia): string
     {
+        $descripcion = trim((string) ($bibliografia->descripcion ?? ''));
+        if ($descripcion !== '') {
+            return $descripcion;
+        }
+
         $partes = array_filter([
             trim((string) ($bibliografia->autor ?? '')),
             trim((string) ($bibliografia->titulo ?? '')),
