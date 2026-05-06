@@ -21,6 +21,7 @@ class BancoPregunta extends Model
         'dificultad',
         'parcial',
         'peso',
+        'con_cartilla',
         'sede_id',
         'logro_esperado_id',
         'asignatura_id',
@@ -31,7 +32,8 @@ class BancoPregunta extends Model
 
     protected $casts = [
         'opciones' => 'array',
-        'respuesta_correcta' => 'array'
+        'respuesta_correcta' => 'array',
+        'con_cartilla' => 'boolean'
     ];
 
     public function sede()

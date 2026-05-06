@@ -210,6 +210,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/', [BancoPreguntaController::class, 'store']);
         Route::post('/import', [BancoPreguntaController::class, 'import']);
         Route::post('/save-config', [BancoPreguntaController::class, 'saveConfig']);
+        Route::post('/bulk-delete', [BancoPreguntaController::class, 'destroyByFiltro']);
         Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
     });

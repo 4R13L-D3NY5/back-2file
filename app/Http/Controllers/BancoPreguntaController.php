@@ -3,12 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Models\BancoPregunta;
-use App\Models\LogroEsperado;
 use App\Models\BancoPreguntaConfiguracion;
-use Illuminate\Database\Eloquent\Model;
+use App\Models\Docente;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BancoPreguntaController extends Controller
@@ -58,7 +58,9 @@ class BancoPreguntaController extends Controller
             }
         }
         
-        $results = $questions->get();
+        $results = $questions->get()->map(function ($pregunta) {
+            return $this->sanitizePreguntaForResponse($pregunta);
+        });
         $count = $results->count();
         $stats = [
             'facil' => $results->filter(fn($p) => $p->dificultad == 'FACIL' || $p->dificultad == '1')->count(),
@@ -134,22 +136,49 @@ class BancoPreguntaController extends Controller
      */
     public function store(Request $request)
     {
-        // Validar tipos
         $validated = $request->validate([
-            'enunciado' => 'required',
-            'tipo' => 'required|in:SELECCION_UNICA,SELECCION_MULTIPLE,FALSO_VERDADERO',
-            'opciones' => 'nullable|array',
-            'respuesta_correcta' => 'required',
-            'logro_esperado_id' => 'required|exists:logros_esperados,id'
+            'enunciado' => 'required|string',
+            'tipo' => 'required|string',
+            'opciones' => 'nullable',
+            'respuesta_correcta' => 'nullable',
+            'dificultad' => 'nullable',
+            'parcial' => 'nullable|string',
+            'grupo' => 'nullable|string',
+            'grupoTeorico' => 'nullable|string',
+            'image_file' => 'nullable|image|max:5120',
+            'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'sede_id' => 'nullable|exists:sedes,id',
         ]);
 
+        $validated['tipo'] = $this->normalizarTipoPreguntaManual($validated['tipo'] ?? null);
 
-        // Inyectar usuario actual y docente_id
+        if (!in_array($validated['tipo'], $this->tiposPreguntaPermitidos(), true)) {
+            throw ValidationException::withMessages([
+                'tipo' => 'Tipo de pregunta no permitido.',
+            ]);
+        }
+
+        $this->parsePreguntaPayload($validated);
+        $this->sanitizePreguntaPayload($validated);
+        $this->normalizePreguntaPayload($validated);
+
+        if (!empty($validated['parcial'])) {
+            $validated['parcial'] = $this->normalizarTipoExamen($validated['parcial']);
+        }
+
+        if (empty($validated['grupoTeorico']) && !empty($validated['grupo'])) {
+            $validated['grupoTeorico'] = $validated['grupo'];
+        }
+
         $validated['created_by'] = $request->user()?->id;
-        $validated['docente_id'] = \App\Models\Docente::where('user_id', $validated['created_by'])->first()?->id;
+        $validated['docente_id'] = Docente::where('user_id', $validated['created_by'])->first()?->id;
+        $validated['peso'] = $validated['peso'] ?? 1;
+
+        $this->storePreguntaImage($request, $validated);
 
         $pregunta = BancoPregunta::create($validated);
-        return response()->json($pregunta, 201);
+        return response()->json($this->sanitizePreguntaForResponse($pregunta), 201);
     }
     
     public function destroy($id)
@@ -162,6 +191,48 @@ class BancoPreguntaController extends Controller
         return response()->json(null, 204);
     }
 
+    public function destroyByFiltro(Request $request)
+    {
+        $validated = $request->validate([
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'grupo_teorico' => 'required|string',
+            'parcial' => 'required|string',
+        ]);
+
+        $queryDelete = $this->buildBancoDeleteQuery(
+            $validated['asignatura_id'],
+            $validated['grupo_teorico'],
+            $validated['parcial']
+        );
+
+        $preguntas = (clone $queryDelete)->get(['id', 'imagen']);
+        $imagenes = $preguntas
+            ->pluck('imagen')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $deletedCount = $queryDelete->delete();
+
+        foreach ($imagenes as $imagen) {
+            Storage::disk('public')->delete('preguntas/' . $imagen);
+        }
+
+        Log::info('Borrado masivo del banco de preguntas', [
+            'asignatura_id' => $validated['asignatura_id'],
+            'grupo_teorico' => $validated['grupo_teorico'],
+            'parcial' => $this->normalizarTipoExamen($validated['parcial']),
+            'deleted' => $deletedCount,
+            'user_id' => auth()->id(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'deleted' => $deletedCount,
+            'message' => "Se eliminaron {$deletedCount} preguntas del banco filtrado.",
+        ]);
+    }
+
     /**
      * Actualizar una pregunta existente (con soporte para imagen).
      */
@@ -171,40 +242,43 @@ class BancoPreguntaController extends Controller
 
         $validated = $request->validate([
             'enunciado' => 'required|string',
-            'tipo' => 'required|in:SELECCION_UNICA,SELECCION_MULTIPLE,FALSO_VERDADERO,PR,EM,SP',
+            'tipo' => 'required|string',
             'opciones' => 'nullable',
-            'respuesta_correcta' => 'required',
+            'respuesta_correcta' => 'nullable',
             'dificultad' => 'nullable',
             'parcial' => 'nullable|string',
             'grupo' => 'nullable|string',
             'grupoTeorico' => 'nullable|string',
-            'image_file' => 'nullable|image|max:5120'
+            'image_file' => 'nullable|image|max:5120',
+            'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
+            'asignatura_id' => 'nullable|exists:asignaturas,id',
+            'sede_id' => 'nullable|exists:sedes,id',
         ]);
 
-        // Procesar opciones si vienen como string (FormData puede enviarlas así)
-        if (isset($validated['opciones']) && is_string($validated['opciones'])) {
-            $validated['opciones'] = json_decode($validated['opciones'], true);
-        }
-        // Procesar respuesta_correcta si viene como string
-        if (isset($validated['respuesta_correcta']) && is_string($validated['respuesta_correcta'])) {
-             // Si parece un array JSON (e.g. ["A","B"]), decodificar
-             if (str_starts_with($validated['respuesta_correcta'], '[')) {
-                $validated['respuesta_correcta'] = json_decode($validated['respuesta_correcta'], true);
-             }
+        $validated['tipo'] = $this->normalizarTipoPreguntaManual($validated['tipo'] ?? null);
+
+        if (!in_array($validated['tipo'], $this->tiposPreguntaPermitidos(), true)) {
+            throw ValidationException::withMessages([
+                'tipo' => 'Tipo de pregunta no permitido.',
+            ]);
         }
 
-        if ($request->hasFile('image_file')) {
-            if ($pregunta->imagen) {
-                Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
-            }
-            $file = $request->file('image_file');
-            $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
-            $file->storeAs('preguntas', $filename, 'public');
-            $validated['imagen'] = $filename;
+        $this->parsePreguntaPayload($validated);
+        $this->sanitizePreguntaPayload($validated);
+        $this->normalizePreguntaPayload($validated);
+
+        if (!empty($validated['parcial'])) {
+            $validated['parcial'] = $this->normalizarTipoExamen($validated['parcial']);
         }
+
+        if (empty($validated['grupoTeorico']) && !empty($validated['grupo'])) {
+            $validated['grupoTeorico'] = $validated['grupo'];
+        }
+
+        $this->storePreguntaImage($request, $validated, $pregunta);
 
         $pregunta->update($validated);
-        return response()->json($pregunta);
+        return response()->json($this->sanitizePreguntaForResponse($pregunta));
     }
 
     public function import(Request $request)
@@ -223,6 +297,10 @@ class BancoPreguntaController extends Controller
         $sedeId = $request->input('sede_id');
         $grupoTeorico = $request->input('grupoTeorico');
         $conCartilla = $request->boolean('con_cartilla', true);
+        $parcialSolicitado = $request->input('parcial');
+        $parcialSolicitadoNormalizado = $parcialSolicitado
+            ? $this->normalizarTipoExamen($parcialSolicitado)
+            : null;
 
         try {
             $modo = $request->input('modo', 'agregar');
@@ -252,7 +330,7 @@ class BancoPreguntaController extends Controller
             }
 
             $spreadsheet = IOFactory::load($file->getPathname());
-            $worksheet = $spreadsheet->getActiveSheet();
+            $worksheet = $this->resolveBancoWorksheet($spreadsheet);
             $rows = $worksheet->toArray();
             
             if (count($rows) < 2) {
@@ -284,14 +362,6 @@ class BancoPreguntaController extends Controller
             $cols['ENUNCIADO'] = $cols['ENUNCIADO'] ?? 1;
 
             $count = 0;
-            $tipoMap = [
-                'FV' => 'FALSO_VERDADERO',
-                'SS' => 'SELECCION_UNICA',
-                'SM' => 'SELECCION_MULTIPLE',
-                'PR' => 'PROBLEMA',
-                'SP' => 'SUBPROBLEMA',
-                'EM' => 'EMPAREJAMIENTO'
-            ];
 
             \Log::info("Importación Banco: docente_id detectado: " . ($docenteId ?? 'NULL'));
 
@@ -299,22 +369,26 @@ class BancoPreguntaController extends Controller
                 if ($index === 0) continue; // Skip Header
 
                 $rawTipo = mb_strtoupper(trim((string)($row[$cols['TIPO']] ?? '')));
-                $rawEnunciado = trim((string)($row[$cols['ENUNCIADO']] ?? ''));
+                $rawEnunciado = $this->sanitizePreguntaText(trim((string)($row[$cols['ENUNCIADO']] ?? '')));
                 
                 if (empty($rawTipo) && empty($rawEnunciado)) continue; // Skip Empty Rows
 
-                $tipo = $tipoMap[$rawTipo] ?? $rawTipo;
-                if (empty($tipo)) $tipo = 'SELECCION_UNICA'; // default
+                $tipo = $this->normalizarTipoPreguntaBanco($rawTipo);
+                if (empty($tipo)) {
+                    $tipo = 'SELECCION_SIMPLE';
+                }
                 
                 $enunciado = nl2br($rawEnunciado); // Soporte saltos de línea (html)
-                $grupo = isset($cols['GRUPO']) ? trim((string)($row[$cols['GRUPO']] ?? '')) : null;
+                $grupo = isset($cols['GRUPO'])
+                    ? $this->sanitizePreguntaText(trim((string)($row[$cols['GRUPO']] ?? '')))
+                    : null;
 
                 // Construir Opciones
                 $opciones = [];
                 $letters = ['A', 'B', 'C', 'D', 'E'];
                 foreach ($letters as $letter) {
                     if (isset($cols[$letter])) {
-                        $val = trim((string)($row[$cols[$letter]] ?? ''));
+                        $val = $this->sanitizePreguntaText(trim((string)($row[$cols[$letter]] ?? '')));
                         if ($val !== '') {
                             $opciones[] = ['id' => $letter, 'text' => nl2br($val)];
                         }
@@ -322,7 +396,9 @@ class BancoPreguntaController extends Controller
                 }
 
                 // Construir Respuesta
-                $rawResp = isset($cols['RESPUESTA']) ? mb_strtoupper(trim((string)($row[$cols['RESPUESTA']] ?? ''))) : '';
+                $rawResp = isset($cols['RESPUESTA'])
+                    ? mb_strtoupper($this->sanitizePreguntaText(trim((string)($row[$cols['RESPUESTA']] ?? ''))))
+                    : '';
                 if (str_contains($rawResp, ',')) {
                     $respuesta = array_map('trim', explode(',', $rawResp));
                 } else {
@@ -335,7 +411,9 @@ class BancoPreguntaController extends Controller
                     if (empty($respuesta)) {
                         throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" requiere respuesta.");
                     }
-                    $rawDif = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                    $rawDif = isset($cols['DIFICULTAD'])
+                        ? $this->sanitizePreguntaText(trim((string)($row[$cols['DIFICULTAD']] ?? '')))
+                        : '';
                     if ($rawDif === '') {
                         throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" requiere nivel de dificultad (1, 2 o 3).");
                     }
@@ -344,14 +422,16 @@ class BancoPreguntaController extends Controller
                     if (!empty($respuesta)) {
                         throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" NO debe tener respuesta (debe estar vacía).");
                     }
-                    $rawDif = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                    $rawDif = isset($cols['DIFICULTAD'])
+                        ? $this->sanitizePreguntaText(trim((string)($row[$cols['DIFICULTAD']] ?? '')))
+                        : '';
                     if ($rawDif !== '') {
                         throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" NO debe tener dificultad (debe estar vacía).");
                     }
                 }
 
                 // 2. Validaciones para SM
-                if ($tipo === 'SELECCION_MULTIPLE') {
+                if ($tipo === 'RESPUESTA_COMPUESTA') {
                     // 1. Validar que tenga exactamente 2 respuestas
                     $respLetters = is_array($respuesta) ? implode('', $respuesta) : $respuesta;
                     $lettersOnly = preg_replace('/[^A-E]/', '', $respLetters);
@@ -364,18 +444,24 @@ class BancoPreguntaController extends Controller
                     }
                 }
 
-                $dificultad = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                $dificultad = isset($cols['DIFICULTAD'])
+                    ? $this->sanitizePreguntaText(trim((string)($row[$cols['DIFICULTAD']] ?? '')))
+                    : '';
                 
                 // PR y EM no llevan dificultad por regla de negocio
                 if ($tipo === 'PROBLEMA' || $tipo === 'EMPAREJAMIENTO') {
-                    $dificultad = null;
+                    $dificultad = '';
                 } else {
                     $dificultad = $dificultad ?: 'MEDIA';
                 }
 
-                $parcial = isset($cols['PARCIAL']) ? trim((string)($row[$cols['PARCIAL']] ?? '')) : null;
+                $parcial = isset($cols['PARCIAL'])
+                    ? $this->sanitizePreguntaText(trim((string)($row[$cols['PARCIAL']] ?? '')))
+                    : null;
                 if ($parcial) {
                     $parcial = $this->normalizarTipoExamen($parcial);
+                } elseif ($parcialSolicitadoNormalizado) {
+                    $parcial = $parcialSolicitadoNormalizado;
                 }
 
                 BancoPregunta::create([
@@ -407,11 +493,51 @@ class BancoPreguntaController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            $message = $e->getMessage();
+            $statusCode = 500;
+
+            if (
+                str_starts_with($message, 'Fila ')
+                || str_contains($message, 'hoja Banco')
+                || str_contains($message, 'filas de datos')
+            ) {
+                $statusCode = 422;
+            }
+
             return response()->json([
                 'success' => false,
-                'error' => 'Error al procesar el archivo Excel: ' . $e->getMessage()
-            ], 500);
+                'error' => 'Error al procesar el archivo Excel: ' . $message
+            ], $statusCode);
         }
+    }
+
+    private function resolveBancoWorksheet($spreadsheet)
+    {
+        $worksheet = $spreadsheet->getSheetByName('Banco');
+        if ($worksheet) {
+            return $worksheet;
+        }
+
+        foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
+            $title = mb_strtoupper(trim((string) $sheet->getTitle()));
+            if ($title === 'BANCO') {
+                return $sheet;
+            }
+        }
+
+        foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
+            $rows = $sheet->toArray(null, false, false, false);
+            $headers = array_map(
+                fn($header) => mb_strtoupper(trim((string) $header)),
+                $rows[0] ?? []
+            );
+
+            if (in_array('TIPO', $headers, true) && in_array('ENUNCIADO', $headers, true)) {
+                return $sheet;
+            }
+        }
+
+        throw new \Exception('No se encontro la hoja Banco con los encabezados esperados.');
     }
 
     /**
@@ -433,15 +559,7 @@ class BancoPreguntaController extends Controller
 
         // Si es Sin Cartilla (false), procedemos a limpiar el banco de preguntas para este grupo/parcial
         if (!$conCartilla) {
-            $docenteId = \App\Models\Docente::where('user_id', auth()->id())->first()?->id;
-            
-            $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
-                ->where('grupoTeorico', $grupoTeorico)
-                ->where('parcial', $this->normalizarTipoExamen($parcial));
-            
-            if ($docenteId) {
-                $queryDelete->where('docente_id', $docenteId);
-            }
+            $queryDelete = $this->buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial);
 
             $deletedCount = $queryDelete->delete();
             
@@ -464,6 +582,23 @@ class BancoPreguntaController extends Controller
             'message' => 'Configuración guardada correctamente',
             'configuracion' => $config
         ]);
+    }
+
+    private function buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial)
+    {
+        $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
+            ->where('grupoTeorico', $grupoTeorico)
+            ->where('parcial', $this->normalizarTipoExamen($parcial));
+
+        $docenteId = Docente::where('user_id', auth()->id())->first()?->id;
+
+        if ($docenteId) {
+            $queryDelete->where('docente_id', $docenteId);
+        } elseif (auth()->id()) {
+            $queryDelete->where('created_by', auth()->id());
+        }
+
+        return $queryDelete;
     }
 
     private function updateOrCreateConfig($asignaturaId, $grupoTeorico, $parcial, $conCartilla)
@@ -511,6 +646,302 @@ class BancoPreguntaController extends Controller
 
         return $mapping[$tipo] ?? $tipo;
     }
+
+    private function tiposPreguntaPermitidos(): array
+    {
+        return [
+            'FALSO_VERDADERO',
+            'RESPUESTA_COMPUESTA',
+            'PREGUNTA_CON_CLAVE',
+            'SELECCION_SIMPLE',
+            'EMPAREJAMIENTO',
+            'OPCION_EMPAREJAMIENTO',
+            'PROBLEMA',
+            'SUBPROBLEMA',
+        ];
+    }
+
+    private function normalizarTipoPreguntaBanco(?string $tipo): ?string
+    {
+        return $this->normalizarTipoPreguntaManual($tipo);
+    }
+
+    private function normalizarTipoPreguntaManual(?string $tipo): ?string
+    {
+        $normalized = mb_strtoupper(trim((string) $tipo));
+
+        $map = [
+            'FV' => 'FALSO_VERDADERO',
+            'FALSO_VERDADERO' => 'FALSO_VERDADERO',
+            'VERDADERO O FALSO' => 'FALSO_VERDADERO',
+            'FALSO O VERDADERO' => 'FALSO_VERDADERO',
+            'RESPUESTA_COMPUESTA' => 'RESPUESTA_COMPUESTA',
+            'SELECCION_MULTIPLE' => 'RESPUESTA_COMPUESTA',
+            'SM' => 'RESPUESTA_COMPUESTA',
+            'PREGUNTA_CON_CLAVE' => 'PREGUNTA_CON_CLAVE',
+            'PREGUNTA CON CLAVE' => 'PREGUNTA_CON_CLAVE',
+            'SELECCION_SIMPLE' => 'SELECCION_SIMPLE',
+            'SELECCION_UNICA' => 'SELECCION_SIMPLE',
+            'SELECCION SIMPLE' => 'SELECCION_SIMPLE',
+            'SS' => 'SELECCION_SIMPLE',
+            'SU' => 'SELECCION_SIMPLE',
+            'EMPAREJAMIENTO' => 'EMPAREJAMIENTO',
+            'EM' => 'EMPAREJAMIENTO',
+            'OPCION_EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'PROBLEMA' => 'PROBLEMA',
+            'PROBLEMA O CASO' => 'PROBLEMA',
+            'PR' => 'PROBLEMA',
+            'SUBPROBLEMA' => 'SUBPROBLEMA',
+            'SUB PROBLEMA' => 'SUBPROBLEMA',
+            'SUBPREGUNTA' => 'SUBPROBLEMA',
+            'SP' => 'SUBPROBLEMA',
+        ];
+
+        return $map[$normalized] ?? $normalized;
+    }
+
+    private function sanitizePreguntaForResponse(BancoPregunta $pregunta): BancoPregunta
+    {
+        $pregunta->enunciado = $this->sanitizePreguntaText($pregunta->enunciado);
+        $pregunta->grupo = $this->sanitizePreguntaText($pregunta->grupo);
+        $pregunta->grupoTeorico = $this->sanitizePreguntaText($pregunta->grupoTeorico);
+        $pregunta->dificultad = $this->sanitizePreguntaText($pregunta->dificultad);
+        $pregunta->parcial = $this->sanitizePreguntaText($pregunta->parcial);
+        $pregunta->opciones = $this->sanitizePreguntaValue($pregunta->opciones);
+        $pregunta->respuesta_correcta = $this->sanitizePreguntaValue($pregunta->respuesta_correcta);
+
+        return $pregunta;
+    }
+
+    private function sanitizePreguntaPayload(array &$validated): void
+    {
+        foreach (['enunciado', 'grupo', 'grupoTeorico', 'parcial', 'dificultad'] as $field) {
+            if (array_key_exists($field, $validated) && is_string($validated[$field])) {
+                $validated[$field] = $this->sanitizePreguntaText($validated[$field]);
+            }
+        }
+
+        if (array_key_exists('opciones', $validated)) {
+            $validated['opciones'] = $this->sanitizePreguntaValue($validated['opciones']);
+        }
+
+        if (array_key_exists('respuesta_correcta', $validated)) {
+            $validated['respuesta_correcta'] = $this->sanitizePreguntaValue($validated['respuesta_correcta']);
+        }
+    }
+
+    private function sanitizePreguntaValue($value)
+    {
+        if (is_string($value)) {
+            return $this->sanitizePreguntaText($value);
+        }
+
+        if (is_array($value)) {
+            return array_map(fn ($item) => $this->sanitizePreguntaValue($item), $value);
+        }
+
+        return $value;
+    }
+
+    private function sanitizePreguntaText($value): string
+    {
+        $text = (string) ($value ?? '');
+
+        if ($text === '') {
+            return '';
+        }
+
+        $text = str_replace(
+            [
+                'F�cil',
+                'Dif�cil',
+                'Te�rico',
+                'relaci�n',
+                't�rmino',
+                'instrucci�n',
+                'informaci�n',
+                'visualizaci�n',
+                'importaci�n',
+                'configuraci�n',
+                'combinaci�n',
+                'despu�s',
+                'm�nimo',
+                'v�lidas',
+                'cl�nico',
+                'cl�nica',
+                'diagn�stico',
+                'diagn�stica',
+                'presi�n',
+                'sist�lica',
+                'diast�lica',
+                'activaci�n',
+                'parasimp�tica',
+                'simp�tica',
+                'contracci�n',
+                'relajaci�n',
+                'est�n',
+                'm�s',
+                'n�useas',
+                'pedi�trico',
+                'radiograf�a',
+                'ecograf�a',
+                '�ptico',
+                'raqu�deo',
+                'hipertensi�n',
+                'fibrilaci�n',
+                'Cu�les',
+                'cu�les',
+                'Qu�',
+                'qu�',
+                'est�',
+            ],
+            [
+                'Fácil',
+                'Difícil',
+                'Teórico',
+                'relación',
+                'término',
+                'instrucción',
+                'información',
+                'visualización',
+                'importación',
+                'configuración',
+                'combinación',
+                'después',
+                'mínimo',
+                'válidas',
+                'clínico',
+                'clínica',
+                'diagnóstico',
+                'diagnóstica',
+                'presión',
+                'sistólica',
+                'diastólica',
+                'activación',
+                'parasimpática',
+                'simpática',
+                'contracción',
+                'relajación',
+                'están',
+                'más',
+                'náuseas',
+                'pediátrico',
+                'radiografía',
+                'ecografía',
+                'óptico',
+                'raquídeo',
+                'hipertensión',
+                'fibrilación',
+                'Cuáles',
+                'cuáles',
+                'Qué',
+                'qué',
+                'está',
+            ],
+            $text
+        );
+
+        if (preg_match('/[ÃÂâ]/u', $text)) {
+            $decoded = $this->decodeLatin1Utf8String($text);
+            if ($this->mojibakeScore($decoded) < $this->mojibakeScore($text)) {
+                $text = $decoded;
+            }
+        }
+
+        return $text;
+    }
+
+    private function decodeLatin1Utf8String(string $text): string
+    {
+        $chars = preg_split('//u', $text, -1, PREG_SPLIT_NO_EMPTY);
+        $bytes = '';
+
+        foreach ($chars as $char) {
+            $ord = mb_ord($char, 'UTF-8');
+
+            if ($ord === false || $ord > 255) {
+                return $text;
+            }
+
+            $bytes .= chr($ord);
+        }
+
+        return mb_check_encoding($bytes, 'UTF-8') ? $bytes : $text;
+    }
+
+    private function mojibakeScore(string $text): int
+    {
+        preg_match_all('/[ÃÂâ�]/u', $text, $matches);
+        return count($matches[0]);
+    }
+
+    private function parsePreguntaPayload(array &$validated): void
+    {
+        if (isset($validated['opciones']) && is_string($validated['opciones'])) {
+            $decoded = json_decode($validated['opciones'], true);
+            $validated['opciones'] = is_array($decoded) ? $decoded : [];
+        }
+
+        if (isset($validated['respuesta_correcta']) && is_string($validated['respuesta_correcta'])) {
+            $trimmed = trim($validated['respuesta_correcta']);
+
+            if (str_starts_with($trimmed, '[')) {
+                $decoded = json_decode($trimmed, true);
+                $validated['respuesta_correcta'] = is_array($decoded) ? $decoded : [];
+            }
+        }
+    }
+
+    private function normalizePreguntaPayload(array &$validated): void
+    {
+        $tipo = $validated['tipo'] ?? null;
+        $requiereRespuesta = !in_array($tipo, ['PROBLEMA', 'EMPAREJAMIENTO'], true);
+        $usaOpciones = in_array(
+            $tipo,
+            ['FALSO_VERDADERO', 'RESPUESTA_COMPUESTA', 'PREGUNTA_CON_CLAVE', 'SELECCION_SIMPLE', 'SUBPROBLEMA'],
+            true
+        );
+
+        if (!$requiereRespuesta) {
+            $validated['respuesta_correcta'] = [];
+            $validated['opciones'] = [];
+            $validated['dificultad'] = '';
+            return;
+        }
+
+        $respuesta = $validated['respuesta_correcta'] ?? null;
+        $respuestaVacia = is_array($respuesta)
+            ? count(array_filter($respuesta, fn ($item) => trim((string) $item) !== '')) === 0
+            : trim((string) $respuesta) === '';
+
+        if ($respuestaVacia) {
+            throw ValidationException::withMessages([
+                'respuesta_correcta' => 'La respuesta correcta es obligatoria para este tipo de pregunta.',
+            ]);
+        }
+
+        if (!$usaOpciones) {
+            $validated['opciones'] = [];
+        }
+    }
+
+    private function storePreguntaImage(Request $request, array &$validated, ?BancoPregunta $pregunta = null): void
+    {
+        if (!$request->hasFile('image_file')) {
+            return;
+        }
+
+        if ($pregunta?->imagen) {
+            Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+        }
+
+        $file = $request->file('image_file');
+        $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+        $file->storeAs('preguntas', $filename, 'public');
+        $validated['imagen'] = $filename;
+    }
+
     public function showImage($filename)
     {
         $path = storage_path('app/public/preguntas/' . $filename);
