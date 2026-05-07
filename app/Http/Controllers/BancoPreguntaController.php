@@ -397,13 +397,9 @@ class BancoPreguntaController extends Controller
 
                 // Construir Respuesta
                 $rawResp = isset($cols['RESPUESTA'])
-                    ? mb_strtoupper($this->sanitizePreguntaText(trim((string)($row[$cols['RESPUESTA']] ?? ''))))
+                    ? $this->sanitizePreguntaText(trim((string)($row[$cols['RESPUESTA']] ?? '')))
                     : '';
-                if (str_contains($rawResp, ',')) {
-                    $respuesta = array_map('trim', explode(',', $rawResp));
-                } else {
-                    $respuesta = $rawResp;
-                }
+                $respuesta = $this->normalizarRespuestaBancoExcel($rawResp);
 
                 // Validaciones por Tipo
                 // 1. Respuesta y Dificultad Obligatorias (Excepto PROBLEMA/EMPAREJAMIENTO)
@@ -430,17 +426,24 @@ class BancoPreguntaController extends Controller
                     }
                 }
 
-                // 2. Validaciones para SM
+                // 2. Validaciones por estructura especial
                 if ($tipo === 'RESPUESTA_COMPUESTA') {
-                    // 1. Validar que tenga exactamente 2 respuestas
-                    $respLetters = is_array($respuesta) ? implode('', $respuesta) : $respuesta;
-                    $lettersOnly = preg_replace('/[^A-E]/', '', $respLetters);
-                    if (strlen($lettersOnly) !== 2) {
-                        throw new \Exception("Fila " . ($index + 1) . ": Selección Múltiple (SM) DEBE tener exactamente 2 respuestas correctas (ej: A,B).");
+                    $respLetter = is_array($respuesta) ? ($respuesta[0] ?? '') : $respuesta;
+                    if (!in_array($respLetter, ['A', 'B', 'C', 'D'], true)) {
+                        throw new \Exception("Fila " . ($index + 1) . ": Respuesta Compuesta debe tener una respuesta entre A y D.");
                     }
-                    // 2. Validar que tenga las 5 opciones A-E rellenadas
-                    if (count($opciones) < 5) {
-                        throw new \Exception("Fila " . ($index + 1) . ": Selección Múltiple (SM) DEBE tener las 5 opciones (A, B, C, D, E) rellenadas.");
+                    if (count($opciones) !== 4) {
+                        throw new \Exception("Fila " . ($index + 1) . ": Respuesta Compuesta debe tener exactamente 4 opciones fijas (A, B, C y D).");
+                    }
+                }
+
+                if ($tipo === 'PREGUNTA_CON_CLAVE') {
+                    $respLetter = is_array($respuesta) ? ($respuesta[0] ?? '') : $respuesta;
+                    if (!in_array($respLetter, ['A', 'B', 'C', 'D', 'E'], true)) {
+                        throw new \Exception("Fila " . ($index + 1) . ": Pregunta con Clave debe tener una respuesta entre A y E.");
+                    }
+                    if (count($opciones) !== 4) {
+                        throw new \Exception("Fila " . ($index + 1) . ": Pregunta con Clave debe tener exactamente 4 incisos (1, 2, 3 y 4).");
                     }
                 }
 
@@ -664,6 +667,28 @@ class BancoPreguntaController extends Controller
     private function normalizarTipoPreguntaBanco(?string $tipo): ?string
     {
         return $this->normalizarTipoPreguntaManual($tipo);
+    }
+
+    private function normalizarRespuestaBancoExcel($value)
+    {
+        $respuesta = mb_strtoupper(trim((string) $value));
+
+        if ($respuesta === '') {
+            return '';
+        }
+
+        if (preg_match('/^([A-E])(?:\s*[:\.\)\-]|\b)/u', $respuesta, $matches)) {
+            return $matches[1];
+        }
+
+        if (str_contains($respuesta, ',')) {
+            return array_map(
+                fn ($item) => $this->normalizarRespuestaBancoExcel($item),
+                explode(',', $respuesta)
+            );
+        }
+
+        return $respuesta;
     }
 
     private function normalizarTipoPreguntaManual(?string $tipo): ?string
