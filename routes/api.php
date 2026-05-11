@@ -219,6 +219,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('generaciones-manuales')->group(function () {
         Route::get('/', [GeneracionManualController::class, 'index']);
         Route::post('/', [GeneracionManualController::class, 'store']);
+        Route::post('/{id}/generate-package', [GeneracionManualController::class, 'generatePackage']);
         Route::put('/{id}/estado', [GeneracionManualController::class, 'updateEstado']);
         Route::post('/{id}/upload-archivos', [GeneracionManualController::class, 'uploadArchivos']);
         Route::get('/{id}/download-examen', [GeneracionManualController::class, 'downloadExamen']);
@@ -304,8 +305,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/bulk-delete', [\App\Http\Controllers\RolExamenController::class, 'destroyAll']);
         Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
-        Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
-        Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
+          Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
+          Route::post('/{id}/generate-package', [\App\Http\Controllers\RolExamenController::class, 'generatePackage']);
+          Route::get('/{id}/download-examen', [\App\Http\Controllers\RolExamenController::class, 'downloadExamen']);
+          Route::get('/{id}/download-patron', [\App\Http\Controllers\RolExamenController::class, 'downloadPatron']);
+          Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
         Route::post('/{id}/upload-examen', [\App\Http\Controllers\RolExamenController::class, 'uploadExamen']);
         Route::post('/{id}/upload-patron', [\App\Http\Controllers\RolExamenController::class, 'uploadPatron']);
     });

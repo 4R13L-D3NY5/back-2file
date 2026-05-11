@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\GenerateManualExamPackageJob;
 use App\Models\GeneracionManual;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -9,6 +10,17 @@ use Illuminate\Support\Facades\Storage;
 
 class GeneracionManualController extends Controller
 {
+    private function firstExistingStoragePath(array $paths): ?string
+    {
+        foreach ($paths as $path) {
+            if (Storage::exists($path)) {
+                return $path;
+            }
+        }
+
+        return null;
+    }
+
     public function index(Request $request)
     {
         $query = GeneracionManual::with('user', 'sede', 'carrera', 'asignatura', 'docente');
@@ -64,6 +76,54 @@ class GeneracionManualController extends Controller
         $registro = GeneracionManual::create($validated);
 
         return response()->json($registro, 201);
+    }
+
+    public function generatePackage(Request $request, $id)
+    {
+        $registro = GeneracionManual::findOrFail($id);
+
+        $validated = $request->validate([
+            'questions' => 'nullable|array|min:1',
+            'config' => 'nullable|array',
+        ]);
+
+        $config = array_merge(
+            $registro->configuracion_json ?? [],
+            $validated['config'] ?? []
+        );
+
+        if (!empty($validated['questions'])) {
+            $config['questions'] = $validated['questions'];
+        }
+
+        if (empty($config['questions'])) {
+            return response()->json([
+                'message' => 'No hay preguntas para enviar a la cola de generacion manual.'
+            ], 422);
+        }
+
+        $config['job_status'] = 'queued';
+        $config['job_error'] = null;
+        $config['timestamps'] = array_merge($config['timestamps'] ?? [], [
+            'generacion_solicitada' => now()->toISOString(),
+        ]);
+
+        $registro->update([
+            'configuracion_json' => $config,
+            'archivo_examen' => null,
+            'archivo_patron_pdf' => null,
+            'archivos_patron_xlsx' => [],
+            'patron_respuestas_json' => [],
+        ]);
+
+        GenerateManualExamPackageJob::dispatch($registro->id, auth()->id());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'La generacion manual fue enviada a la cola.',
+            'job_status' => 'queued',
+            'registro' => $registro->fresh(),
+        ], 202);
     }
 
     public function updateEstado(Request $request, $id)
@@ -128,8 +188,11 @@ class GeneracionManualController extends Controller
             return response()->json(['message' => 'No hay archivo generado'], 404);
         }
 
-        $path = 'public/examenes/' . $registro->archivo_examen;
-        if (!Storage::exists($path)) {
+        $path = $this->firstExistingStoragePath([
+            'public/examenes/' . $registro->archivo_examen,
+            'public/examenes_queue/' . $registro->archivo_examen,
+        ]);
+        if (!$path) {
             return response()->json(['message' => 'El archivo físico no se encuentra'], 404);
         }
 
@@ -143,8 +206,11 @@ class GeneracionManualController extends Controller
             return response()->json(['message' => 'No hay patrón PDF generado'], 404);
         }
 
-        $path = 'public/patrones/' . $registro->archivo_patron_pdf;
-        if (!Storage::exists($path)) {
+        $path = $this->firstExistingStoragePath([
+            'public/patrones/' . $registro->archivo_patron_pdf,
+            'public/patrones_queue/' . $registro->archivo_patron_pdf,
+        ]);
+        if (!$path) {
             return response()->json(['message' => 'El archivo físico no se encuentra'], 404);
         }
 
@@ -159,8 +225,11 @@ class GeneracionManualController extends Controller
         }
 
         $filename = $registro->archivos_patron_xlsx[0];
-        $path = 'public/patrones/' . $filename;
-        if (!Storage::exists($path)) {
+        $path = $this->firstExistingStoragePath([
+            'public/patrones/' . $filename,
+            'public/patrones_queue/' . $filename,
+        ]);
+        if (!$path) {
             return response()->json(['message' => 'El archivo físico no se encuentra'], 404);
         }
 

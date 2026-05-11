@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\GenerateRolExamenPackageJob;
 use App\Models\RolExamen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class RolExamenController extends Controller
@@ -641,17 +643,20 @@ class RolExamenController extends Controller
             // 1. Limpiar Archivos Físicos del Storage
             if (!empty($examen->variantes)) {
                 foreach ($examen->variantes as $v) {
-                    $file = is_array($v) ? ($v['archivo'] ?? null) : $v;
-                    if ($file) \Storage::disk('public')->delete('examenes/' . $file);
+                    if (is_array($v)) {
+                        $this->deleteManagedFile($v['path'] ?? null, $v['archivo'] ?? null, 'examenes');
+                    } else {
+                        $this->deleteManagedFile(null, $v, 'examenes');
+                    }
                 }
             }
             if (!empty($examen->patrones)) {
                 foreach ($examen->patrones as $p) {
                     if (is_array($p)) {
-                        if (isset($p['pdf'])) \Storage::disk('public')->delete('patrones/' . $p['pdf']);
-                        if (isset($p['xlsx'])) \Storage::disk('public')->delete('patrones/' . $p['xlsx']);
+                        $this->deleteManagedFile($p['pdf_path'] ?? null, $p['pdf'] ?? null, 'patrones');
+                        $this->deleteManagedFile($p['xlsx_path'] ?? null, $p['xlsx'] ?? null, 'patrones');
                     } else {
-                        \Storage::disk('public')->delete('patrones/' . $p);
+                        $this->deleteManagedFile(null, $p, 'patrones');
                     }
                 }
             }
@@ -665,6 +670,66 @@ class RolExamenController extends Controller
         $examen->update($data);
 
         return response()->json($examen);
+    }
+
+    public function generatePackage(Request $request, $id)
+    {
+        $examen = RolExamen::findOrFail($id);
+
+        if ($examen->estado !== 'programados') {
+            return response()->json([
+                'message' => 'Solo se puede iniciar la generación desde el estado PROGRAMADO.'
+            ], 422);
+        }
+
+        if ($examen->tipo_examen !== '2do Parcial') {
+            return response()->json([
+                'message' => 'La generación asincrónica consolidada está habilitada solo para 2do Parcial.'
+            ], 422);
+        }
+
+        $request->validate([
+            'cantVariantes' => 'required|integer|min:1|max:5',
+            'facil' => 'required|integer|min:0',
+            'medio' => 'required|integer|min:0',
+            'dificil' => 'required|integer|min:0',
+            'formatoHoja' => 'nullable|string|max:60',
+            'fontFamily' => 'nullable|string|max:40',
+            'fontSize' => 'nullable|numeric|min:8|max:20',
+            'lineSpacing' => 'nullable|numeric|min:0.7|max:1.5',
+            'aleatorizarSecciones' => 'nullable|boolean',
+        ]);
+
+        $config = array_merge($examen->config_generacion ?? [], $request->only([
+            'cantVariantes',
+            'facil',
+            'medio',
+            'dificil',
+            'formatoHoja',
+            'fontFamily',
+            'fontSize',
+            'lineSpacing',
+            'aleatorizarSecciones',
+        ]));
+
+        $config['job_status'] = 'queued';
+        $config['job_error'] = null;
+
+        $timestamps = $examen->timestamps_proceso ?? [];
+        $timestamps['generacion_solicitada'] = now()->toISOString();
+
+        $examen->update([
+            'config_generacion' => $config,
+            'timestamps_proceso' => $timestamps,
+        ]);
+
+        GenerateRolExamenPackageJob::dispatch($examen->id, $config, auth()->id());
+
+        return response()->json([
+            'success' => true,
+            'message' => 'La generación fue enviada a la cola.',
+            'job_status' => 'queued',
+        ], 202);
     }
 
     /**
@@ -804,7 +869,82 @@ class RolExamenController extends Controller
 
         $examen->delete();
 
-        return response()->json(['message' => 'Examen eliminado']);
+return response()->json(['message' => 'Examen eliminado']);
+    }
+
+    public function downloadExamen($id, Request $request)
+    {
+        $examen = RolExamen::findOrFail($id);
+        $filename = $request->query('file');
+
+        if (!$filename) {
+            return response()->json(['message' => 'Archivo no especificado'], 422);
+        }
+
+        $variant = collect($examen->variantes ?? [])->first(function ($item) use ($filename) {
+            return is_array($item) && ($item['archivo'] ?? null) === $filename;
+        });
+
+        if (!$variant) {
+            return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
+        }
+
+        return $this->downloadManagedFile($variant['path'] ?? null, $variant['archivo'] ?? null, 'examenes');
+    }
+
+    public function downloadPatron($id, Request $request)
+    {
+        $examen = RolExamen::findOrFail($id);
+        $filename = $request->query('file');
+        $tipo = $request->query('tipo');
+
+        if (!$filename || !in_array($tipo, ['pdf', 'xlsx'], true)) {
+            return response()->json(['message' => 'Parámetros inválidos'], 422);
+        }
+
+        $pattern = collect($examen->patrones ?? [])->first(function ($item) use ($filename, $tipo) {
+            return is_array($item) && ($item[$tipo] ?? null) === $filename;
+        });
+
+        if (!$pattern) {
+            return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
+        }
+
+        $managedPath = $tipo === 'pdf'
+            ? ($pattern['pdf_path'] ?? null)
+            : ($pattern['xlsx_path'] ?? null);
+
+        return $this->downloadManagedFile($managedPath, $filename, 'patrones');
+    }
+
+    private function downloadManagedFile(?string $managedPath, ?string $filename, string $publicDir)
+    {
+        if ($managedPath) {
+            $absolutePath = storage_path('app/' . ltrim($managedPath, '/'));
+            if (is_file($absolutePath)) {
+                return response()->download($absolutePath, basename($absolutePath));
+            }
+        }
+
+        if ($filename && Storage::disk('public')->exists($publicDir . '/' . $filename)) {
+            return Storage::disk('public')->download($publicDir . '/' . $filename, $filename);
+        }
+
+        return response()->json(['message' => 'Archivo no encontrado'], 404);
+    }
+
+    private function deleteManagedFile(?string $managedPath, ?string $filename, string $publicDir): void
+    {
+        if ($managedPath) {
+            $absolutePath = storage_path('app/' . ltrim($managedPath, '/'));
+            if (is_file($absolutePath)) {
+                @unlink($absolutePath);
+            }
+        }
+
+        if ($filename) {
+            Storage::disk('public')->delete($publicDir . '/' . $filename);
+        }
     }
 
     /**
