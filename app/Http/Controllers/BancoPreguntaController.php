@@ -694,33 +694,48 @@ class BancoPreguntaController extends Controller
     private function normalizarTipoPreguntaManual(?string $tipo): ?string
     {
         $normalized = mb_strtoupper(trim((string) $tipo));
+        $normalized = strtr($normalized, [
+            'Á' => 'A',
+            'É' => 'E',
+            'Í' => 'I',
+            'Ó' => 'O',
+            'Ú' => 'U',
+            'Ü' => 'U',
+        ]);
 
         $map = [
             'FV' => 'FALSO_VERDADERO',
             'FALSO_VERDADERO' => 'FALSO_VERDADERO',
             'VERDADERO O FALSO' => 'FALSO_VERDADERO',
             'FALSO O VERDADERO' => 'FALSO_VERDADERO',
+            'VERDADERO O FALSO SIMPLE' => 'FALSO_VERDADERO',
             'RESPUESTA_COMPUESTA' => 'RESPUESTA_COMPUESTA',
             'SELECCION_MULTIPLE' => 'RESPUESTA_COMPUESTA',
             'SM' => 'RESPUESTA_COMPUESTA',
+            'RESPUESTA A/B/AMBAS/NINGUNA' => 'RESPUESTA_COMPUESTA',
             'PREGUNTA_CON_CLAVE' => 'PREGUNTA_CON_CLAVE',
             'PREGUNTA CON CLAVE' => 'PREGUNTA_CON_CLAVE',
+            'VERDADERO O FALSO COMPLEJAS' => 'PREGUNTA_CON_CLAVE',
             'SELECCION_SIMPLE' => 'SELECCION_SIMPLE',
             'SELECCION_UNICA' => 'SELECCION_SIMPLE',
             'SELECCION SIMPLE' => 'SELECCION_SIMPLE',
             'SS' => 'SELECCION_SIMPLE',
             'SU' => 'SELECCION_SIMPLE',
+            'SELECCION DE LA MEJOR RESPUESTA' => 'SELECCION_SIMPLE',
             'EMPAREJAMIENTO' => 'EMPAREJAMIENTO',
             'EM' => 'EMPAREJAMIENTO',
+            'EMPAREJAMIENTO AMPLIADO' => 'EMPAREJAMIENTO',
             'OPCION_EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
             'OPCION EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
             'PROBLEMA' => 'PROBLEMA',
             'PROBLEMA O CASO' => 'PROBLEMA',
             'PR' => 'PROBLEMA',
+            'ITEMS AGRUPADOS POR CASO CLINICO O PROBLEMA' => 'PROBLEMA',
             'SUBPROBLEMA' => 'SUBPROBLEMA',
             'SUB PROBLEMA' => 'SUBPROBLEMA',
             'SUBPREGUNTA' => 'SUBPROBLEMA',
             'SP' => 'SUBPROBLEMA',
+            'SUBITEM DE CASO O PROBLEMA' => 'SUBPROBLEMA',
         ];
 
         return $map[$normalized] ?? $normalized;
