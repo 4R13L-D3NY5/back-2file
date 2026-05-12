@@ -727,6 +727,9 @@ class BancoPreguntaController extends Controller
             'EMPAREJAMIENTO AMPLIADO' => 'EMPAREJAMIENTO',
             'OPCION_EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
             'OPCION EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION DE EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION EMPAREJAMIENTO AMPLIADO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION DE EMPAREJAMIENTO AMPLIADO' => 'OPCION_EMPAREJAMIENTO',
             'PROBLEMA' => 'PROBLEMA',
             'PROBLEMA O CASO' => 'PROBLEMA',
             'PR' => 'PROBLEMA',
@@ -945,7 +948,9 @@ class BancoPreguntaController extends Controller
 
         if (!$requiereRespuesta) {
             $validated['respuesta_correcta'] = [];
-            $validated['opciones'] = [];
+            if ($tipo !== 'EMPAREJAMIENTO') {
+                $validated['opciones'] = [];
+            }
             $validated['dificultad'] = '';
             return;
         }
