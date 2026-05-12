@@ -15,7 +15,6 @@ use App\Models\User;
 use App\Models\Rol;
 use App\Services\ContentMigrationService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
 class PlanningSyncService
@@ -206,7 +205,7 @@ class PlanningSyncService
                                         // 'name' column does not exist in DB, using nombre/apellido below
                                         'email' => strtolower($dto->ci) . '@unitepc.edu.bo', // Dummy email based on CI
                                         'username' => $dto->ci,
-                                        'password' => Hash::make($dto->ci), // Def pw: CI
+                                        'password' => $dto->ci, // cast 'hashed' del modelo lo hashea automaticamente
                                         'rol_id' => $docenteRoleId,
                                         'estado' => 1, // 1 = ACTIVO
                                         'password_change_required' => false,
