@@ -400,11 +400,30 @@ class CargaAcademicaService
         $carrera = Carrera::findOrFail($carreraId);
         $sede = Sede::findOrFail($sedeId);
 
+        Log::info('CargaAcademicaService::sincronizarMateria - Iniciando', [
+            'asignatura_id' => $asignaturaId,
+            'asignatura_codigo' => $asignatura->codigo,
+            'carrera_id' => $carreraId,
+            'carrera_sigla' => $carrera->sigla,
+            'sede_id' => $sedeId,
+            'sede_nombre' => $sede->nombre,
+            'gestion' => $gestion,
+        ]);
+
         // 1. Limpiar cache para forzar fetch fresco
         $this->gruposExternoService->limpiarCache($gestion, $carrera->sigla, $sede->id);
 
         // 2. Obtener datos RAW de la API externa (no transformados)
         $apiUrl = config('services.grupos_api.url', 'http://181.188.185.211:9098') . '/api/Grupos/listar/';
+        Log::info('CargaAcademicaService::sincronizarMateria - Llamando API externa', [
+            'url' => $apiUrl,
+            'params' => [
+                'gestion' => $gestion,
+                'sede'    => $sede->id,
+                'carrera' => $carrera->sigla,
+            ]
+        ]);
+
         $response = Http::timeout(60)->get($apiUrl, [
             'gestion' => $gestion,
             'sede'    => $sede->id,
@@ -412,6 +431,10 @@ class CargaAcademicaService
         ]);
 
         if (!$response->successful()) {
+            Log::error('CargaAcademicaService::sincronizarMateria - API error', [
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
             return [
                 'ok' => false,
                 'mensaje' => 'Error al consultar la API externa: ' . $response->status(),
@@ -420,6 +443,9 @@ class CargaAcademicaService
         }
 
         $rawData = $response->json();
+        Log::info('CargaAcademicaService::sincronizarMateria - API response', [
+            'total_items' => is_array($rawData) ? count($rawData) : 0,
+        ]);
 
         if (!is_array($rawData) || empty($rawData)) {
             return [
@@ -431,19 +457,45 @@ class CargaAcademicaService
 
         // 3. Filtrar solo los items de la materia específica
         $itemsFiltrados = array_filter($rawData, function ($item) use ($asignatura) {
-            return isset($item['siglaP']) && strtoupper(trim($item['siglaP'])) === strtoupper($asignatura->codigo);
+            $match = isset($item['siglaP']) && strtoupper(trim($item['siglaP'])) === strtoupper($asignatura->codigo);
+            if ($match) {
+                Log::debug('CargaAcademicaService::sincronizarMateria - Item encontrado', [
+                    'siglaP' => $item['siglaP'],
+                    'grupo' => $item['grupo'] ?? null,
+                    'docente' => $item['docente'] ?? null,
+                ]);
+            }
+            return $match;
         });
 
+        Log::info('CargaAcademicaService::sincronizarMateria - Filtrado completado', [
+            'items_filtrados' => count($itemsFiltrados),
+            'codigo_buscado' => $asignatura->codigo,
+        ]);
+
         if (empty($itemsFiltrados)) {
+            // Mostrar algunos códigos disponibles para debug
+            $codigosDisponibles = array_unique(array_map(fn($item) => $item['siglaP'] ?? 'N/A', $rawData));
+            Log::warning('CargaAcademicaService::sincronizarMateria - Materia no encontrada', [
+                'codigo_buscado' => $asignatura->codigo,
+                'codigos_disponibles' => array_slice($codigosDisponibles, 0, 20),
+            ]);
             return [
                 'ok' => false,
-                'mensaje' => "La materia {$asignatura->codigo} no fue encontrada en la API externa.",
+                'mensaje' => "La materia {$asignatura->codigo} no fue encontrada en la API externa. Códigos disponibles: " . implode(', ', array_slice($codigosDisponibles, 0, 10)),
                 'stats' => [],
             ];
         }
 
         // 4. Ejecutar syncBatch con los items filtrados
+        Log::info('CargaAcademicaService::sincronizarMateria - Ejecutando syncBatch', [
+            'items_count' => count($itemsFiltrados),
+        ]);
         $stats = $this->planningSyncService->syncBatch(array_values($itemsFiltrados));
+
+        Log::info('CargaAcademicaService::sincronizarMateria - syncBatch completado', [
+            'stats' => $stats,
+        ]);
 
         // 5. Obtener snapshot post-sync para comparar
         $gruposPostSync = Grupo::withoutGlobalScope('activo')

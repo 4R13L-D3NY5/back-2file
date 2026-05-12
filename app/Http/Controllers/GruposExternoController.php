@@ -81,15 +81,16 @@ class GruposExternoController extends Controller
     }
 
     /**
-     * Obtener materias del Plan N (API externa)
+     * Obtener materias de un plan específico (N o A) desde la API externa
      */
     public function planN(Request $request): JsonResponse
     {
         $gestion = $request->input('gestion', '1-2026');
         $carrera = $request->input('carrera', 'carsis');
         $sede = (int) $request->input('sede', 1);
+        $plan = $request->input('plan_estudios', 'N'); // N = Nueva, A = Antigua
 
-        $data = $this->service->listarMateriasPlanN($gestion, $carrera, $sede);
+        $data = $this->service->listarMateriasPlan($gestion, $carrera, $sede, $plan);
 
         return response()->json([
             'success' => true,
@@ -98,6 +99,7 @@ class GruposExternoController extends Controller
                 'gestion' => $gestion,
                 'carrera' => strtoupper($carrera),
                 'sede' => $sede,
+                'plan_estudios' => $plan,
                 'total_materias' => count($data)
             ]
         ]);
