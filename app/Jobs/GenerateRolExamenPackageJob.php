@@ -165,15 +165,8 @@ class GenerateRolExamenPackageJob implements ShouldQueue
             ->where('parcial', $partial)
             ->where(function ($query) use ($examen, $normalizedGroup) {
                 $query->where('grupoTeorico', $examen->grupo)
-                    ->orWhere('grupoTeorico', 'LIKE', '%' . $examen->grupo . '%')
-                    ->orWhere('grupo', $examen->grupo)
-                    ->orWhere('grupo', 'LIKE', '%' . $examen->grupo . '%')
                     ->orWhereRaw(
                         "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
-                        [$normalizedGroup]
-                    )
-                    ->orWhereRaw(
-                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
                         [$normalizedGroup]
                     );
             })

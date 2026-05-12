@@ -172,6 +172,7 @@ class CampusController extends Controller
                     'id' => $u->id,
                     'nombre' => $u->nombre . ' ' . $u->apellido,
                     'email' => $u->email,
+                    'estado' => (bool) $u->estado,
                     'campus_id' => $u->campus_id,
                     'campus' => $u->campus ? $u->campus->nombre : 'Sin Campus',
                     'carreras' => $carreras
