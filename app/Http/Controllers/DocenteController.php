@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Docente;
+use App\Models\Rol;
+use App\Models\User;
 use Illuminate\Http\Request;
 
 class DocenteController extends Controller
@@ -394,11 +396,44 @@ class DocenteController extends Controller
             'email' => 'nullable|email',
             'sede_id' => 'required|exists:sedes,id',
             'celular' => 'nullable|string',
-            'grado_academico' => 'nullable|string'
+            'grado_academico' => 'nullable|string',
+            'especialidad' => 'nullable|string'
         ]);
 
         $docente = Docente::create($validated);
-        return response()->json($docente, 201);
+
+        // ── Crear usuario automáticamente (mismo flujo que sincronización) ──
+        if ($docente->ci && !$docente->user_id) {
+            $user = User::where('username', $docente->ci)->first();
+
+            if (!$user) {
+                $parts = explode(' ', $docente->nombre_completo, 2);
+                $nombre = $parts[0] ?? $docente->nombre_completo;
+                $apellido = $parts[1] ?? 'Doe';
+
+                $docenteRoleId = Rol::where('codigo', 'DOCENTE')->value('id') ?? 6;
+
+                $user = User::create([
+                    'username' => $docente->ci,
+                    'email' => $docente->email ?: (strtolower($docente->ci) . '@unitepc.edu.bo'),
+                    'password' => $docente->ci, // cast 'hashed' del modelo lo hashea automaticamente
+                    'rol_id' => $docenteRoleId,
+                    'estado' => 1,
+                    'password_change_required' => false,
+                    'nombre' => $nombre,
+                    'apellido' => $apellido,
+                    'ci' => $docente->ci,
+                    'telefono' => $docente->celular ?? '',
+                    'carrera' => null,
+                    'sede_id' => $docente->sede_id,
+                ]);
+            }
+
+            $docente->user_id = $user->id;
+            $docente->save();
+        }
+
+        return response()->json($docente->fresh(['user']), 201);
     }
 
     /**

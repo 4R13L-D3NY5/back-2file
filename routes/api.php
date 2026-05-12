@@ -400,6 +400,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/resolver-conflictos',  [\App\Http\Controllers\SyncController::class, 'resolverConflicto']);
     });
 
+    // Carga Académica (Gestión Unificada de Docentes, Grupos y Horarios)
+    Route::prefix('carga-academica')->group(function () {
+        Route::get('/materia', [\App\Http\Controllers\CargaAcademicaController::class, 'getByMateria']);
+        Route::get('/carrera', [\App\Http\Controllers\CargaAcademicaController::class, 'getByCarrera']);
+        Route::post('/grupo', [\App\Http\Controllers\CargaAcademicaController::class, 'storeGrupo'])->middleware('role:SUPER_ADMIN,ADMIN');
+        Route::put('/grupo/{id}', [\App\Http\Controllers\CargaAcademicaController::class, 'updateGrupo'])->middleware('role:SUPER_ADMIN,ADMIN');
+        Route::put('/grupo/{id}/docente', [\App\Http\Controllers\CargaAcademicaController::class, 'assignDocente'])->middleware('role:SUPER_ADMIN,ADMIN');
+        Route::post('/validar', [\App\Http\Controllers\CargaAcademicaController::class, 'validar']);
+        Route::post('/sync', [\App\Http\Controllers\CargaAcademicaController::class, 'syncMateria'])->middleware('role:SUPER_ADMIN,ADMIN');
+    });
+
     // Modulo de Restauracion Academica
     Route::post('/restauracion/extraccion-api', [\App\Http\Controllers\RestauracionAcademicaController::class, 'extraerDesdeApiExterna'])
         ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
