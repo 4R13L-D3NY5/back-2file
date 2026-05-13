@@ -362,6 +362,41 @@ class BancoPreguntaController extends Controller
             $cols['ENUNCIADO'] = $cols['ENUNCIADO'] ?? 1;
 
             $count = 0;
+            $evaluables = 0;
+            $auxiliares = 0;
+            $omitidas = 0;
+            $existingDuplicateKeys = [];
+            $batchDuplicateKeys = [];
+
+            $existingQuery = BancoPregunta::where('asignatura_id', $asignaturaId)
+                ->where('docente_id', $docenteId);
+
+            if ($sedeId) {
+                $existingQuery->where('sede_id', $sedeId);
+            }
+
+            if ($grupoTeorico) {
+                $existingQuery->where('grupoTeorico', $grupoTeorico);
+            }
+
+            if ($parcialSolicitadoNormalizado) {
+                $existingQuery->where('parcial', $parcialSolicitadoNormalizado);
+            }
+
+            $existingQuery
+                ->get(['enunciado', 'grupo', 'grupoTeorico', 'parcial'])
+                ->each(function ($pregunta) use (&$existingDuplicateKeys) {
+                    $key = $this->construirClaveDuplicadoBanco([
+                        'enunciado' => $pregunta->enunciado,
+                        'grupo' => $pregunta->grupo,
+                        'grupoTeorico' => $pregunta->grupoTeorico,
+                        'parcial' => $pregunta->parcial,
+                    ]);
+
+                    if ($key !== '') {
+                        $existingDuplicateKeys[$key] = true;
+                    }
+                });
 
             \Log::info("Importación Banco: docente_id detectado: " . ($docenteId ?? 'NULL'));
 
@@ -467,6 +502,21 @@ class BancoPreguntaController extends Controller
                     $parcial = $parcialSolicitadoNormalizado;
                 }
 
+                $duplicateKey = $this->construirClaveDuplicadoBanco([
+                    'enunciado' => $enunciado,
+                    'grupo' => $grupo,
+                    'grupoTeorico' => $grupoTeorico,
+                    'parcial' => $parcial,
+                ]);
+
+                if (
+                    $duplicateKey !== ''
+                    && (isset($existingDuplicateKeys[$duplicateKey]) || isset($batchDuplicateKeys[$duplicateKey]))
+                ) {
+                    $omitidas++;
+                    continue;
+                }
+
                 BancoPregunta::create([
                     'asignatura_id' => $asignaturaId,
                     'docente_id' => $docenteId,
@@ -484,15 +534,28 @@ class BancoPreguntaController extends Controller
                     'con_cartilla' => $conCartilla,
                     'created_by' => auth()->id()
                 ]);
+
+                if ($duplicateKey !== '') {
+                    $batchDuplicateKeys[$duplicateKey] = true;
+                }
+
                 $count++;
+                if ($tipo === 'PROBLEMA' || $tipo === 'EMPAREJAMIENTO') {
+                    $auxiliares++;
+                } else {
+                    $evaluables++;
+                }
             }
 
             $this->updateOrCreateConfig($asignaturaId, $grupoTeorico, $request->parcial, $conCartilla);
 
             return response()->json([
                 'success' => true,
-                'message' => "Se han importado {$count} preguntas correctamente.",
-                'total' => $count
+                'message' => "Se han importado {$evaluables} preguntas nuevas correctamente.",
+                'total' => $count,
+                'evaluables' => $evaluables,
+                'auxiliares' => $auxiliares,
+                'omitidas' => $omitidas
             ]);
 
         } catch (\Exception $e) {
@@ -541,6 +604,46 @@ class BancoPreguntaController extends Controller
         }
 
         throw new \Exception('No se encontro la hoja Banco con los encabezados esperados.');
+    }
+
+    private function construirClaveDuplicadoBanco(array $payload): string
+    {
+        $enunciado = $this->normalizarTextoDuplicadoBanco($payload['enunciado'] ?? '');
+
+        if ($enunciado === '') {
+            return '';
+        }
+
+        return implode('||', [
+            $enunciado,
+            $this->normalizarGrupoDuplicadoBanco($payload['grupoTeorico'] ?? $payload['grupo_teorico'] ?? ''),
+            $this->normalizarTipoExamen($payload['parcial'] ?? ''),
+            $this->normalizarGrupoDuplicadoBanco($payload['grupo'] ?? ''),
+        ]);
+    }
+
+    private function normalizarTextoDuplicadoBanco($value): string
+    {
+        $text = $this->sanitizePreguntaText((string) ($value ?? ''));
+        $text = preg_replace('/<br\s*\/?>/i', ' ', $text);
+        $text = strip_tags($text);
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = strtr($text, [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+            'ñ' => 'n', 'Ñ' => 'N', 'ü' => 'u', 'Ü' => 'U',
+        ]);
+        $text = preg_replace('/\s+/u', ' ', $text);
+
+        return mb_strtoupper(trim($text), 'UTF-8');
+    }
+
+    private function normalizarGrupoDuplicadoBanco($value): string
+    {
+        $text = $this->normalizarTextoDuplicadoBanco($value);
+        $text = preg_replace('/^(GRUPO|G\.?|GT)\s*/u', '', $text);
+
+        return trim((string) $text);
     }
 
     /**
