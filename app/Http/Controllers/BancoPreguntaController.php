@@ -112,22 +112,53 @@ class BancoPreguntaController extends Controller
             });
         }
 
+        $preguntas = (clone $query)->get(['tipo']);
         $stats = $query->selectRaw("
             SUM(CASE WHEN dificultad = 'FACIL' OR dificultad = '1' THEN 1 ELSE 0 END) as facil,
             SUM(CASE WHEN dificultad = 'MEDIA' OR dificultad = 'MEDIO' OR dificultad = '2' THEN 1 ELSE 0 END) as medio,
             SUM(CASE WHEN dificultad = 'DIFICIL' OR dificultad = '3' THEN 1 ELSE 0 END) as dificil,
             COUNT(*) as total
         ")->first();
+        $porTipo = $preguntas
+            ->map(fn($pregunta) => $this->normalizarTipoPreguntaBanco($pregunta->tipo) ?: 'SIN_TIPO')
+            ->filter(fn($tipo) => !in_array($tipo, ['EMPAREJAMIENTO', 'PROBLEMA'], true))
+            ->countBy()
+            ->toArray();
+        $porGrupoTipo = $this->contarGruposTipoPregunta($porTipo);
+        $statsPayload = [
+            'facil' => (int) ($stats->facil ?? 0),
+            'medio' => (int) ($stats->medio ?? 0),
+            'dificil' => (int) ($stats->dificil ?? 0),
+            'total' => (int) ($stats->total ?? 0),
+            'por_tipo' => $porTipo,
+            'por_grupo_tipo' => $porGrupoTipo,
+            'g1' => $porGrupoTipo['g1'],
+            'g2' => $porGrupoTipo['g2'],
+            'g3' => $porGrupoTipo['g3'],
+        ];
 
         // Conteo general para la asignatura y docente (sin parcial/grupo)
         $totalAsignatura = BancoPregunta::where('asignatura_id', $request->asignatura_id)
             ->where('docente_id', $request->docente_id)
             ->count();
 
+        $configuracion = null;
+        if ($request->filled('grupo') && $request->filled('parcial')) {
+            $configuracion = BancoPreguntaConfiguracion::query()
+                ->where('asignatura_id', $request->asignatura_id)
+                ->where('grupo_teorico', $request->grupo)
+                ->where('parcial', $this->normalizarTipoExamen($request->parcial))
+                ->first();
+        }
+
         return response()->json([
             'success' => true,
-            'stats' => $stats,
-            'total_asignatura' => $totalAsignatura
+            'stats' => $statsPayload,
+            'por_tipo' => $porTipo,
+            'por_grupo_tipo' => $porGrupoTipo,
+            'total_asignatura' => $totalAsignatura,
+            'con_cartilla' => $configuracion?->con_cartilla ?? true,
+            'configuracion' => $configuracion
         ]);
     }
 
@@ -653,19 +684,21 @@ class BancoPreguntaController extends Controller
     {
         $request->validate([
             'asignatura_id' => 'required|exists:asignaturas,id',
+            'docente_id' => 'nullable|exists:docentes,id',
             'grupo_teorico' => 'required|string',
             'parcial' => 'required|string',
             'con_cartilla' => 'required|boolean'
         ]);
 
         $asignaturaId = $request->asignatura_id;
+        $docenteId = $request->docente_id;
         $grupoTeorico = $request->grupo_teorico;
         $parcial = $request->parcial;
         $conCartilla = $request->con_cartilla;
 
         // Si es Sin Cartilla (false), procedemos a limpiar el banco de preguntas para este grupo/parcial
         if (!$conCartilla) {
-            $queryDelete = $this->buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial);
+            $queryDelete = $this->buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial, $docenteId);
 
             $deletedCount = $queryDelete->delete();
             
@@ -690,11 +723,31 @@ class BancoPreguntaController extends Controller
         ]);
     }
 
-    private function buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial)
+    private function buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial, $docenteId = null)
     {
         $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
             ->where('grupoTeorico', $grupoTeorico)
             ->where('parcial', $this->normalizarTipoExamen($parcial));
+
+        $user = auth()->user();
+        $user?->loadMissing('rol');
+        $rolCodigo = $user?->rol?->codigo;
+
+        $rolesConAlcanceAmpliado = [
+            'SUPER_ADMIN',
+            'ADMIN',
+            'DIRECTOR_CARRERA',
+            'VICERRECTORADO',
+            'VICERRECTOR_SEDE',
+            'DIRECCION_ACADEMICA',
+            'DIRECCIÓN ACADÉMICA',
+            'RESPONSABLE_EVALUACIONES',
+        ];
+
+        if ($docenteId && in_array($rolCodigo, $rolesConAlcanceAmpliado, true)) {
+            $queryDelete->where('docente_id', $docenteId);
+            return $queryDelete;
+        }
 
         $docenteId = Docente::where('user_id', auth()->id())->first()?->id;
 
@@ -770,6 +823,39 @@ class BancoPreguntaController extends Controller
     private function normalizarTipoPreguntaBanco(?string $tipo): ?string
     {
         return $this->normalizarTipoPreguntaManual($tipo);
+    }
+
+    private function contarGruposTipoPregunta(array $porTipo): array
+    {
+        $conteo = ['g1' => 0, 'g2' => 0, 'g3' => 0];
+
+        foreach ($porTipo as $tipo => $total) {
+            $grupo = $this->resolverGrupoTipoPregunta((string) $tipo);
+            if ($grupo) {
+                $conteo[$grupo] += (int) $total;
+            }
+        }
+
+        return $conteo;
+    }
+
+    private function resolverGrupoTipoPregunta(string $tipo): ?string
+    {
+        $tipoNormalizado = $this->normalizarTipoPreguntaBanco($tipo);
+
+        if (in_array($tipoNormalizado, ['FALSO_VERDADERO', 'PREGUNTA_CON_CLAVE', 'RESPUESTA_COMPUESTA'], true)) {
+            return 'g1';
+        }
+
+        if ($tipoNormalizado === 'SELECCION_SIMPLE') {
+            return 'g2';
+        }
+
+        if (in_array($tipoNormalizado, ['SUBPROBLEMA', 'OPCION_EMPAREJAMIENTO'], true)) {
+            return 'g3';
+        }
+
+        return null;
     }
 
     private function normalizarRespuestaBancoExcel($value)

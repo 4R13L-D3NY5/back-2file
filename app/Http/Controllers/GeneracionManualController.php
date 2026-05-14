@@ -41,7 +41,22 @@ class GeneracionManualController extends Controller
             $query->where('docente_id', $request->docente_id);
         }
 
-        if ($request->has('fecha')) {
+        if ($request->filled('fecha_inicio') || $request->filled('fecha_fin')) {
+            $fechaInicio = $request->input('fecha_inicio');
+            $fechaFin = $request->input('fecha_fin');
+
+            if ($fechaInicio && $fechaFin && $fechaInicio > $fechaFin) {
+                [$fechaInicio, $fechaFin] = [$fechaFin, $fechaInicio];
+            }
+
+            if ($fechaInicio) {
+                $query->whereDate('fecha_examen', '>=', $fechaInicio);
+            }
+
+            if ($fechaFin) {
+                $query->whereDate('fecha_examen', '<=', $fechaFin);
+            }
+        } elseif ($request->filled('fecha')) {
             $query->whereDate('fecha_examen', $request->fecha);
         }
 

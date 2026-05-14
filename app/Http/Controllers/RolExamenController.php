@@ -136,7 +136,22 @@ class RolExamenController extends Controller
             $query->where('rol_examenes.sede_id', $request->sede_id);
         }
 
-        if ($request->has('fecha')) {
+        if ($request->filled('fecha_inicio') || $request->filled('fecha_fin')) {
+            $fechaInicio = $request->input('fecha_inicio');
+            $fechaFin = $request->input('fecha_fin');
+
+            if ($fechaInicio && $fechaFin && $fechaInicio > $fechaFin) {
+                [$fechaInicio, $fechaFin] = [$fechaFin, $fechaInicio];
+            }
+
+            if ($fechaInicio) {
+                $query->whereDate('rol_examenes.fecha', '>=', $fechaInicio);
+            }
+
+            if ($fechaFin) {
+                $query->whereDate('rol_examenes.fecha', '<=', $fechaFin);
+            }
+        } elseif ($request->filled('fecha')) {
             $query->whereDate('rol_examenes.fecha', $request->fecha);
         }
 
@@ -157,6 +172,23 @@ class RolExamenController extends Controller
             ->orderBy('rol_examenes.hora_inicio')
             ->get();
 
+        $examenes->transform(function ($examen) {
+            $statsBanco = $this->calcularStatsBancoRolExamen($examen);
+
+            $examen->total_banco = $statsBanco['total'];
+            $examen->banco_facil = $statsBanco['facil'];
+            $examen->banco_medio = $statsBanco['medio'];
+            $examen->banco_dificil = $statsBanco['dificil'];
+            $examen->banco_g1 = $statsBanco['g1'];
+            $examen->banco_g2 = $statsBanco['g2'];
+            $examen->banco_g3 = $statsBanco['g3'];
+            $examen->banco_por_tipo = $statsBanco['por_tipo'];
+            $examen->banco_por_grupo_tipo = $statsBanco['por_grupo_tipo'];
+            $examen->banco_stats = $statsBanco;
+
+            return $examen;
+        });
+
         return response()->json([
             'data' => $examenes,
             'meta' => [
@@ -167,7 +199,149 @@ class RolExamenController extends Controller
     }
 
     /**
-     * Obtener exámenes de una materia específica
+     * Calcular disponibilidad del banco para la fila del rol.
+     */
+    private function calcularStatsBancoRolExamen($examen): array
+    {
+        $grupo = trim((string) $examen->grupo);
+        $grupoNormalizado = $this->normalizarGrupoBanco($grupo);
+
+        $query = DB::table('banco_preguntas')
+            ->where('asignatura_id', $examen->asignatura_id)
+            ->where('parcial', $examen->tipo_examen)
+            ->where(function ($q) use ($examen) {
+                $q->where('docente_id', $examen->docente_id);
+
+                if (!$examen->docente_id) {
+                    $q->orWhereNull('docente_id');
+                }
+            })
+            ->where(function ($q) use ($grupo, $grupoNormalizado) {
+                $q->where('grupoTeorico', $grupo)
+                    ->orWhere('grupo', $grupo)
+                    ->orWhere('grupoTeorico', 'LIKE', "%{$grupo}%")
+                    ->orWhere('grupo', 'LIKE', "%{$grupo}%")
+                    ->orWhereRaw('? LIKE CONCAT("%", grupoTeorico, "%")', [$grupo])
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    );
+            });
+
+        $stats = [
+            'total' => 0,
+            'facil' => 0,
+            'medio' => 0,
+            'dificil' => 0,
+            'g1' => 0,
+            'g2' => 0,
+            'g3' => 0,
+            'por_tipo' => [],
+            'por_grupo_tipo' => ['g1' => 0, 'g2' => 0, 'g3' => 0],
+        ];
+
+        foreach ($query->get(['tipo', 'dificultad']) as $pregunta) {
+            $stats['total']++;
+
+            $dificultad = $this->normalizarTextoBanco($pregunta->dificultad);
+            if (in_array($dificultad, ['FACIL', '1'], true)) {
+                $stats['facil']++;
+            } elseif (in_array($dificultad, ['MEDIA', 'MEDIO', '2'], true)) {
+                $stats['medio']++;
+            } elseif (in_array($dificultad, ['DIFICIL', '3'], true)) {
+                $stats['dificil']++;
+            }
+
+            $tipoNormalizado = $this->normalizarTipoBanco($pregunta->tipo);
+            $grupoTipo = $this->resolverGrupoTipoBanco($tipoNormalizado);
+            if ($grupoTipo) {
+                $stats[$grupoTipo]++;
+                $stats['por_grupo_tipo'][$grupoTipo]++;
+                $stats['por_tipo'][$tipoNormalizado] = ($stats['por_tipo'][$tipoNormalizado] ?? 0) + 1;
+            }
+        }
+
+        return $stats;
+    }
+
+    private function normalizarTextoBanco($valor): string
+    {
+        $texto = mb_strtoupper(trim((string) $valor));
+        $texto = strtr($texto, [
+            'Á' => 'A',
+            'É' => 'E',
+            'Í' => 'I',
+            'Ó' => 'O',
+            'Ú' => 'U',
+            'Ü' => 'U',
+            'Ñ' => 'N',
+        ]);
+
+        return preg_replace('/\s+/', ' ', $texto) ?? $texto;
+    }
+
+    private function normalizarGrupoBanco($grupo): string
+    {
+        $grupo = $this->normalizarTextoBanco($grupo);
+
+        return str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $grupo);
+    }
+
+    private function normalizarTipoBanco($tipo): string
+    {
+        $tipo = $this->normalizarTextoBanco($tipo);
+        $tipo = str_replace([' ', '-'], '_', $tipo);
+
+        $mapping = [
+            'FV' => 'FALSO_VERDADERO',
+            'FALSO_VERDADERO' => 'FALSO_VERDADERO',
+            'FALSO_O_VERDADERO' => 'FALSO_VERDADERO',
+            'VERDADERO_O_FALSO' => 'FALSO_VERDADERO',
+            'VERDADERO_O_FALSO_SIMPLE' => 'FALSO_VERDADERO',
+            'SM' => 'RESPUESTA_COMPUESTA',
+            'SELECCION_MULTIPLE' => 'RESPUESTA_COMPUESTA',
+            'RESPUESTA_COMPUESTA' => 'RESPUESTA_COMPUESTA',
+            'RESPUESTA_A/B/AMBAS/NINGUNA' => 'RESPUESTA_COMPUESTA',
+            'PREGUNTA_CON_CLAVE' => 'PREGUNTA_CON_CLAVE',
+            'VERDADERO_O_FALSO_COMPLEJAS' => 'PREGUNTA_CON_CLAVE',
+            'SS' => 'SELECCION_SIMPLE',
+            'SU' => 'SELECCION_SIMPLE',
+            'SELECCION_UNICA' => 'SELECCION_SIMPLE',
+            'SELECCION_SIMPLE' => 'SELECCION_SIMPLE',
+            'SELECCION_DE_LA_MEJOR_RESPUESTA' => 'SELECCION_SIMPLE',
+            'SP' => 'SUBPROBLEMA',
+            'SUBPREGUNTA' => 'SUBPROBLEMA',
+            'SUBITEM_DE_CASO_O_PROBLEMA' => 'SUBPROBLEMA',
+            'SUBPROBLEMA' => 'SUBPROBLEMA',
+            'SUB_PROBLEMA' => 'SUBPROBLEMA',
+            'OPCION_EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION_DE_EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION_EMPAREJAMIENTO_AMPLIADO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION_DE_EMPAREJAMIENTO_AMPLIADO' => 'OPCION_EMPAREJAMIENTO',
+        ];
+
+        return $mapping[$tipo] ?? $tipo;
+    }
+
+    private function resolverGrupoTipoBanco($tipo): ?string
+    {
+        if (in_array($tipo, ['FALSO_VERDADERO', 'PREGUNTA_CON_CLAVE', 'RESPUESTA_COMPUESTA'], true)) {
+            return 'g1';
+        }
+
+        if ($tipo === 'SELECCION_SIMPLE') {
+            return 'g2';
+        }
+
+        if (in_array($tipo, ['SUBPROBLEMA', 'OPCION_EMPAREJAMIENTO'], true)) {
+            return 'g3';
+        }
+
+        return null;
+    }
+
+    /**
+     * Obtener exámenes de una materia específica.
      */
     public function getByMateria(Request $request, $materiaId)
     {
