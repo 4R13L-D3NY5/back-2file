@@ -75,6 +75,11 @@ class User extends Authenticatable
         return $this->belongsTo(Campus::class);
     }
 
+    public function campusAsignados()
+    {
+        return $this->belongsToMany(Campus::class, 'campus_user')->withTimestamps();
+    }
+
     public function director()
     {
         return $this->hasOne(Director::class);

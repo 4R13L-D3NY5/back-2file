@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Campus;
+use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 
 class CampusController extends Controller
@@ -161,22 +163,16 @@ class CampusController extends Controller
 
     public function obtenerEvaluadores()
     {
-        // rol_id 7 = EVALUACIONES
-        $evaluadores = \App\Models\User::with(['campus.carreras'])
-            ->where('rol_id', 7)
-            ->whereNotNull('campus_id')
+        $evaluadores = User::with(['campus.carreras', 'campusAsignados.carreras'])
+            ->whereIn('rol_id', [7, 9])
+            ->where(function ($query) {
+                $query->whereNotNull('campus_id')
+                    ->orWhereHas('campusAsignados')
+                    ->orWhere('rol_id', 9);
+            })
             ->get()
-            ->map(function ($u) {
-                $carreras = $u->campus ? $u->campus->carreras->pluck('nombre')->toArray() : [];
-                return [
-                    'id' => $u->id,
-                    'nombre' => $u->nombre . ' ' . $u->apellido,
-                    'email' => $u->email,
-                    'estado' => (bool) $u->estado,
-                    'campus_id' => $u->campus_id,
-                    'campus' => $u->campus ? $u->campus->nombre : 'Sin Campus',
-                    'carreras' => $carreras
-                ];
+            ->map(function ($usuario) {
+                return $this->mapearEvaluador($usuario);
             });
 
         return response()->json($evaluadores);
@@ -184,14 +180,14 @@ class CampusController extends Controller
 
     public function evaluadoresDisponibles()
     {
-        // Evaluadores que aún no están asignados a ningún campus
-        $disponibles = \App\Models\User::where('rol_id', 7)
+        $disponibles = User::where('rol_id', 7)
             ->whereNull('campus_id')
+            ->doesntHave('campusAsignados')
             ->get()
             ->map(function ($u) {
                 return [
                     'id' => $u->id,
-                    'nombre' => $u->nombre . ' ' . $u->apellido,
+                    'nombre' => trim($u->nombre . ' ' . $u->apellido),
                     'email' => $u->email,
                 ];
             });
@@ -201,74 +197,169 @@ class CampusController extends Controller
 
     public function asignarEvaluador(Request $request, $id)
     {
-        $campus = null;
-        if ($request->rol_id != 9) {
-            $campus = Campus::find($id);
-            if (!$campus) {
-                return response()->json(['message' => 'Campus no encontrado'], 404);
-            }
+        $rolId = (int) $request->input('rol_id', 7);
+        $campusIds = $rolId === 9 ? [] : $this->normalizarCampusIds($request, $id);
+
+        if ($rolId !== 9 && count($campusIds) === 0) {
+            return response()->json(['message' => 'Debe seleccionar al menos un campus'], 422);
         }
 
-        if ($request->has('crear_nuevo') && $request->crear_nuevo) {
-            $validator = Validator::make($request->all(), [
+        if ($rolId !== 9 && Campus::whereIn('id', $campusIds)->count() !== count($campusIds)) {
+            return response()->json(['message' => 'Uno o mas campus seleccionados no existen'], 422);
+        }
+
+        $rules = [
+            'rol_id' => 'nullable|exists:roles,id',
+            'campus_id' => 'nullable|integer|exists:campus,id',
+            'campus_ids' => 'nullable|array',
+            'campus_ids.*' => 'integer|exists:campus,id',
+        ];
+
+        if ($request->boolean('crear_nuevo')) {
+            $validator = Validator::make($request->all(), array_merge($rules, [
                 'nombre' => 'required|string|max:255',
                 'apellido' => 'required|string|max:255',
                 'ci' => 'required|string|unique:users,ci',
-                'email' => 'required|email|unique:users,email' // Unique email check
-            ]);
+                'email' => 'required|email|unique:users,email',
+            ]));
 
             if ($validator->fails()) {
-                return response()->json(['message' => 'Errores de validación', 'errors' => $validator->errors()], 422);
+                return response()->json(['message' => 'Errores de validacion', 'errors' => $validator->errors()], 422);
             }
 
-            $usuario = new \App\Models\User();
-            $usuario->nombre = $request->nombre;
-            $usuario->apellido = $request->apellido;
-            $usuario->email = $request->email;
-            $usuario->username = $request->ci;
-            $usuario->ci = $request->ci;
-            $usuario->telefono = $request->telefono ?? null;
-            $usuario->password = bcrypt((string)$request->ci);
-            $usuario->password_change_required = true;
-            $usuario->rol_id = $request->rol_id ?? 7;
-            $usuario->estado = true;
-            $usuario->campus_id = $campus ? $campus->id : null;
-            $usuario->save();
+            $usuario = DB::transaction(function () use ($request, $rolId, $campusIds) {
+                $usuario = new User();
+                $usuario->nombre = $request->nombre;
+                $usuario->apellido = $request->apellido;
+                $usuario->email = $request->email;
+                $usuario->username = $request->ci;
+                $usuario->ci = $request->ci;
+                $usuario->telefono = $request->telefono ?? null;
+                $usuario->password = bcrypt((string) $request->ci);
+                $usuario->password_change_required = true;
+                $usuario->rol_id = $rolId;
+                $usuario->estado = true;
+                $usuario->campus_id = $campusIds[0] ?? null;
+                $usuario->save();
+                $usuario->campusAsignados()->sync($campusIds);
+
+                return $usuario;
+            });
 
             $rolNombre = $usuario->rol_id == 9 ? 'Responsable de Evaluaciones' : 'Evaluador';
-            return response()->json(['message' => "{$rolNombre} creado y asignado al campus exitosamente"]);
-        } else {
-            $validator = Validator::make($request->all(), [
-                'usuario_id' => 'required|exists:users,id',
-                'rol_id' => 'nullable|exists:roles,id'
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json(['message' => 'Errores de validación', 'errors' => $validator->errors()], 422);
-            }
-
-            $usuario = \App\Models\User::find($request->usuario_id);
-            
-            // Si viene un rol_id en la petición, actualizarlo (por si se quiere promover a Responsable)
-            if ($request->has('rol_id')) {
-                $usuario->rol_id = $request->rol_id;
-            }
-
-            $usuario->campus_id = $campus ? $campus->id : null;
-            $usuario->save();
-
-            return response()->json(['message' => 'Usuario asignado correctamente']);
+            return response()->json(['message' => "{$rolNombre} creado y asignado correctamente"]);
         }
+
+        $validator = Validator::make($request->all(), array_merge($rules, [
+            'usuario_id' => 'required|exists:users,id',
+        ]));
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Errores de validacion', 'errors' => $validator->errors()], 422);
+        }
+
+        DB::transaction(function () use ($request, $rolId, $campusIds) {
+            $usuario = User::findOrFail($request->usuario_id);
+            $usuario->rol_id = $rolId;
+            $usuario->campus_id = $campusIds[0] ?? null;
+            $usuario->save();
+            $usuario->campusAsignados()->sync($campusIds);
+        });
+
+        return response()->json(['message' => 'Usuario asignado correctamente']);
     }
 
     public function removerEvaluador($campusId, $userId)
     {
-        $usuario = \App\Models\User::where('id', $userId)->where('campus_id', $campusId)->first();
-        if ($usuario) {
-            $usuario->campus_id = null;
-            $usuario->save();
-            return response()->json(['message' => 'Evaluador removido correctamente']);
+        $usuario = User::with('campusAsignados')->find($userId);
+        if (!$usuario) {
+            return response()->json(['message' => 'Usuario no encontrado'], 404);
         }
-        return response()->json(['message' => 'Usuario no encontrado o no pertenece a este campus'], 404);
+
+        $campusId = (int) $campusId;
+        $perteneceAlCampus = (int) $usuario->campus_id === $campusId
+            || $usuario->campusAsignados->contains('id', $campusId);
+
+        if (!$perteneceAlCampus) {
+            return response()->json(['message' => 'Usuario no pertenece a este campus'], 404);
+        }
+
+        $usuario->campusAsignados()->detach($campusId);
+
+        if ((int) $usuario->campus_id === $campusId) {
+            $usuario->campus_id = $usuario->campusAsignados()->pluck('campus.id')->first();
+            $usuario->save();
+        }
+
+        return response()->json(['message' => 'Evaluador removido correctamente']);
+    }
+
+    private function normalizarCampusIds(Request $request, $fallbackCampusId)
+    {
+        $ids = collect($request->input('campus_ids', []));
+
+        if ($ids->isEmpty() && $request->filled('campus_id')) {
+            $ids = collect([$request->input('campus_id')]);
+        }
+
+        if ($ids->isEmpty() && $fallbackCampusId) {
+            $ids = collect([$fallbackCampusId]);
+        }
+
+        return $ids
+            ->map(function ($id) {
+                return (int) $id;
+            })
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function mapearEvaluador(User $usuario)
+    {
+        $campusAsignados = $this->campusAsignadosDeUsuario($usuario);
+        $campusPrincipal = $campusAsignados->first();
+        $carreras = $campusAsignados
+            ->flatMap(function ($campus) {
+                return $campus->carreras->pluck('nombre');
+            })
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        return [
+            'id' => $usuario->id,
+            'nombre' => trim($usuario->nombre . ' ' . $usuario->apellido),
+            'email' => $usuario->email,
+            'estado' => (bool) $usuario->estado,
+            'rol_id' => $usuario->rol_id,
+            'campus_id' => $campusPrincipal ? $campusPrincipal->id : null,
+            'campus' => $campusPrincipal ? $campusPrincipal->nombre : 'Sin Campus',
+            'campus_ids' => $campusAsignados->pluck('id')->values()->all(),
+            'campus_asignados' => $campusAsignados
+                ->map(function ($campus) {
+                    return [
+                        'id' => $campus->id,
+                        'nombre' => $campus->nombre,
+                        'sede_id' => $campus->sede_id,
+                    ];
+                })
+                ->values()
+                ->all(),
+            'carreras' => $carreras,
+        ];
+    }
+
+    private function campusAsignadosDeUsuario(User $usuario)
+    {
+        $campusAsignados = $usuario->campusAsignados;
+
+        if ($campusAsignados->isEmpty() && $usuario->campus) {
+            $campusAsignados = collect([$usuario->campus]);
+        }
+
+        return $campusAsignados->unique('id')->values();
     }
 }

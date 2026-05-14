@@ -63,7 +63,8 @@ class AuthController extends Controller
             'director.sede',
             'director.carrera',
             'director.carreras',
-            'campus.sede'
+            'campus.sede',
+            'campusAsignados.sede'
         ]);
 
         // Append progress
@@ -81,6 +82,7 @@ class AuthController extends Controller
         }
 
         $passwordChangeRequired = (bool) $user->password_change_required;
+        $this->anexarCampusAsignados($user);
 
         // Ya no forzamos cambio de contraseña incluso si coincide con CI
         // if (!$passwordChangeRequired && $user->ci && Hash::check($user->ci, $user->password)) {
@@ -208,7 +210,8 @@ class AuthController extends Controller
             'director.sede',
             'director.carrera',
             'director.carreras',
-            'campus.sede'
+            'campus.sede',
+            'campusAsignados.sede'
         ]);
 
         // Append progress attribute to each asignatura
@@ -232,6 +235,50 @@ class AuthController extends Controller
         // }
 
         $user->password_change_required = $passwordChangeRequired;
+        $this->anexarCampusAsignados($user);
+        return $user;
+    }
+
+    private function anexarCampusAsignados(User $user)
+    {
+        $campusAsignados = $user->campusAsignados;
+
+        if ($campusAsignados->isEmpty() && $user->campus) {
+            $campusAsignados = collect([$user->campus]);
+        }
+
+        $campusAsignados = $campusAsignados->unique('id')->values();
+        $sedesAsignadas = $campusAsignados
+            ->map(function ($campus) {
+                return $campus->sede;
+            })
+            ->filter()
+            ->unique('id')
+            ->values();
+
+        $user->setAttribute('campus_ids', $campusAsignados->pluck('id')->values()->all());
+        $user->setAttribute('campus_asignados', $campusAsignados
+            ->map(function ($campus) {
+                return [
+                    'id' => $campus->id,
+                    'nombre' => $campus->nombre,
+                    'sede_id' => $campus->sede_id,
+                    'sede' => $campus->sede ? $campus->sede->nombre : null,
+                ];
+            })
+            ->values()
+            ->all());
+        $user->setAttribute('sede_ids', $sedesAsignadas->pluck('id')->values()->all());
+        $user->setAttribute('sedes_asignadas', $sedesAsignadas
+            ->map(function ($sede) {
+                return [
+                    'id' => $sede->id,
+                    'nombre' => $sede->nombre,
+                ];
+            })
+            ->values()
+            ->all());
+
         return $user;
     }
 }

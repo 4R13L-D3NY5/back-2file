@@ -23,7 +23,9 @@ class UserController extends Controller
             'director.carreras',
             'director.sede',
             'docente.sede',
-            'sede'
+            'sede',
+            'campus.sede',
+            'campusAsignados.sede'
         ])->orderBy('id', 'desc');
 
         if ($request->has('search')) {
@@ -41,16 +43,6 @@ class UserController extends Controller
 
         // Transformar datos para frontend (Optimizado)
         $users->transform(function ($user) {
-            // Resolver Sede
-            $sedeNombre = null;
-            if ($user->sede) {
-                $sedeNombre = $user->sede->nombre;
-            } elseif ($user->docente && $user->docente->sede) {
-                $sedeNombre = $user->docente->sede->nombre;
-            } elseif ($user->director && $user->director->sede) {
-                $sedeNombre = $user->director->sede->nombre;
-            }
-
             // Resolver Carrera
             $carreraNombre = null;
 
@@ -79,7 +71,7 @@ class UserController extends Controller
             }
 
             $user->setAttribute('carrera_nombre', $carreraNombre);
-            $user->setAttribute('sede_nombre', $sedeNombre);
+            $this->anexarAmbitoUsuario($user);
             return $user;
         });
 
@@ -169,16 +161,23 @@ class UserController extends Controller
 
             DB::commit();
             
-            $user->load(['rol', 'director.carrera', 'director.carreras', 'sede']);
+            $user->load([
+                'rol',
+                'director.carrera',
+                'director.carreras',
+                'director.sede',
+                'docente.sede',
+                'sede',
+                'campus.sede',
+                'campusAsignados.sede'
+            ]);
             
             // Formatear respuesta
             if ($user->director && $user->director->carreras) {
                 $carreraNombre = $user->director->carreras->pluck('nombre')->implode(', ');
                 $user->setAttribute('carrera_nombre', $carreraNombre);
             }
-            if ($user->sede) {
-                $user->setAttribute('sede_nombre', $user->sede->nombre);
-            }
+            $this->anexarAmbitoUsuario($user);
 
             return response()->json($user, 201);
 
@@ -290,16 +289,23 @@ class UserController extends Controller
             }
         });
 
-        $user->load(['rol', 'director.carrera', 'director.carreras', 'sede']);
+        $user->load([
+            'rol',
+            'director.carrera',
+            'director.carreras',
+            'director.sede',
+            'docente.sede',
+            'sede',
+            'campus.sede',
+            'campusAsignados.sede'
+        ]);
         
         // Formatear respuesta igual que en index para el Store de Quasar
         if ($user->director && $user->director->carreras) {
             $carreraNombre = $user->director->carreras->pluck('nombre')->implode(', ');
             $user->setAttribute('carrera_nombre', $carreraNombre);
         }
-        if ($user->sede) {
-            $user->setAttribute('sede_nombre', $user->sede->nombre);
-        }
+        $this->anexarAmbitoUsuario($user);
         return response()->json($user);
     }
 
@@ -319,6 +325,62 @@ class UserController extends Controller
             $count++;
         }
         return $username;
+    }
+
+    private function anexarAmbitoUsuario(User $user)
+    {
+        $campusAsignados = $user->campusAsignados;
+
+        if ($user->campus && !$campusAsignados->contains('id', $user->campus->id)) {
+            $campusAsignados = $campusAsignados->push($user->campus);
+        }
+
+        $campusAsignados = $campusAsignados->unique('id')->values();
+
+        $sedes = collect([
+            $user->sede,
+            $user->docente ? $user->docente->sede : null,
+            $user->director ? $user->director->sede : null,
+        ])->filter();
+
+        $sedes = $sedes->merge(
+            $campusAsignados
+                ->map(function ($campus) {
+                    return $campus->sede;
+                })
+                ->filter()
+        )->unique('id')->values();
+
+        $sedePrincipal = $user->sede_id
+            ? $sedes->firstWhere('id', $user->sede_id)
+            : $sedes->first();
+
+        $user->setAttribute('sede_id', $sedePrincipal ? $sedePrincipal->id : $user->sede_id);
+        $user->setAttribute('sede_nombre', $sedes->pluck('nombre')->filter()->implode(', '));
+        $user->setAttribute('sede_ids', $sedes->pluck('id')->values()->all());
+        $user->setAttribute('sedes_asignadas', $sedes
+            ->map(function ($sede) {
+                return [
+                    'id' => $sede->id,
+                    'nombre' => $sede->nombre,
+                ];
+            })
+            ->values()
+            ->all());
+        $user->setAttribute('campus_ids', $campusAsignados->pluck('id')->values()->all());
+        $user->setAttribute('campus_asignados', $campusAsignados
+            ->map(function ($campus) {
+                return [
+                    'id' => $campus->id,
+                    'nombre' => $campus->nombre,
+                    'sede_id' => $campus->sede_id,
+                    'sede' => $campus->sede ? $campus->sede->nombre : null,
+                ];
+            })
+            ->values()
+            ->all());
+
+        return $user;
     }
 
     public function resetPassword(Request $request, $id)

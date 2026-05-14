@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
@@ -114,24 +115,67 @@ class RolExamenController extends Controller
                 $query->where('rol_examenes.sede_id', $sedeId);
                 Log::info("Filtrando RolExamen por sede de Autoridad ({$user->rol->codigo}): {$sedeId}");
             }
-        } elseif ($user && $user->load('rol') && $user->rol->codigo === 'EVALUACIONES' && $user->campus_id) {
-            // Filtrar por las carreras del campus asignado
-            $carreraIds = DB::table('campus_carrera')
-                ->where('campus_id', $user->campus_id)
-                ->pluck('carrera_id');
-            
-            // Si el evaluador no tiene sede asignada directamente en user, usar la del campus
-            $sedeId = $user->sede_id;
-            if (!$sedeId) {
-                $sedeId = DB::table('campus')->where('id', $user->campus_id)->value('sede_id');
+        } elseif ($user && $user->load('rol') && $user->rol->codigo === 'EVALUACIONES') {
+            $campusIds = collect([$user->campus_id])->filter();
+
+            if (Schema::hasTable('campus_user')) {
+                $campusIds = $campusIds->merge(
+                    DB::table('campus_user')
+                        ->where('user_id', $user->id)
+                        ->pluck('campus_id')
+                );
             }
-            
-            $query->whereIn('rol_examenes.carrera_id', $carreraIds);
-            if ($sedeId) {
-                $query->where('rol_examenes.sede_id', $sedeId);
+
+            $campusIds = $campusIds->map(function ($id) {
+                return (int) $id;
+            })->filter()->unique()->values();
+
+            if ($campusIds->isNotEmpty()) {
+                $requestedSedeId = $request->filled('sede_id') ? (int) $request->sede_id : null;
+                $campusRows = DB::table('campus')
+                    ->whereIn('id', $campusIds)
+                    ->select('id', 'sede_id')
+                    ->get();
+
+                if ($requestedSedeId) {
+                    $campusIds = $campusRows
+                        ->where('sede_id', $requestedSedeId)
+                        ->pluck('id')
+                        ->values();
+                }
+
+                if ($campusIds->isEmpty()) {
+                    $query->whereRaw('1 = 0');
+                    Log::info(
+                        'Evaluador intento filtrar una sede sin campus asignado',
+                        ['user_id' => $user->id, 'sede_id' => $requestedSedeId]
+                    );
+                }
+
+                $carreraIds = DB::table('campus_carrera')
+                    ->whereIn('campus_id', $campusIds)
+                    ->pluck('carrera_id')
+                    ->unique()
+                    ->values();
+
+                $sedeIds = $requestedSedeId
+                    ? collect([$requestedSedeId])
+                    : $campusRows->pluck('sede_id')->filter()->unique()->values();
+
+                if (!$requestedSedeId && $user->sede_id) {
+                    $sedeIds = $sedeIds->push($user->sede_id)->unique()->values();
+                }
+
+                $query->whereIn('rol_examenes.carrera_id', $carreraIds);
+                if ($sedeIds->isNotEmpty()) {
+                    $query->whereIn('rol_examenes.sede_id', $sedeIds);
+                }
+
+                Log::info(
+                    'Filtrando RolExamen por campus del Evaluador',
+                    ['campus_ids' => $campusIds->all(), 'sede_ids' => $sedeIds->all()]
+                );
             }
-            
-            Log::info("Filtrando RolExamen por campus del Evaluador: {$user->campus_id} (Sede: {$sedeId})");
         } elseif ($request->has('sede_id')) {
             $query->where('rol_examenes.sede_id', $request->sede_id);
         }
