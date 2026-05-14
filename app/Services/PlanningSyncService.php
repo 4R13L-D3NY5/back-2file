@@ -90,6 +90,10 @@ class PlanningSyncService
                     // Se distinguen por el campo plan_estudios, no por el código.
                     $planBuscar = $dto->planEst ?: 'N';
 
+                    // FIX CRITICO: Consolidar asignaturas duplicadas del mismo código
+                    // antes de buscar/crear, para evitar grupos huérfanos en duplicados
+                    $this->consolidarAsignaturasDuplicadas($dto->siglaP, $planBuscar);
+
                     $asignatura = Asignatura::withTrashed()
                         ->where('codigo', $dto->siglaP)
                         ->where('plan_estudios', $planBuscar)
@@ -97,7 +101,6 @@ class PlanningSyncService
 
                     if ($asignatura) {
                         // Actualizar nombre solo si es muy similar (corrección ortográfica)
-                        // para no sobreescribir con otro nombre completamente diferente
                         similar_text(strtoupper($asignatura->nombre), strtoupper($dto->materia), $namePct);
                         if ($namePct > 70) {
                             $asignatura->nombre = $dto->materia ?: $asignatura->nombre;
@@ -656,5 +659,87 @@ class PlanningSyncService
 
             return $resultado;
         });
+    }
+
+    /**
+     * Consolidar asignaturas duplicadas del mismo código.
+     * Busca todas las asignaturas con el mismo código, elige la "correcta"
+     * (la que tiene plan_estudios = planPreferido, o la más completa),
+     * y migra grupos/horarios/pivots de las duplicadas hacia ella.
+     */
+    private function consolidarAsignaturasDuplicadas(string $codigo, ?string $planPreferido = null): ?Asignatura
+    {
+        $asignaturas = Asignatura::withoutGlobalScopes()
+            ->where('codigo', $codigo)
+            ->get();
+
+        if ($asignaturas->count() <= 1) {
+            return $asignaturas->first();
+        }
+
+        Log::info('PlanningSyncService::consolidarAsignaturasDuplicadas - Encontradas duplicadas', [
+            'codigo' => $codigo,
+            'cantidad' => $asignaturas->count(),
+            'ids' => $asignaturas->pluck('id')->toArray(),
+        ]);
+
+        // Elegir la asignatura "correcta":
+        // 1. La que tenga plan_estudios = planPreferido
+        // 2. La que tenga más grupos
+        // 3. La más reciente
+        $correcta = $asignaturas->first(function ($a) use ($planPreferido) {
+            return $planPreferido && $a->plan_estudios === $planPreferido;
+        });
+
+        if (!$correcta) {
+            $correcta = $asignaturas->sortByDesc(function ($a) {
+                return $a->grupos()->count();
+            })->first();
+        }
+
+        $duplicadas = $asignaturas->where('id', '!=', $correcta->id);
+
+        foreach ($duplicadas as $dup) {
+            Log::info('PlanningSyncService::consolidar - Fusionando duplicada', [
+                'dup_id' => $dup->id,
+                'plan' => $dup->plan_estudios,
+                'into_id' => $correcta->id,
+            ]);
+
+            // Migrar grupos
+            Grupo::withoutGlobalScope('activo')
+                ->where('asignatura_id', $dup->id)
+                ->update(['asignatura_id' => $correcta->id]);
+
+            // Migrar pivots carrera
+            $pivots = DB::table('asignatura_carrera')
+                ->where('asignatura_id', $dup->id)
+                ->get();
+            foreach ($pivots as $p) {
+                $exists = DB::table('asignatura_carrera')
+                    ->where('asignatura_id', $correcta->id)
+                    ->where('carrera_id', $p->carrera_id)
+                    ->where('sede_id', $p->sede_id)
+                    ->exists();
+                if (!$exists) {
+                    DB::table('asignatura_carrera')->insert([
+                        'asignatura_id' => $correcta->id,
+                        'carrera_id' => $p->carrera_id,
+                        'sede_id' => $p->sede_id,
+                        'semestre' => $p->semestre,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+
+            // Eliminar pivots de la duplicada
+            DB::table('asignatura_carrera')->where('asignatura_id', $dup->id)->delete();
+
+            // Soft-delete la duplicada
+            $dup->delete();
+        }
+
+        return $correcta->fresh();
     }
 }

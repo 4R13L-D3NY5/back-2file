@@ -444,6 +444,11 @@ class SyncController extends Controller
         $service = app(\App\Services\PlanningSyncService::class);
         $stats   = $service->syncBatch($itemsToSync);
 
+        // FIX: Post-sync forzado de docentes cuando se sincroniza una asignatura específica
+        if ($codigoAsignatura !== null) {
+            $this->forzarAsignacionDocentes($itemsToSync, $sede, $gestion);
+        }
+
         // ── Snapshot DESPUÉS ─────────────────────────────────────────────────
         $snapshotDespues = $this->capturarSnapshot($sede->id, $carrera);
 
@@ -715,5 +720,55 @@ class SyncController extends Controller
         ];
 
         return $diff;
+    }
+
+    /**
+     * Post-sync forzado: asignar docentes a grupos locales que aun no lo tengan.
+     * Se usa como respaldo cuando updateOrCreate no encuentra el grupo existente
+     * (por ejemplo, si fue creado manualmente con atributos diferentes).
+     */
+    private function forzarAsignacionDocentes(array $items, Sede $sede, string $gestion): void
+    {
+        // Agrupar items por (grupo, tipoClase) para obtener docente unico por grupo
+        $gruposApi = [];
+        foreach ($items as $item) {
+            $nombreGrupo = $item['grupo'] ?? '';
+            $tipoCrudo = isset($item['tipoClase']) ? strtoupper(trim($item['tipoClase'])) : 'TEORICO';
+            $tipo = ($tipoCrudo === 'REGULAR') ? 'TEORICO' : $tipoCrudo;
+            $key = $nombreGrupo . '|' . $tipo;
+
+            if (!isset($gruposApi[$key])) {
+                $gruposApi[$key] = [
+                    'nombre' => $nombreGrupo,
+                    'tipo' => $tipo,
+                    'docente_nombre' => $item['docente'] ?? '',
+                    'docente_ci' => $item['ci'] ?? '',
+                ];
+            }
+        }
+
+        foreach ($gruposApi as $info) {
+            if (empty($info['nombre']) || empty($info['docente_ci'])) continue;
+
+            $grupo = Grupo::withoutGlobalScope('activo')
+                ->where('gestion', $gestion)
+                ->where('sede_id', $sede->id)
+                ->where('nombre', $info['nombre'])
+                ->where('tipo', $info['tipo'])
+                ->first();
+
+            if (!$grupo || $grupo->docente_id) continue;
+
+            $docente = Docente::withTrashed()->where('ci', $info['docente_ci'])->first();
+            if ($docente) {
+                Log::info('SyncController::forzarAsignacionDocentes - Asignando docente a grupo', [
+                    'grupo_id' => $grupo->id,
+                    'docente_id' => $docente->id,
+                    'docente_nombre' => $docente->nombre_completo,
+                ]);
+                $grupo->docente_id = $docente->id;
+                $grupo->save();
+            }
+        }
     }
 }

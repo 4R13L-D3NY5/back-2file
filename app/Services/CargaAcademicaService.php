@@ -392,6 +392,88 @@ class CargaAcademicaService
     }
 
     /**
+     * Consolidar asignaturas duplicadas del mismo código.
+     * Busca todas las asignaturas con el mismo código, elige la "correcta"
+     * (la que tiene plan_estudios = plan del API, o la más completa),
+     * y migra grupos/horarios/pivots de las duplicadas hacia ella.
+     */
+    public function consolidarAsignaturasDuplicadas(string $codigo, ?string $planPreferido = null): ?Asignatura
+    {
+        $asignaturas = Asignatura::withoutGlobalScopes()
+            ->where('codigo', $codigo)
+            ->get();
+
+        if ($asignaturas->count() <= 1) {
+            return $asignaturas->first();
+        }
+
+        Log::info('CargaAcademicaService::consolidarAsignaturasDuplicadas - Encontradas duplicadas', [
+            'codigo' => $codigo,
+            'cantidad' => $asignaturas->count(),
+            'ids' => $asignaturas->pluck('id')->toArray(),
+        ]);
+
+        // Elegir la asignatura "correcta":
+        // 1. La que tenga plan_estudios = planPreferido
+        // 2. La que tenga más grupos
+        // 3. La más reciente
+        $correcta = $asignaturas->first(function ($a) use ($planPreferido) {
+            return $planPreferido && $a->plan_estudios === $planPreferido;
+        });
+
+        if (!$correcta) {
+            $correcta = $asignaturas->sortByDesc(function ($a) {
+                return $a->grupos_count ?? $a->grupos()->count();
+            })->first();
+        }
+
+        $duplicadas = $asignaturas->where('id', '!=', $correcta->id);
+
+        foreach ($duplicadas as $dup) {
+            Log::info('CargaAcademicaService::consolidar - Fusionando duplicada', [
+                'dup_id' => $dup->id,
+                'plan' => $dup->plan_estudios,
+                'into_id' => $correcta->id,
+            ]);
+
+            // Migrar grupos
+            Grupo::withoutGlobalScope('activo')
+                ->where('asignatura_id', $dup->id)
+                ->update(['asignatura_id' => $correcta->id]);
+
+            // Migrar pivots carrera
+            $pivots = DB::table('asignatura_carrera')
+                ->where('asignatura_id', $dup->id)
+                ->get();
+            foreach ($pivots as $p) {
+                $exists = DB::table('asignatura_carrera')
+                    ->where('asignatura_id', $correcta->id)
+                    ->where('carrera_id', $p->carrera_id)
+                    ->where('sede_id', $p->sede_id)
+                    ->exists();
+                if (!$exists) {
+                    DB::table('asignatura_carrera')->insert([
+                        'asignatura_id' => $correcta->id,
+                        'carrera_id' => $p->carrera_id,
+                        'sede_id' => $p->sede_id,
+                        'semestre' => $p->semestre,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+
+            // Eliminar pivots de la duplicada
+            DB::table('asignatura_carrera')->where('asignatura_id', $dup->id)->delete();
+
+            // Soft-delete la duplicada
+            $dup->delete();
+        }
+
+        return $correcta->fresh();
+    }
+
+    /**
      * Sincronización granular: una materia específica en sede+carrera.
      */
     public function sincronizarMateria(int $sedeId, int $carreraId, int $asignaturaId, string $gestion): array
@@ -399,6 +481,14 @@ class CargaAcademicaService
         $asignatura = Asignatura::findOrFail($asignaturaId);
         $carrera = Carrera::findOrFail($carreraId);
         $sede = Sede::findOrFail($sedeId);
+
+        // CONSOLIDAR: fusionar asignaturas duplicadas del mismo código
+        // antes de sincronizar para evitar grupos huérfanos
+        $primerItemPlan = 'N';
+        $asignatura = $this->consolidarAsignaturasDuplicadas(
+            $asignatura->codigo,
+            $asignatura->plan_estudios ?? $primerItemPlan
+        ) ?? $asignatura;
 
         Log::info('CargaAcademicaService::sincronizarMateria - Iniciando', [
             'asignatura_id' => $asignaturaId,
@@ -487,6 +577,22 @@ class CargaAcademicaService
             ];
         }
 
+        // FIX: Si la asignatura local tiene plan_estudios = null, inferir del API
+        if (is_null($asignatura->plan_estudios)) {
+            $primerItem = reset($itemsFiltrados);
+            $planApi = $primerItem['planEst'] ?? 'N';
+            Log::info('CargaAcademicaService::sincronizarMateria - Asignatura sin plan_estudios, actualizando desde API', [
+                'asignatura_id' => $asignatura->id,
+                'codigo' => $asignatura->codigo,
+                'plan_nuevo' => $planApi,
+            ]);
+            $asignatura->plan_estudios = $planApi;
+            $asignatura->save();
+        }
+
+        // FIX: Migrar grupos huérfanos ligados a asignaturas duplicadas del mismo código
+        $this->migrarGruposHuérfanos($asignatura, $carrera, $sede, $gestion);
+
         // 4. Ejecutar syncBatch con los items filtrados
         Log::info('CargaAcademicaService::sincronizarMateria - Ejecutando syncBatch', [
             'items_count' => count($itemsFiltrados),
@@ -497,7 +603,12 @@ class CargaAcademicaService
             'stats' => $stats,
         ]);
 
-        // 5. Obtener snapshot post-sync para comparar
+        // 5. POST-SYNC FORZADO: asignar docentes explicitamente a grupos que
+        // aun no tengan docente (respaldo ante fallas de updateOrCreate)
+        Log::info('CargaAcademicaService::sincronizarMateria - Iniciando post-sync forzado de docentes');
+        $this->forzarAsignacionDocentes($itemsFiltrados, $asignatura, $carrera, $sede, $gestion);
+
+        // 6. Obtener snapshot post-sync para comparar
         $gruposPostSync = Grupo::withoutGlobalScope('activo')
             ->where('asignatura_id', $asignatura->id)
             ->where('carrera_id', $carrera->id)
@@ -665,5 +776,150 @@ class CargaAcademicaService
         $now = now();
         $periodo = $now->month <= 6 ? '1' : '2';
         return "{$periodo}-{$now->year}";
+    }
+
+    /**
+     * Migrar grupos huérfanos ligados a asignaturas duplicadas (mismo código, plan diferente o null)
+     * hacia la asignatura correcta.
+     */
+    private function migrarGruposHuérfanos(
+        Asignatura $asignaturaCorrecta,
+        Carrera $carrera,
+        Sede $sede,
+        string $gestion
+    ): void {
+        $asignaturasDuplicadas = Asignatura::withoutGlobalScopes()
+            ->where('codigo', $asignaturaCorrecta->codigo)
+            ->where('id', '!=', $asignaturaCorrecta->id)
+            ->get();
+
+        foreach ($asignaturasDuplicadas as $asigDup) {
+            $grupos = Grupo::withoutGlobalScope('activo')
+                ->where('asignatura_id', $asigDup->id)
+                ->where('carrera_id', $carrera->id)
+                ->where('sede_id', $sede->id)
+                ->where('gestion', $gestion)
+                ->get();
+
+            foreach ($grupos as $grupo) {
+                Log::info('CargaAcademicaService::migrarGruposHuérfanos - Migrando grupo', [
+                    'grupo_id' => $grupo->id,
+                    'nombre' => $grupo->nombre,
+                    'from_asignatura_id' => $asigDup->id,
+                    'to_asignatura_id' => $asignaturaCorrecta->id,
+                ]);
+                $grupo->asignatura_id = $asignaturaCorrecta->id;
+                $grupo->save();
+            }
+        }
+    }
+
+    /**
+     * Post-sync forzado: para cada item del API, buscar el grupo local correspondiente
+     * y asignarle el docente explicitamente. Esto garantiza que grupos creados
+     * manualmente o con atributos ligeramente diferentes reciban el docente.
+     */
+    private function forzarAsignacionDocentes(
+        array $items,
+        Asignatura $asignatura,
+        Carrera $carrera,
+        Sede $sede,
+        string $gestion
+    ): void {
+        // Agrupar items por (grupo, tipoClase) para obtener docente único por grupo
+        $gruposApi = [];
+        foreach ($items as $item) {
+            $nombreGrupo = $item['grupo'] ?? '';
+            $tipoCrudo = isset($item['tipoClase']) ? strtoupper(trim($item['tipoClase'])) : 'TEORICO';
+            $tipo = ($tipoCrudo === 'REGULAR') ? 'TEORICO' : $tipoCrudo;
+            $key = $nombreGrupo . '|' . $tipo;
+
+            if (!isset($gruposApi[$key])) {
+                $gruposApi[$key] = [
+                    'nombre' => $nombreGrupo,
+                    'tipo' => $tipo,
+                    'docente_nombre' => $item['docente'] ?? '',
+                    'docente_ci' => $item['ci'] ?? '',
+                ];
+            }
+        }
+
+        foreach ($gruposApi as $info) {
+            if (empty($info['nombre'])) continue;
+
+            // Buscar grupo local (con o sin carrera_id exacto)
+            $query = Grupo::withoutGlobalScope('activo')
+                ->where('gestion', $gestion)
+                ->where('asignatura_id', $asignatura->id)
+                ->where('sede_id', $sede->id)
+                ->where('nombre', $info['nombre'])
+                ->where('tipo', $info['tipo']);
+
+            $grupo = $query->first();
+
+            if (!$grupo) {
+                Log::warning('CargaAcademicaService::forzarAsignacionDocentes - Grupo no encontrado', [
+                    'nombre' => $info['nombre'],
+                    'tipo' => $info['tipo'],
+                    'gestion' => $gestion,
+                    'asignatura_id' => $asignatura->id,
+                ]);
+                continue;
+            }
+
+            // Si ya tiene docente, no tocar
+            if ($grupo->docente_id) {
+                Log::info('CargaAcademicaService::forzarAsignacionDocentes - Grupo ya tiene docente', [
+                    'grupo_id' => $grupo->id,
+                    'docente_id' => $grupo->docente_id,
+                ]);
+                continue;
+            }
+
+            // Buscar o crear docente por CI
+            $docente = null;
+            if (!empty($info['docente_ci'])) {
+                $docente = Docente::withTrashed()->where('ci', $info['docente_ci'])->first();
+                if (!$docente) {
+                    // Crear docente si no existe
+                    $parts = explode(' ', $info['docente_nombre'], 2);
+                    $nombre = $parts[0] ?? $info['docente_nombre'];
+                    $apellido = $parts[1] ?? 'Doe';
+
+                    $docenteRoleId = \App\Models\Rol::where('codigo', 'DOCENTE')->value('id') ?? 6;
+                    $user = \App\Models\User::firstOrCreate(
+                        ['username' => $info['docente_ci']],
+                        [
+                            'email' => strtolower($info['docente_ci']) . '@unitepc.edu.bo',
+                            'password' => $info['docente_ci'],
+                            'rol_id' => $docenteRoleId,
+                            'estado' => 1,
+                            'nombre' => $nombre,
+                            'apellido' => $apellido,
+                            'ci' => $info['docente_ci'],
+                        ]
+                    );
+
+                    $docente = Docente::create([
+                        'nombre_completo' => $info['docente_nombre'] ?: 'Docente ' . $info['docente_ci'],
+                        'ci' => $info['docente_ci'],
+                        'sede_id' => $sede->id,
+                        'user_id' => $user->id,
+                        'estado' => true,
+                    ]);
+                }
+            }
+
+            if ($docente) {
+                Log::info('CargaAcademicaService::forzarAsignacionDocentes - Asignando docente', [
+                    'grupo_id' => $grupo->id,
+                    'grupo_nombre' => $grupo->nombre,
+                    'docente_id' => $docente->id,
+                    'docente_nombre' => $docente->nombre_completo,
+                ]);
+                $grupo->docente_id = $docente->id;
+                $grupo->save();
+            }
+        }
     }
 }
