@@ -102,6 +102,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
             $timestamps['generacion_completada'] = now()->toISOString();
             $config['job_status'] = 'completed';
             $config['job_error'] = null;
+            $config['pattern_audit'] = $result['audit'] ?? [];
             $variantes = collect($result['variantes'] ?? [])->map(function ($item) {
                 if (!is_array($item)) {
                     return $item;
@@ -160,7 +161,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
         $partial = $this->normalizePartial($examen->tipo_examen);
         $asignaturaIds = $this->resolveAsignaturaIds($examen);
 
-        return BancoPregunta::query()
+        $questions = BancoPregunta::query()
             ->whereIn('asignatura_id', $asignaturaIds)
             ->where('parcial', $partial)
             ->where(function ($query) use ($examen, $normalizedGroup) {
@@ -171,7 +172,11 @@ class GenerateRolExamenPackageJob implements ShouldQueue
                     );
             })
             ->orderBy('id')
-            ->get()
+            ->get();
+
+        $this->assertQuestionsMatchExamContext($questions, $asignaturaIds, $normalizedGroup, $partial);
+
+        return $questions
             ->map(function (BancoPregunta $question) {
                 $imagePath = $question->imagen
                     ? storage_path('app/public/preguntas/' . $question->imagen)
@@ -179,6 +184,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
 
                 return [
                     'id' => $question->id,
+                    'asignatura_id' => $question->asignatura_id,
                     'enunciado' => $question->enunciado,
                     'tipo' => $question->tipo,
                     'grupo' => $question->grupo,
@@ -186,10 +192,41 @@ class GenerateRolExamenPackageJob implements ShouldQueue
                     'opciones' => $question->opciones ?? [],
                     'respuesta_correcta' => $question->respuesta_correcta ?? [],
                     'dificultad' => $question->dificultad,
+                    'parcial' => $question->parcial,
                     'imagen' => $question->imagen,
                     'imagePath' => $imagePath && file_exists($imagePath) ? $imagePath : null,
                 ];
             });
+    }
+
+    private function assertQuestionsMatchExamContext($questions, array $asignaturaIds, string $normalizedGroup, string $partial): void
+    {
+        $invalid = $questions->filter(function (BancoPregunta $question) use ($asignaturaIds, $normalizedGroup, $partial) {
+            $questionGroup = $this->normalizeGroup($question->grupoTeorico ?: $question->grupo);
+            $questionPartial = $this->normalizePartial($question->parcial);
+
+            return !in_array((int) $question->asignatura_id, $asignaturaIds, true)
+                || $questionGroup !== $normalizedGroup
+                || $questionPartial !== $partial;
+        })->values();
+
+        if ($invalid->isEmpty()) {
+            return;
+        }
+
+        $sample = $invalid->take(5)->map(function (BancoPregunta $question) {
+            return sprintf(
+                '#%s[a:%s g:%s p:%s]',
+                $question->id,
+                $question->asignatura_id,
+                $question->grupoTeorico ?: $question->grupo,
+                $question->parcial
+            );
+        })->implode(', ');
+
+        throw new \RuntimeException(
+            'Se detectaron preguntas fuera del contexto de asignatura, grupo o parcial del examen: ' . $sample
+        );
     }
 
     private function normalizeGroup(?string $value): string

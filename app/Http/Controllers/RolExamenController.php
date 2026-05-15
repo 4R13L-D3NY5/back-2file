@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\GenerateRolExamenPackageJob;
+use App\Models\BancoPregunta;
 use App\Models\RolExamen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -11,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use Smalot\PdfParser\Parser as PdfParser;
 
 class RolExamenController extends Controller
 {
@@ -1135,6 +1137,92 @@ return response()->json(['message' => 'Examen eliminado']);
         return $this->downloadManagedFile($managedPath, $filename, 'patrones');
     }
 
+    public function patternVerifier(Request $request, $id)
+    {
+        $examen = RolExamen::findOrFail($id);
+
+        if ($response = $this->authorizeRolExamenAccess($examen)) {
+            return $response;
+        }
+
+        $allowedStatuses = [
+            'generado',
+            'generados',
+            'impreso',
+            'impresos',
+            'entregado',
+            'entregados',
+            'devuelto',
+            'devueltos',
+            'revisado',
+            'revisados',
+            'subido',
+            'subidos',
+        ];
+
+        if (!in_array(strtolower(trim((string) $examen->estado)), $allowedStatuses, true)) {
+            return response()->json([
+                'message' => 'El verificador de patrones solo est\u00e1 disponible desde la etapa Generado en adelante.',
+            ], 422);
+        }
+
+        $request->validate([
+            'archivo' => 'required|file|mimes:pdf|max:20480',
+        ]);
+
+        $variants = $this->resolvePatternVariants($examen);
+
+        if (empty($variants)) {
+            return response()->json([
+                'message' => 'No se encontraron patrones registrados para este examen.',
+            ], 404);
+        }
+
+        $uploadedFile = $request->file('archivo');
+        $verification = $this->verifyPatternAgainstUploadedPdf($examen, $uploadedFile->getRealPath(), $variants);
+        $variants = $verification['variants'];
+        $registeredExamNames = collect($examen->variantes ?? [])
+            ->map(function ($item) {
+                if (is_array($item)) {
+                    return $item['archivo'] ?? null;
+                }
+
+                return is_string($item) ? $item : null;
+            })
+            ->filter()
+            ->unique()
+            ->values();
+
+        $patternDownloads = collect($examen->patrones ?? [])->first(fn ($item) => is_array($item)) ?? [];
+
+        return response()->json([
+            'exam' => [
+                'id' => $examen->id,
+                'codigo' => $examen->materia_codigo,
+                'materia' => $examen->materia_nombre,
+                'grupo' => $examen->grupo,
+                'parcial' => $examen->tipo_examen,
+                'estado' => $examen->estado,
+                'fecha' => optional($examen->fecha)?->format('Y-m-d'),
+                'sede_id' => $examen->sede_id,
+                'carrera_id' => $examen->carrera_id,
+            ],
+            'uploaded_file' => [
+                'name' => $uploadedFile->getClientOriginalName(),
+                'size' => $uploadedFile->getSize(),
+                'matches_registered_name' => $registeredExamNames->contains($uploadedFile->getClientOriginalName()),
+                'registered_names' => $registeredExamNames->all(),
+            ],
+            'downloads' => [
+                'exam' => $registeredExamNames->first(),
+                'patron_pdf' => $patternDownloads['pdf'] ?? null,
+                'patron_xlsx' => $patternDownloads['xlsx'] ?? null,
+            ],
+            'verification' => $verification['summary'],
+            'variants' => $variants,
+        ]);
+    }
+
     private function downloadManagedFile(?string $managedPath, ?string $filename, string $publicDir)
     {
         if ($managedPath) {
@@ -1151,6 +1239,48 @@ return response()->json(['message' => 'Examen eliminado']);
         return response()->json(['message' => 'Archivo no encontrado'], 404);
     }
 
+    private function authorizeRolExamenAccess(RolExamen $examen)
+    {
+        $user = auth()->user();
+
+        if (!$user) {
+            return response()->json(['message' => 'No autenticado'], 401);
+        }
+
+        if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->sede_id;
+            if ($sedeId && (int) $examen->sede_id !== (int) $sedeId) {
+                return response()->json(['message' => 'No tiene permiso para acceder a este examen'], 403);
+            }
+
+            $allowedCareerIds = [];
+            if ($user->director) {
+                if ($user->director->carrera_id) {
+                    $allowedCareerIds[] = (int) $user->director->carrera_id;
+                }
+
+                if ($user->director->carreras) {
+                    $allowedCareerIds = array_merge(
+                        $allowedCareerIds,
+                        $user->director->carreras->pluck('id')->map(fn ($id) => (int) $id)->all()
+                    );
+                }
+
+                $allowedCareerIds = array_merge(
+                    $allowedCareerIds,
+                    $user->director->carreras()->pluck('carrera_id')->map(fn ($id) => (int) $id)->all()
+                );
+            }
+
+            $allowedCareerIds = array_values(array_unique(array_filter($allowedCareerIds)));
+            if (!empty($allowedCareerIds) && !in_array((int) $examen->carrera_id, $allowedCareerIds, true)) {
+                return response()->json(['message' => 'No tiene permiso para acceder a este examen'], 403);
+            }
+        }
+
+        return null;
+    }
+
     private function deleteManagedFile(?string $managedPath, ?string $filename, string $publicDir): void
     {
         if ($managedPath) {
@@ -1163,6 +1293,744 @@ return response()->json(['message' => 'Examen eliminado']);
         if ($filename) {
             Storage::disk('public')->delete($publicDir . '/' . $filename);
         }
+    }
+
+    private function verifyPatternAgainstUploadedPdf(RolExamen $examen, string $pdfPath, array $patternVariants): array
+    {
+        $bankQuestions = $this->loadBankQuestionsForPatternVerification($examen);
+        $pdfText = $this->extractPdfText($pdfPath);
+        $pdfVariants = $this->parsePdfVariants($pdfText);
+
+        $summary = [
+            'mode' => 'pdf_vs_banco',
+            'bank_questions' => $bankQuestions->count(),
+            'pdf_variants_detected' => count($pdfVariants),
+            'matched' => 0,
+            'correct' => 0,
+            'mismatched' => 0,
+            'unmatched' => 0,
+            'without_pattern' => 0,
+        ];
+
+        $verifiedVariants = collect($patternVariants)->map(function ($variant) use ($bankQuestions, $pdfVariants, &$summary) {
+            $letter = (string) ($variant['letra'] ?? '');
+            $answers = $variant['answers'] ?? [];
+            $pdfQuestions = $pdfVariants[$letter] ?? [];
+            $usedQuestionIds = [];
+
+            $checks = collect(range(1, 100))->map(function ($number) use (
+                $answers,
+                $pdfQuestions,
+                $bankQuestions,
+                &$usedQuestionIds,
+                &$summary
+            ) {
+                $patternAnswer = trim((string) ($answers[$number - 1] ?? ''));
+                $pdfBlock = $pdfQuestions[$number] ?? null;
+
+                if (!$patternAnswer && !$pdfBlock) {
+                    return [
+                        'number' => $number,
+                        'answer' => '',
+                        'status' => 'empty',
+                        'match_score' => null,
+                        'expected_answer' => '',
+                        'question' => null,
+                    ];
+                }
+
+                if (!$patternAnswer) {
+                    $summary['without_pattern']++;
+                }
+
+                if (!$pdfBlock) {
+                    $summary['unmatched']++;
+                    return [
+                        'number' => $number,
+                        'answer' => $patternAnswer,
+                        'status' => 'not_found_in_pdf',
+                        'match_score' => null,
+                        'expected_answer' => '',
+                        'question' => null,
+                    ];
+                }
+
+                $match = $this->findBestBankQuestionMatch($pdfBlock, $bankQuestions, $usedQuestionIds);
+
+                if (!$match) {
+                    $summary['unmatched']++;
+                    return [
+                        'number' => $number,
+                        'answer' => $patternAnswer,
+                        'status' => 'unmatched',
+                        'match_score' => null,
+                        'expected_answer' => '',
+                        'question' => [
+                            'number' => $number,
+                            'enunciado' => $pdfBlock,
+                            'tipo' => 'No identificado',
+                            'source' => 'pdf',
+                        ],
+                    ];
+                }
+
+                $question = $match['question'];
+                $usedQuestionIds[] = (int) $question->id;
+                $expectedAnswer = $this->deriveExpectedAnswerFromPdfBlock($question, $pdfBlock);
+                $status = $this->answersMatch($patternAnswer, $expectedAnswer) ? 'correct' : 'mismatch';
+
+                $summary['matched']++;
+                if ($status === 'correct') {
+                    $summary['correct']++;
+                } else {
+                    $summary['mismatched']++;
+                }
+
+                return [
+                    'number' => $number,
+                    'answer' => $patternAnswer,
+                    'status' => $status,
+                    'match_score' => $match['score'],
+                    'expected_answer' => $expectedAnswer,
+                    'question' => $this->formatBancoQuestionForVerifier($question, $number, $expectedAnswer, $pdfBlock),
+                ];
+            })->values()->all();
+
+            $answeredChecks = collect($checks)->filter(fn ($item) => ($item['status'] ?? '') !== 'empty')->values();
+
+            return array_merge($variant, [
+                'source' => 'pdf_vs_banco',
+                'questions' => $answeredChecks->all(),
+                'answered_count' => $answeredChecks->count(),
+                'verification' => [
+                    'correct' => $answeredChecks->where('status', 'correct')->count(),
+                    'mismatched' => $answeredChecks->where('status', 'mismatch')->count(),
+                    'unmatched' => $answeredChecks
+                        ->filter(fn ($item) => in_array($item['status'], ['unmatched', 'not_found_in_pdf'], true))
+                        ->count(),
+                ],
+            ]);
+        })->values()->all();
+
+        return [
+            'summary' => $summary,
+            'variants' => $verifiedVariants,
+        ];
+    }
+
+    private function extractPdfText(string $pdfPath): string
+    {
+        $parser = new PdfParser();
+        $pdf = $parser->parseFile($pdfPath);
+
+        return preg_replace('/[ \t]+/', ' ', str_replace("\r", "\n", $pdf->getText())) ?? '';
+    }
+
+    private function parsePdfVariants(string $text): array
+    {
+        $lines = $this->normalizePdfLines($text);
+        $segments = [];
+        $currentLetter = null;
+
+        for ($i = 0; $i < count($lines); $i++) {
+            $line = $lines[$i];
+
+            if (preg_match('/TIPO\s+DE\s+EXAMEN:.*VAR\s*([A-E])?\s*$/i', $line, $match)) {
+                $letter = strtoupper((string) ($match[1] ?? ''));
+
+                if ($letter === '') {
+                    $nextIndex = $i + 1;
+                    while ($nextIndex < count($lines) && trim($lines[$nextIndex]) === '') {
+                        $nextIndex++;
+                    }
+
+                    if ($nextIndex < count($lines) && preg_match('/^[A-E]$/i', trim($lines[$nextIndex]))) {
+                        $letter = strtoupper(trim($lines[$nextIndex]));
+                        $i = $nextIndex;
+                    }
+                }
+
+                if ($letter !== '') {
+                    $currentLetter = $letter;
+                    $segments[$currentLetter] = [];
+                    continue;
+                }
+            }
+
+            if ($currentLetter) {
+                $segments[$currentLetter][] = $line;
+            }
+        }
+
+        if (empty($segments)) {
+            return ['A' => $this->parseQuestionBlocks($lines)];
+        }
+
+        return collect($segments)
+            ->map(fn ($segmentLines) => $this->parseQuestionBlocks($segmentLines))
+            ->filter(fn ($questions) => !empty($questions))
+            ->all();
+    }
+
+    private function parseQuestionBlocks(string|array $text): array
+    {
+        $lines = is_array($text) ? $text : $this->normalizePdfLines($text);
+        $questions = [];
+        $currentNumber = null;
+        $currentLines = [];
+        $section = '';
+        $expectedNumber = 1;
+
+        foreach ($lines as $line) {
+            $line = trim(preg_replace('/\s+/', ' ', $line) ?? $line);
+            if ($line === '') {
+                continue;
+            }
+
+            if ($this->isPdfBoilerplateLine($line)) {
+                continue;
+            }
+
+            $section = $this->detectPdfQuestionSection($line, $section);
+
+            if (preg_match('/^(\d{1,3})\.\s+(.*)$/u', $line, $match)) {
+                $number = (int) $match[1];
+                $rest = trim($match[2] ?? '');
+
+                if ($this->isPrimaryPdfQuestionLine($number, $expectedNumber, $rest, $section)) {
+                    if ($currentNumber !== null && !empty($currentLines)) {
+                        $questions[$currentNumber] = trim(implode(' ', $currentLines));
+                    }
+
+                    $currentNumber = $number;
+                    $currentLines = [$rest];
+                    $expectedNumber = $number + 1;
+                    continue;
+                }
+            }
+
+            if ($currentNumber !== null) {
+                $currentLines[] = $line;
+            }
+        }
+
+        if ($currentNumber !== null && !empty($currentLines)) {
+            $questions[$currentNumber] = trim(implode(' ', $currentLines));
+        }
+
+        return $questions;
+    }
+
+    private function isPdfBoilerplateLine(string $line): bool
+    {
+        $normalized = $this->normalizeComparableText($line);
+
+        return $normalized === ''
+            || str_starts_with($normalized, 'universidad tecnica privada cosmos')
+            || str_starts_with($normalized, 'gestion ')
+            || str_starts_with($normalized, 'evaluacion teorica')
+            || str_starts_with($normalized, 'nombre codigo')
+            || str_starts_with($normalized, 'carrera ')
+            || str_starts_with($normalized, 'docente ')
+            || str_starts_with($normalized, 'materia ')
+            || str_starts_with($normalized, 'semestre ')
+            || str_starts_with($normalized, 'importante ')
+            || str_starts_with($normalized, 'pagina en blanco');
+    }
+
+    private function normalizePdfLines(string $text): array
+    {
+        $text = str_replace("\r", "\n", $text);
+
+        return collect(preg_split('/\n+/', $text) ?: [])
+            ->map(fn ($line) => trim(preg_replace('/[ \t]+/', ' ', $line) ?? $line))
+            ->filter(fn ($line) => $line !== '')
+            ->values()
+            ->all();
+    }
+
+    private function detectPdfQuestionSection(string $line, string $current): string
+    {
+        $normalized = $this->normalizeComparableText($line);
+
+        if (str_contains($normalized, 'verdadero o falso complejas')) {
+            return 'complex';
+        }
+
+        if (str_contains($normalized, 'respuesta a b ambas ninguna')) {
+            return 'complex';
+        }
+
+        if (str_contains($normalized, 'verdadero o falso simple')) {
+            return 'complex';
+        }
+
+        if (str_contains($normalized, 'emparejamiento ampliado')) {
+            return 'matching';
+        }
+
+        if (str_contains($normalized, 'seleccion de la mejor respuesta')) {
+            return 'selection';
+        }
+
+        if (str_contains($normalized, 'items agrupados') || str_contains($normalized, 'caso clinico')) {
+            return 'selection';
+        }
+
+        return $current;
+    }
+
+    private function isPrimaryPdfQuestionLine(int $number, int $expectedNumber, string $text, string $section): bool
+    {
+        if ($number !== $expectedNumber || $number < 1 || $number > 100) {
+            return false;
+        }
+
+        if ($section === 'complex') {
+            return str_contains($text, '____');
+        }
+
+        return true;
+    }
+
+    private function loadBankQuestionsForPatternVerification(RolExamen $examen)
+    {
+        $asignaturaIds = $this->resolveRolExamenAsignaturaIds($examen);
+        $normalizedGroup = $this->normalizeVerifierGroup($examen->grupo);
+        $partial = $this->normalizeVerifierPartial($examen->tipo_examen);
+
+        return BancoPregunta::query()
+            ->whereIn('asignatura_id', $asignaturaIds)
+            ->where('parcial', $partial)
+            ->where(function ($query) use ($normalizedGroup) {
+                $query->whereRaw(
+                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                    [$normalizedGroup]
+                )->orWhereRaw(
+                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                    [$normalizedGroup]
+                );
+            })
+            ->get()
+            ->filter(fn (BancoPregunta $question) => !$this->isMacroPatternHeader($question->tipo))
+            ->values();
+    }
+
+    private function findBestBankQuestionMatch(string $pdfBlock, $bankQuestions, array $usedQuestionIds): ?array
+    {
+        $pdfComparable = $this->normalizeComparableText($pdfBlock);
+        $best = null;
+
+        foreach ($bankQuestions as $question) {
+            if (in_array((int) $question->id, $usedQuestionIds, true)) {
+                continue;
+            }
+
+            $statementComparable = $this->normalizeComparableText((string) $question->enunciado);
+            if ($statementComparable === '') {
+                continue;
+            }
+
+            similar_text($pdfComparable, $statementComparable, $percent);
+
+            if (str_contains($pdfComparable, $statementComparable) || str_contains($statementComparable, $pdfComparable)) {
+                $percent = max($percent, 92);
+            }
+
+            if (!$best || $percent > $best['score']) {
+                $best = ['question' => $question, 'score' => round($percent, 2)];
+            }
+        }
+
+        return $best && $best['score'] >= 38 ? $best : null;
+    }
+
+    private function deriveExpectedAnswerFromPdfBlock(BancoPregunta $question, string $pdfBlock): string
+    {
+        $type = $this->normalizarTipoBanco($question->tipo);
+
+        if (in_array($type, ['SELECCION_SIMPLE', 'SUBPROBLEMA'], true)) {
+            $visibleOptions = $this->extractVisibleOptionsFromPdfBlock($pdfBlock);
+            $correctOptionText = $this->resolveCorrectOptionText($question);
+
+            if ($correctOptionText !== '' && !empty($visibleOptions)) {
+                $correctComparable = $this->normalizeComparableText($correctOptionText);
+                $bestLetter = '';
+                $bestScore = 0;
+
+                foreach ($visibleOptions as $letter => $text) {
+                    similar_text($this->normalizeComparableText($text), $correctComparable, $score);
+                    if ($score > $bestScore) {
+                        $bestScore = $score;
+                        $bestLetter = $letter;
+                    }
+                }
+
+                if ($bestLetter && $bestScore >= 50) {
+                    return $bestLetter;
+                }
+            }
+        }
+
+        return $this->normalizeVerifierAnswer($question->respuesta_correcta, $type);
+    }
+
+    private function extractVisibleOptionsFromPdfBlock(string $pdfBlock): array
+    {
+        $options = [];
+        preg_match_all('/\b([A-E])\)\s*(.*?)(?=\s+[A-E]\)\s*|$)/u', $pdfBlock, $matches, PREG_SET_ORDER);
+
+        foreach ($matches as $match) {
+            $letter = strtoupper($match[1]);
+            $text = trim($match[2] ?? '');
+            if ($text !== '') {
+                $options[$letter] = $text;
+            }
+        }
+
+        return $options;
+    }
+
+    private function resolveCorrectOptionText(BancoPregunta $question): string
+    {
+        $answers = $this->answerToArray($question->respuesta_correcta);
+        $correctKey = strtoupper(trim((string) ($answers[0] ?? '')));
+
+        foreach ($this->normalizeQuestionOptions($question->opciones) as $index => $option) {
+            $optionId = strtoupper(trim((string) (is_array($option) ? ($option['id'] ?? '') : '')));
+            $optionLetter = chr(65 + $index);
+
+            if ($correctKey !== '' && in_array($correctKey, [$optionId, $optionLetter], true)) {
+                return $this->optionText($option);
+            }
+        }
+
+        return '';
+    }
+
+    private function formatBancoQuestionForVerifier(
+        BancoPregunta $question,
+        int $number,
+        string $expectedAnswer,
+        string $pdfBlock
+    ): array {
+        return [
+            'number' => $number,
+            'id' => $question->id,
+            'tipo' => $question->tipo,
+            'enunciado' => $question->enunciado,
+            'opciones' => $this->normalizeQuestionOptions($question->opciones),
+            'respuesta_correcta' => $question->respuesta_correcta,
+            'expected_answer' => $expectedAnswer,
+            'dificultad' => $question->dificultad,
+            'grupo' => $question->grupoTeorico ?: $question->grupo,
+            'pdf_text' => $pdfBlock,
+            'imagen_url' => !empty($question->imagen) ? asset('storage/preguntas/' . $question->imagen) : null,
+            'source' => 'banco',
+        ];
+    }
+
+    private function normalizeVerifierAnswer($answer, string $type = ''): string
+    {
+        $values = collect($this->answerToArray($answer))
+            ->map(fn ($value) => strtoupper(trim(str_replace(['"', "'", ';'], ['', '', ','], (string) $value))))
+            ->filter()
+            ->values();
+
+        if ($type === 'FALSO_VERDADERO') {
+            $first = $values->first();
+            if (in_array($first, ['VERDADERO', 'V', 'TRUE', '1'], true)) {
+                return 'A';
+            }
+            if (in_array($first, ['FALSO', 'F', 'FALSE', '0'], true)) {
+                return 'B';
+            }
+        }
+
+        return $values->implode(',');
+    }
+
+    private function answersMatch(string $patternAnswer, string $expectedAnswer): bool
+    {
+        $left = strtoupper(trim(str_replace([' ', ';'], ['', ','], $patternAnswer)));
+        $right = strtoupper(trim(str_replace([' ', ';'], ['', ','], $expectedAnswer)));
+
+        return $left !== '' && $left === $right;
+    }
+
+    private function normalizeComparableText(string $text): string
+    {
+        $text = html_entity_decode(strip_tags($text), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = mb_strtolower($text);
+        $text = strtr($text, [
+            'á' => 'a',
+            'é' => 'e',
+            'í' => 'i',
+            'ó' => 'o',
+            'ú' => 'u',
+            'ü' => 'u',
+            'ñ' => 'n',
+        ]);
+        $text = preg_replace('/\b[a-e]\)\s*/', ' ', $text) ?? $text;
+        $text = preg_replace('/[^a-z0-9]+/u', ' ', $text) ?? $text;
+
+        return trim(preg_replace('/\s+/', ' ', $text) ?? $text);
+    }
+
+    private function answerToArray($answer): array
+    {
+        if (is_array($answer)) {
+            return $answer;
+        }
+
+        if (is_string($answer)) {
+            $decoded = json_decode($answer, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+
+            return preg_split('/[,;]+/', $answer) ?: [$answer];
+        }
+
+        return $answer === null ? [] : [$answer];
+    }
+
+    private function optionText($option): string
+    {
+        if (is_array($option)) {
+            return (string) ($option['text'] ?? $option['texto'] ?? $option['label'] ?? $option['enunciado'] ?? '');
+        }
+
+        return (string) $option;
+    }
+
+    private function resolveRolExamenAsignaturaIds(RolExamen $examen): array
+    {
+        $query = DB::table('asignaturas')->where('codigo', $examen->materia_codigo);
+
+        if (Schema::hasColumn('asignaturas', 'sede_id') && $examen->sede_id) {
+            $query->where('sede_id', $examen->sede_id);
+        }
+
+        return $query->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    private function normalizeVerifierGroup(?string $value): string
+    {
+        $value = strtoupper(trim((string) $value));
+        return str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $value);
+    }
+
+    private function normalizeVerifierPartial(?string $value): string
+    {
+        $value = strtolower(trim((string) $value));
+
+        return [
+            '1er parcial' => '1er Parcial',
+            'primer parcial' => '1er Parcial',
+            '1 parcial' => '1er Parcial',
+            '2do parcial' => '2do Parcial',
+            'segundo parcial' => '2do Parcial',
+            '2 parcial' => '2do Parcial',
+            'final' => 'Final',
+            'examen final' => 'Final',
+            '2da instancia' => '2da Instancia',
+            'segunda instancia' => '2da Instancia',
+        ][$value] ?? (string) $value;
+    }
+
+    private function resolvePatternVariants(RolExamen $examen): array
+    {
+        $config = $examen->config_generacion ?? [];
+        $auditVariants = $config['pattern_audit'] ?? $config['audit'] ?? null;
+
+        if (is_array($auditVariants) && !empty($auditVariants)) {
+            return collect($auditVariants)
+                ->filter(fn ($item) => is_array($item) && !empty($item['letra']))
+                ->map(function ($item) {
+                    $answers = collect($item['patron_respuestas'] ?? [])
+                        ->map(fn ($value) => is_scalar($value) ? (string) $value : '')
+                        ->take(100)
+                        ->pad(100, '')
+                        ->values()
+                        ->all();
+
+                    $questions = $this->buildVariantQuestionDetails($item, $answers);
+
+                    return [
+                        'letra' => (string) $item['letra'],
+                        'answers' => $answers,
+                        'answered_count' => count(array_filter($answers, fn ($value) => trim((string) $value) !== '')),
+                        'source' => 'audit',
+                        'questions' => $questions,
+                    ];
+                })
+                ->values()
+                ->all();
+        }
+
+        return $this->resolvePatternVariantsFromXlsx($examen);
+    }
+
+    private function resolvePatternVariantsFromXlsx(RolExamen $examen): array
+    {
+        $patternEntry = collect($examen->patrones ?? [])->first(function ($item) {
+            return is_array($item) && (!empty($item['xlsx_path']) || !empty($item['xlsx']));
+        });
+
+        if (!$patternEntry) {
+            return [];
+        }
+
+        $xlsxPath = $this->resolveManagedAbsolutePath(
+            $patternEntry['xlsx_path'] ?? null,
+            $patternEntry['xlsx'] ?? null,
+            'patrones'
+        );
+
+        if (!$xlsxPath || !is_file($xlsxPath)) {
+            return [];
+        }
+
+        $spreadsheet = IOFactory::load($xlsxPath);
+        $sheet = $spreadsheet->getActiveSheet();
+        $rows = $sheet->toArray(null, false, false, false);
+
+        if (count($rows) < 2) {
+            return [];
+        }
+
+        return collect(array_slice($rows, 1))
+            ->filter(fn ($row) => !empty($row[1]))
+            ->map(function ($row) {
+                $answers = collect(array_slice($row, 3, 100))
+                    ->map(fn ($value) => trim((string) $value))
+                    ->pad(100, '')
+                    ->values()
+                    ->all();
+
+                return [
+                    'letra' => trim((string) ($row[1] ?? '')),
+                    'answers' => $answers,
+                    'answered_count' => count(array_filter($answers, fn ($value) => $value !== '')),
+                    'source' => 'xlsx',
+                    'questions' => [],
+                ];
+            })
+            ->filter(fn ($item) => $item['letra'] !== '')
+            ->values()
+            ->all();
+    }
+
+    private function resolveManagedAbsolutePath(?string $managedPath, ?string $filename, string $publicDir): ?string
+    {
+        if ($managedPath) {
+            $absolutePath = storage_path('app/' . ltrim($managedPath, '/'));
+            if (is_file($absolutePath)) {
+                return $absolutePath;
+            }
+        }
+
+        if ($filename) {
+            $publicPath = storage_path('app/public/' . trim($publicDir, '/') . '/' . $filename);
+            if (is_file($publicPath)) {
+                return $publicPath;
+            }
+        }
+
+        return null;
+    }
+
+    private function buildVariantQuestionDetails(array $auditVariant, array $answers): array
+    {
+        $auditQuestions = collect($auditVariant['preguntas'] ?? [])
+            ->filter(fn ($item) => is_array($item) && !$this->isMacroPatternHeader($item['tipo'] ?? null))
+            ->values();
+
+        if ($auditQuestions->isEmpty()) {
+            return [];
+        }
+
+        $questionIds = $auditQuestions
+            ->pluck('id')
+            ->filter(fn ($id) => !empty($id))
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        $bankQuestions = BancoPregunta::query()
+            ->whereIn('id', $questionIds)
+            ->get()
+            ->keyBy('id');
+
+        return $auditQuestions
+            ->take(100)
+            ->map(function ($question, $index) use ($bankQuestions, $answers) {
+                $bankQuestion = !empty($question['id']) ? $bankQuestions->get((int) $question['id']) : null;
+                $resolved = $bankQuestion ?: null;
+
+                return [
+                    'number' => $index + 1,
+                    'answer' => $answers[$index] ?? '',
+                    'id' => $resolved?->id ?? ($question['id'] ?? null),
+                    'tipo' => $resolved?->tipo ?? ($question['tipo'] ?? ''),
+                    'enunciado' => $resolved?->enunciado ?? ($question['enunciado'] ?? ''),
+                    'opciones' => $this->normalizeQuestionOptions($resolved?->opciones ?? ($question['opciones'] ?? [])),
+                    'respuesta_correcta' => $this->normalizeCorrectAnswer(
+                        $resolved?->respuesta_correcta ?? ($question['respuesta_correcta'] ?? [])
+                    ),
+                    'dificultad' => $resolved?->dificultad ?? ($question['dificultad'] ?? ''),
+                    'grupo' => $resolved?->grupoTeorico ?: $resolved?->grupo ?: ($question['grupo'] ?? ''),
+                    'imagen_url' => !empty($resolved?->imagen)
+                        ? asset('storage/preguntas/' . $resolved->imagen)
+                        : null,
+                    'source' => $resolved ? 'banco' : 'audit',
+                ];
+            })
+            ->values()
+            ->all();
+    }
+
+    private function isMacroPatternHeader(?string $tipo): bool
+    {
+        return in_array($this->normalizarTipoBanco($tipo), ['PROBLEMA', 'EMPAREJAMIENTO'], true);
+    }
+
+    private function normalizeQuestionOptions($options): array
+    {
+        if (is_array($options)) {
+            return array_values($options);
+        }
+
+        if (is_string($options)) {
+            $decoded = json_decode($options, true);
+            if (is_array($decoded)) {
+                return array_values($decoded);
+            }
+        }
+
+        return [];
+    }
+
+    private function normalizeCorrectAnswer($answer)
+    {
+        if (is_array($answer)) {
+            return $answer;
+        }
+
+        if (is_string($answer)) {
+            $decoded = json_decode($answer, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return $answer;
     }
 
     /**
