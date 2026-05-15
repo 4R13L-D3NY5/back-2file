@@ -671,6 +671,10 @@ class PlanningSyncService
     {
         $asignaturas = Asignatura::withoutGlobalScopes()
             ->where('codigo', $codigo)
+            ->where(function ($q) use ($planPreferido) {
+                $q->where('plan_estudios', $planPreferido)
+                  ->orWhereNull('plan_estudios');
+            })
             ->get();
 
         if ($asignaturas->count() <= 1) {
