@@ -419,4 +419,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/restauracion/asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'restaurarAsignatura'])
         ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
 
+    // Recuperacion de Bancos de Preguntas (Solo SUPER_ADMIN)
+    Route::prefix('restauracion/bancos')->middleware('role:SUPER_ADMIN')->group(function () {
+        Route::post('/preview', [\App\Http\Controllers\RestauracionBancosController::class, 'preview']);
+        Route::post('/execute', [\App\Http\Controllers\RestauracionBancosController::class, 'execute']);
+    });
+
 });

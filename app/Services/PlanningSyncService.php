@@ -463,7 +463,8 @@ class PlanningSyncService
 
             // ── C) Detectar y fusionar duplicados de asignaturas ─────────────────────
             // Un duplicado es una asignatura vinculada a esta carrera/sede que tiene el
-            // mismo código con diferente plan_estudios, o nombre muy similar (>80%).
+            // MISMO código con diferente plan_estudios (ej: ENF-111 Plan A y ENF-111 Plan N).
+            // NUNCA se fusionan códigos diferentes aunque tengan nombres parecidos.
             // La "correcta" es la que tiene plan_estudios = 'N' (Plan Nuevo, la de la API).
             $asignaturasEnCarrera = Asignatura::withoutGlobalScopes()
                 ->whereHas('carreras', fn($q) =>
@@ -479,26 +480,13 @@ class PlanningSyncService
             foreach ($asignaturasEnCarrera as $asignatura) {
                 if ($fusionadas->contains($asignatura->id)) continue;
 
-                // Buscar duplicados por mismo código con diferente plan
-                $duplicadosPorCodigo = $asignaturasEnCarrera->filter(fn($a) =>
+                // Buscar duplicados SOLO por mismo código con diferente plan
+                $duplicados = $asignaturasEnCarrera->filter(fn($a) =>
                     $a->id !== $asignatura->id &&
                     !$fusionadas->contains($a->id) &&
                     $a->codigo === $asignatura->codigo &&
                     $a->plan_estudios !== $asignatura->plan_estudios
                 );
-
-                // Buscar duplicados por nombre similar >80%
-                $duplicadosPorNombre = $asignaturasEnCarrera->filter(function ($a) use ($asignatura) {
-                    if ($a->id === $asignatura->id || $a->codigo === $asignatura->codigo) return false;
-                    similar_text(
-                        strtoupper($a->nombre),
-                        strtoupper($asignatura->nombre),
-                        $pct
-                    );
-                    return $pct > 80;
-                });
-
-                $duplicados = $duplicadosPorCodigo->merge($duplicadosPorNombre)->unique('id');
 
                 foreach ($duplicados as $duplicado) {
                     if ($fusionadas->contains($duplicado->id)) continue;
