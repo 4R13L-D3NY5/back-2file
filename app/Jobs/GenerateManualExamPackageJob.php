@@ -43,6 +43,11 @@ class GenerateManualExamPackageJob implements ShouldQueue
                 throw new \RuntimeException('No se encontraron preguntas para la generacion manual.');
             }
 
+            $this->assertQuestionsMatchManualContext($questions, [
+                'grupo' => $registro->grupo,
+                'parcial' => $registro->parcial,
+            ]);
+
             $backendBase = base_path();
             $workspaceBase = dirname($backendBase);
             $payloadPath = storage_path('app/tmp/manual-exam-generation-' . $registro->id . '.json');
@@ -129,5 +134,69 @@ class GenerateManualExamPackageJob implements ShouldQueue
 
             throw $e;
         }
+    }
+
+    private function assertQuestionsMatchManualContext(array $questions, array $context): void
+    {
+        $expectedGroup = $this->normalizeGroup($context['grupo'] ?? null);
+        $expectedPartial = $this->normalizePartial($context['parcial'] ?? null);
+
+        $invalid = collect($questions)->filter(function ($question) use ($expectedGroup, $expectedPartial) {
+            $questionGroup = $this->normalizeGroup($question['grupoTeorico'] ?? $question['grupo'] ?? null);
+            $questionPartial = $this->normalizePartial($question['parcial'] ?? null);
+
+            return ($expectedGroup && $questionGroup && $questionGroup !== $expectedGroup)
+                || ($expectedPartial && $questionPartial && $questionPartial !== $expectedPartial);
+        })->values();
+
+        if ($invalid->isEmpty()) {
+            return;
+        }
+
+        $sample = $invalid->take(5)->map(function ($question) {
+            return sprintf(
+                '#%s[g:%s p:%s]',
+                $question['id'] ?? $question['idx'] ?? '?',
+                $question['grupoTeorico'] ?? $question['grupo'] ?? '',
+                $question['parcial'] ?? ''
+            );
+        })->implode(', ');
+
+        throw new \RuntimeException(
+            'Se detectaron preguntas fuera del grupo o parcial de la generacion manual: ' . $sample
+        );
+    }
+
+    private function normalizeGroup(?string $value): string
+    {
+        $value = strtoupper(trim((string) $value));
+        return str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $value);
+    }
+
+    private function normalizePartial(?string $value): string
+    {
+        $value = strtolower(trim((string) $value));
+
+        return [
+            '1er parcial' => '1er Parcial',
+            'primer parcial' => '1er Parcial',
+            '1 parcial' => '1er Parcial',
+            '1° parcial' => '1er Parcial',
+            '1Â° parcial' => '1er Parcial',
+            '1p' => '1er Parcial',
+            '2do parcial' => '2do Parcial',
+            'segundo parcial' => '2do Parcial',
+            '2 parcial' => '2do Parcial',
+            '2° parcial' => '2do Parcial',
+            '2Â° parcial' => '2do Parcial',
+            '2p' => '2do Parcial',
+            'final' => 'Final',
+            'ef' => 'Final',
+            'examen final' => 'Final',
+            '2da instancia' => '2da Instancia',
+            'segunda instancia' => '2da Instancia',
+            'segunda' => '2da Instancia',
+            '2i' => '2da Instancia',
+        ][$value] ?? (string) $value;
     }
 }

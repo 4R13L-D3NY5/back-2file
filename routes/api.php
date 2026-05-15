@@ -307,6 +307,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
           Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
           Route::post('/{id}/generate-package', [\App\Http\Controllers\RolExamenController::class, 'generatePackage']);
+          Route::post('/{id}/pattern-verifier', [\App\Http\Controllers\RolExamenController::class, 'patternVerifier']);
           Route::get('/{id}/download-examen', [\App\Http\Controllers\RolExamenController::class, 'downloadExamen']);
           Route::get('/{id}/download-patron', [\App\Http\Controllers\RolExamenController::class, 'downloadPatron']);
           Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
