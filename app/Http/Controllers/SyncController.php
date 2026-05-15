@@ -269,7 +269,8 @@ class SyncController extends Controller
         $carrera = strtoupper($request->carrera);
         $gestion = $request->gestion;
         $codigoAsignatura = $request->codigo_asignatura;
-        $planEstudios = $request->plan_estudios ?? 'N';
+        // plan_estudios es opcional: si no se envía, la API determina el plan real por sede
+        $planEstudios = $request->plan_estudios ?: null;
 
         $inicio = microtime(true);
 
@@ -426,15 +427,13 @@ class SyncController extends Controller
         }
 
         // Filtrar por asignatura si se especificó
+        // El plan_estudios NO se usa para filtrar: cada sede tiene su propio plan
+        // y ese valor viene directamente en el campo planEst de cada item de la API.
         $itemsToSync = $allItems;
         if ($codigoAsignatura !== null) {
-            $plan = $planEstudios ?? 'N';
-            $itemsToSync = array_filter($allItems, function ($item) use ($codigoAsignatura, $plan) {
-                $sigla = trim($item['siglaP'] ?? '');
-                $itemPlan = isset($item['planEst']) ? trim((string)$item['planEst']) : 'N';
-                return $sigla === $codigoAsignatura && $itemPlan === $plan;
+            $itemsToSync = array_filter($allItems, function ($item) use ($codigoAsignatura) {
+                return trim($item['siglaP'] ?? '') === $codigoAsignatura;
             });
-            // Reindexar array
             $itemsToSync = array_values($itemsToSync);
         }
 

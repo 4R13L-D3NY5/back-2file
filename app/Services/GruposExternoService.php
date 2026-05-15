@@ -62,9 +62,10 @@ class GruposExternoService
     /**
      * Listar materias de un plan específico (N o A)
      */
-    public function listarMateriasPlan(string $gestion, string $carrera, int $sede, string $plan = 'N'): array
+    public function listarMateriasPlan(string $gestion, string $carrera, int $sede, ?string $plan = null): array
     {
-        $cacheKey = "grupos_externos_plan_{$plan}_{$gestion}_{$carrera}_{$sede}";
+        $planKey = $plan ?? 'todos';
+        $cacheKey = "grupos_externos_plan_{$planKey}_{$gestion}_{$carrera}_{$sede}";
 
         return Cache::remember($cacheKey, 300, function () use ($gestion, $carrera, $sede, $plan) {
             try {
@@ -108,19 +109,20 @@ class GruposExternoService
     /**
      * Transformar datos raw a materias de un plan específico (aplanadas)
      */
-    protected function transformarMateriasPlan(array $rawData, int $sede, string $plan = 'N'): array
+    protected function transformarMateriasPlan(array $rawData, int $sede, ?string $plan = null): array
     {
         Log::debug('GruposExternoService: Transforming Plan data', [
             'raw_count' => count($rawData),
             'sede_filter' => $sede,
-            'plan_filter' => $plan
+            'plan_filter' => $plan ?? 'todos'
         ]);
 
-        // Filtrar por plan específico y sede
+        // Filtrar por sede (y por plan solo si se especificó)
         $filteredData = array_filter($rawData, function ($item) use ($sede, $plan) {
             $planEst = $item['planEst'] ?? 'N';
             $idSede = $item['idSede'] ?? null;
-            $passes = $planEst === $plan && $idSede == $sede;
+            $passesPlan = $plan ? ($planEst === $plan) : true; // sin plan = todos
+            $passes = $passesPlan && $idSede == $sede;
             if (!$passes) {
                 Log::debug('GruposExternoService: Item filtered out', [
                     'siglaP' => $item['siglaP'] ?? null,

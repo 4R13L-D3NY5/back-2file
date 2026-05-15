@@ -88,7 +88,8 @@ class GruposExternoController extends Controller
         $gestion = $request->input('gestion', '1-2026');
         $carrera = $request->input('carrera', 'carsis');
         $sede = (int) $request->input('sede', 1);
-        $plan = $request->input('plan_estudios', 'N'); // N = Nueva, A = Antigua
+        // Si no se especifica plan, se devuelven TODOS los planes (N y A)
+        $plan = $request->input('plan_estudios') ?: null;
 
         $data = $this->service->listarMateriasPlan($gestion, $carrera, $sede, $plan);
 
@@ -99,7 +100,7 @@ class GruposExternoController extends Controller
                 'gestion' => $gestion,
                 'carrera' => strtoupper($carrera),
                 'sede' => $sede,
-                'plan_estudios' => $plan,
+                'plan_estudios' => $plan ?? 'todos',
                 'total_materias' => count($data)
             ]
         ]);
