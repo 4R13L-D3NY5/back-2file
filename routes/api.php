@@ -430,6 +430,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Recuperacion de Bancos de Preguntas (Solo SUPER_ADMIN)
     Route::prefix('restauracion/bancos')->middleware('role:SUPER_ADMIN')->group(function () {
+        Route::post('/sedes', [\App\Http\Controllers\RestauracionBancosController::class, 'sedes']);
+        Route::post('/carreras', [\App\Http\Controllers\RestauracionBancosController::class, 'carreras']);
+        Route::post('/materias', [\App\Http\Controllers\RestauracionBancosController::class, 'materias']);
         Route::post('/preview', [\App\Http\Controllers\RestauracionBancosController::class, 'preview']);
         Route::post('/execute', [\App\Http\Controllers\RestauracionBancosController::class, 'execute']);
     });
