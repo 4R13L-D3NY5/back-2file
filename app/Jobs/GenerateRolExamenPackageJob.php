@@ -269,9 +269,35 @@ class GenerateRolExamenPackageJob implements ShouldQueue
         }
 
         if (!empty($examen->materia_codigo)) {
+            $scopedIds = DB::table('asignaturas')
+                ->join('asignatura_carrera', 'asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
+                ->where('asignaturas.codigo', $examen->materia_codigo)
+                ->where('asignatura_carrera.carrera_id', $examen->carrera_id)
+                ->where('asignatura_carrera.sede_id', $examen->sede_id)
+                ->where('asignaturas.estado', '!=', 'cancelado')
+                ->when((int) $examen->sede_id === 1, function ($query) {
+                    $query->where('asignaturas.plan_estudios', 'N');
+                })
+                ->pluck('asignaturas.id')
+                ->map(fn ($id) => (int) $id);
+
+            $ids = $ids->merge($scopedIds);
+
+            if ($scopedIds->isEmpty()) {
+                Log::warning('GenerateRolExamenPackageJob: no scoped asignatura ids found, using codigo fallback', [
+                    'rol_examen_id' => $examen->id,
+                    'materia_codigo' => $examen->materia_codigo,
+                    'carrera_id' => $examen->carrera_id,
+                    'sede_id' => $examen->sede_id,
+                ]);
+            }
+
             $ids = $ids->merge(
                 DB::table('asignaturas')
                     ->where('codigo', $examen->materia_codigo)
+                    ->when($scopedIds->isNotEmpty(), function ($query) use ($scopedIds) {
+                        $query->whereIn('id', $scopedIds->all());
+                    })
                     ->pluck('id')
                     ->map(fn ($id) => (int) $id)
             );
@@ -282,12 +308,40 @@ class GenerateRolExamenPackageJob implements ShouldQueue
 
     private function resolveDocenteName(RolExamen $examen): string
     {
-        return (string) DB::table('docentes')
+        $asignaturaIds = $this->resolveAsignaturaIds($examen);
+        $normalizedGroup = $this->normalizeGroup($examen->grupo);
+
+        $docente = DB::table('docentes')
             ->join('grupos', 'docentes.id', '=', 'grupos.docente_id')
-            ->join('asignaturas', 'grupos.asignatura_id', '=', 'asignaturas.id')
-            ->where('asignaturas.codigo', $examen->materia_codigo)
-            ->where('grupos.nombre', $examen->grupo)
-            ->value('docentes.nombre_completo') ?: '';
+            ->whereIn('grupos.asignatura_id', $asignaturaIds)
+            ->where('grupos.sede_id', $examen->sede_id)
+            ->where('grupos.carrera_id', $examen->carrera_id)
+            ->where('grupos.estado', 'ACTIVO')
+            ->whereNull('grupos.deleted_at')
+            ->where(function ($query) use ($examen, $normalizedGroup) {
+                $query->where('grupos.nombre', $examen->grupo)
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(UPPER(grupos.nombre), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$normalizedGroup]
+                    );
+            })
+            ->orderByRaw('CASE WHEN grupos.nombre = ? THEN 0 ELSE 1 END', [$examen->grupo])
+            ->value('docentes.nombre_completo');
+
+        if ($docente) {
+            return (string) $docente;
+        }
+
+        Log::warning('GenerateRolExamenPackageJob: docente not found in scoped group context', [
+            'rol_examen_id' => $examen->id,
+            'materia_codigo' => $examen->materia_codigo,
+            'grupo' => $examen->grupo,
+            'carrera_id' => $examen->carrera_id,
+            'sede_id' => $examen->sede_id,
+            'asignatura_ids' => $asignaturaIds,
+        ]);
+
+        return '';
     }
 
     private function resolveSedeName(RolExamen $examen): string
