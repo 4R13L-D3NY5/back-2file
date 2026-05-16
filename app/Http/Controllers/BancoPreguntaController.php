@@ -362,7 +362,7 @@ class BancoPreguntaController extends Controller
 
             $spreadsheet = IOFactory::load($file->getPathname());
             $worksheet = $this->resolveBancoWorksheet($spreadsheet);
-            $rows = $worksheet->toArray();
+            $rows = $this->truncateBancoRowsAtNotasCarga($worksheet->toArray());
             
             if (count($rows) < 2) {
                 throw new \Exception("El archivo no tiene filas de datos útiles.");
@@ -635,6 +635,28 @@ class BancoPreguntaController extends Controller
         }
 
         throw new \Exception('No se encontro la hoja Banco con los encabezados esperados.');
+    }
+
+    private function truncateBancoRowsAtNotasCarga(array $rows): array
+    {
+        foreach ($rows as $index => $row) {
+            if ($this->isNotasCargaRow((array) $row)) {
+                return array_slice($rows, 0, $index);
+            }
+        }
+
+        return $rows;
+    }
+
+    private function isNotasCargaRow(array $row): bool
+    {
+        foreach ($row as $cell) {
+            if (mb_strtoupper(trim((string) $cell)) === 'NOTAS DE CARGA') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function construirClaveDuplicadoBanco(array $payload): string

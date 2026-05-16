@@ -25,6 +25,12 @@ Route::get('/export/documentacion-carrera', [\App\Http\Controllers\AsignaturaCon
 Route::get('/export/documentacion-asignatura', [\App\Http\Controllers\AsignaturaController::class, 'documentacionAsignatura']);
 Route::get('/reportes/semanal/print', [\App\Http\Controllers\ReporteController::class, 'exportWeeklyReportHtml']);
 Route::get('/asignaturas/{id}/template-personal', [AsignaturaController::class, 'templatePersonal']);
+Route::get('/rol-examenes/{id}/archivo-examen/{filename}', [\App\Http\Controllers\RolExamenController::class, 'previewExamen'])
+    ->middleware('signed')
+    ->name('rol-examenes.preview-examen');
+Route::get('/rol-examenes/{id}/archivo-patron/{tipo}/{filename}', [\App\Http\Controllers\RolExamenController::class, 'previewPatron'])
+    ->middleware('signed')
+    ->name('rol-examenes.preview-patron');
 
 // Debug endpoint for checking API data (temporary)
 Route::get('/debug/plan-n-data', function (Illuminate\Http\Request $request) {
@@ -308,6 +314,8 @@ Route::middleware('auth:sanctum')->group(function () {
           Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
           Route::post('/{id}/generate-package', [\App\Http\Controllers\RolExamenController::class, 'generatePackage']);
           Route::post('/{id}/pattern-verifier', [\App\Http\Controllers\RolExamenController::class, 'patternVerifier']);
+          Route::get('/{id}/download-examen-url', [\App\Http\Controllers\RolExamenController::class, 'signedExamenUrl']);
+          Route::get('/{id}/download-patron-url', [\App\Http\Controllers\RolExamenController::class, 'signedPatronUrl']);
           Route::get('/{id}/download-examen', [\App\Http\Controllers\RolExamenController::class, 'downloadExamen']);
           Route::get('/{id}/download-patron', [\App\Http\Controllers\RolExamenController::class, 'downloadPatron']);
           Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);

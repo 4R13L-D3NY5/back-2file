@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Smalot\PdfParser\Parser as PdfParser;
 
@@ -1112,6 +1113,47 @@ return response()->json(['message' => 'Examen eliminado']);
         return $this->downloadManagedFile($variant['path'] ?? null, $variant['archivo'] ?? null, 'examenes');
     }
 
+    public function signedExamenUrl($id, Request $request)
+    {
+        $examen = RolExamen::findOrFail($id);
+        $filename = $request->query('file');
+
+        if (!$filename) {
+            return response()->json(['message' => 'Archivo no especificado'], 422);
+        }
+
+        $variant = $this->findRegisteredVariant($examen, $filename);
+
+        if (!$variant) {
+            return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
+        }
+
+        return response()->json([
+            'url' => URL::temporarySignedRoute(
+                'rol-examenes.preview-examen',
+                now()->addMinutes(10),
+                ['id' => $examen->id, 'filename' => $filename],
+            ),
+        ]);
+    }
+
+    public function previewExamen($id, string $filename)
+    {
+        $examen = RolExamen::findOrFail($id);
+        $variant = $this->findRegisteredVariant($examen, $filename);
+
+        if (!$variant) {
+            return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
+        }
+
+        return $this->respondManagedFile(
+            $variant['path'] ?? null,
+            $variant['archivo'] ?? $filename,
+            'examenes',
+            'inline',
+        );
+    }
+
     public function downloadPatron($id, Request $request)
     {
         $examen = RolExamen::findOrFail($id);
@@ -1135,6 +1177,57 @@ return response()->json(['message' => 'Examen eliminado']);
             : ($pattern['xlsx_path'] ?? null);
 
         return $this->downloadManagedFile($managedPath, $filename, 'patrones');
+    }
+
+    public function signedPatronUrl($id, Request $request)
+    {
+        $examen = RolExamen::findOrFail($id);
+        $filename = $request->query('file');
+        $tipo = $request->query('tipo');
+
+        if (!$filename || !in_array($tipo, ['pdf', 'xlsx'], true)) {
+            return response()->json(['message' => 'Parámetros inválidos'], 422);
+        }
+
+        $pattern = $this->findRegisteredPattern($examen, $filename, $tipo);
+
+        if (!$pattern) {
+            return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
+        }
+
+        return response()->json([
+            'url' => URL::temporarySignedRoute(
+                'rol-examenes.preview-patron',
+                now()->addMinutes(10),
+                ['id' => $examen->id, 'tipo' => $tipo, 'filename' => $filename],
+            ),
+        ]);
+    }
+
+    public function previewPatron($id, string $tipo, string $filename)
+    {
+        $examen = RolExamen::findOrFail($id);
+
+        if (!in_array($tipo, ['pdf', 'xlsx'], true)) {
+            return response()->json(['message' => 'Parámetros inválidos'], 422);
+        }
+
+        $pattern = $this->findRegisteredPattern($examen, $filename, $tipo);
+
+        if (!$pattern) {
+            return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
+        }
+
+        $managedPath = $tipo === 'pdf'
+            ? ($pattern['pdf_path'] ?? null)
+            : ($pattern['xlsx_path'] ?? null);
+
+        return $this->respondManagedFile(
+            $managedPath,
+            $pattern[$tipo] ?? $filename,
+            'patrones',
+            $tipo === 'pdf' ? 'inline' : 'attachment',
+        );
     }
 
     public function patternVerifier(Request $request, $id)
@@ -1225,18 +1318,58 @@ return response()->json(['message' => 'Examen eliminado']);
 
     private function downloadManagedFile(?string $managedPath, ?string $filename, string $publicDir)
     {
-        if ($managedPath) {
-            $absolutePath = storage_path('app/' . ltrim($managedPath, '/'));
-            if (is_file($absolutePath)) {
-                return response()->download($absolutePath, basename($absolutePath));
-            }
+        return $this->respondManagedFile($managedPath, $filename, $publicDir, 'attachment');
+    }
+
+    private function respondManagedFile(?string $managedPath, ?string $filename, string $publicDir, string $disposition)
+    {
+        $absolutePath = $this->resolveManagedAbsolutePath($managedPath, $filename, $publicDir);
+
+        if (!$absolutePath) {
+            return response()->json(['message' => 'Archivo no encontrado'], 404);
         }
 
-        if ($filename && Storage::disk('public')->exists($publicDir . '/' . $filename)) {
-            return Storage::disk('public')->download($publicDir . '/' . $filename, $filename);
+        if ($disposition === 'inline') {
+            return response()->file($absolutePath, [
+                'Content-Type' => $this->guessFileMimeType($filename),
+                'Content-Disposition' => $this->buildContentDisposition('inline', $filename ?: basename($absolutePath)),
+            ]);
         }
 
-        return response()->json(['message' => 'Archivo no encontrado'], 404);
+        return response()->download($absolutePath, $filename ?: basename($absolutePath));
+    }
+
+    private function guessFileMimeType(?string $filename): string
+    {
+        return strtolower(pathinfo((string) $filename, PATHINFO_EXTENSION)) === 'pdf'
+            ? 'application/pdf'
+            : 'application/octet-stream';
+    }
+
+    private function buildContentDisposition(string $disposition, string $filename): string
+    {
+        $asciiFilename = preg_replace('/[^A-Za-z0-9._ -]/', '_', $filename) ?: 'archivo.pdf';
+
+        return sprintf(
+            "%s; filename=\"%s\"; filename*=UTF-8''%s",
+            $disposition,
+            str_replace('"', '', $asciiFilename),
+            rawurlencode($filename),
+        );
+    }
+
+    private function findRegisteredVariant(RolExamen $examen, string $filename): ?array
+    {
+        return collect($examen->variantes ?? [])->first(function ($item) use ($filename) {
+            return is_array($item) && ($item['archivo'] ?? null) === $filename;
+        });
+    }
+
+    private function findRegisteredPattern(RolExamen $examen, string $filename, string $tipo): ?array
+    {
+        return collect($examen->patrones ?? [])->first(function ($item) use ($filename, $tipo) {
+            return is_array($item) && ($item[$tipo] ?? null) === $filename;
+        });
     }
 
     private function authorizeRolExamenAccess(RolExamen $examen)
