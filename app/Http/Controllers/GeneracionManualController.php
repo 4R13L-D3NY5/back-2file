@@ -10,15 +10,29 @@ use Illuminate\Support\Facades\Storage;
 
 class GeneracionManualController extends Controller
 {
-    private function firstExistingStoragePath(array $paths): ?string
+    private function firstExistingStoragePath(array $paths): ?array
     {
         foreach ($paths as $path) {
             if (Storage::exists($path)) {
-                return $path;
+                return ['disk' => null, 'path' => $path];
+            }
+
+            if (str_starts_with($path, 'public/')) {
+                $publicPath = substr($path, strlen('public/'));
+                if (Storage::disk('public')->exists($publicPath)) {
+                    return ['disk' => 'public', 'path' => $publicPath];
+                }
             }
         }
 
         return null;
+    }
+
+    private function downloadStoragePath(array $file)
+    {
+        return $file['disk']
+            ? Storage::disk($file['disk'])->download($file['path'])
+            : Storage::download($file['path']);
     }
 
     public function index(Request $request)
@@ -86,7 +100,7 @@ class GeneracionManualController extends Controller
         ]);
 
         $validated['user_id'] = auth()->id();
-        $validated['estado'] = 'GENERADO';
+        $validated['estado'] = 'PROGRAMADO';
 
         $registro = GeneracionManual::create($validated);
 
@@ -144,7 +158,7 @@ class GeneracionManualController extends Controller
     public function updateEstado(Request $request, $id)
     {
         $request->validate([
-            'estado' => 'required|in:GENERADO,ENTREGADO,DEVUELTO'
+            'estado' => 'required|in:PROGRAMADO,GENERADO,IMPRESO,ENTREGADO,DEVUELTO,REVISADO,SUBIDO'
         ]);
 
         $registro = GeneracionManual::findOrFail($id);
@@ -211,7 +225,7 @@ class GeneracionManualController extends Controller
             return response()->json(['message' => 'El archivo físico no se encuentra'], 404);
         }
 
-        return Storage::download($path);
+        return $this->downloadStoragePath($path);
     }
 
     public function downloadPatronPdf($id)
@@ -229,7 +243,7 @@ class GeneracionManualController extends Controller
             return response()->json(['message' => 'El archivo físico no se encuentra'], 404);
         }
 
-        return Storage::download($path);
+        return $this->downloadStoragePath($path);
     }
 
     public function downloadPatronXlsx($id)
@@ -248,6 +262,6 @@ class GeneracionManualController extends Controller
             return response()->json(['message' => 'El archivo físico no se encuentra'], 404);
         }
 
-        return Storage::download($path);
+        return $this->downloadStoragePath($path);
     }
 }

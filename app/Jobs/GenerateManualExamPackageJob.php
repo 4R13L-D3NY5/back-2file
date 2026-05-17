@@ -44,7 +44,6 @@ class GenerateManualExamPackageJob implements ShouldQueue
             }
 
             $this->assertQuestionsMatchManualContext($questions, [
-                'grupo' => $registro->grupo,
                 'parcial' => $registro->parcial,
             ]);
 
@@ -138,15 +137,12 @@ class GenerateManualExamPackageJob implements ShouldQueue
 
     private function assertQuestionsMatchManualContext(array $questions, array $context): void
     {
-        $expectedGroup = $this->normalizeGroup($context['grupo'] ?? null);
         $expectedPartial = $this->normalizePartial($context['parcial'] ?? null);
 
-        $invalid = collect($questions)->filter(function ($question) use ($expectedGroup, $expectedPartial) {
-            $questionGroup = $this->normalizeGroup($question['grupoTeorico'] ?? $question['grupo'] ?? null);
+        $invalid = collect($questions)->filter(function ($question) use ($expectedPartial) {
             $questionPartial = $this->normalizePartial($question['parcial'] ?? null);
 
-            return ($expectedGroup && $questionGroup && $questionGroup !== $expectedGroup)
-                || ($expectedPartial && $questionPartial && $questionPartial !== $expectedPartial);
+            return $expectedPartial && $questionPartial && $questionPartial !== $expectedPartial;
         })->values();
 
         if ($invalid->isEmpty()) {
@@ -163,7 +159,7 @@ class GenerateManualExamPackageJob implements ShouldQueue
         })->implode(', ');
 
         throw new \RuntimeException(
-            'Se detectaron preguntas fuera del grupo o parcial de la generacion manual: ' . $sample
+            'Se detectaron preguntas fuera del parcial de la generacion manual: ' . $sample
         );
     }
 
