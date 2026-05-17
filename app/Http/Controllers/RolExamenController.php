@@ -1450,16 +1450,25 @@ return response()->json(['message' => 'Examen eliminado']);
             $answers = $variant['answers'] ?? [];
             $pdfQuestions = $pdfVariants[$letter] ?? [];
             $usedQuestionIds = [];
+            $registeredQuestions = collect($variant['questions'] ?? [])
+                ->filter(fn ($item) => is_array($item))
+                ->keyBy(fn ($item) => (int) ($item['number'] ?? 0));
 
             $checks = collect(range(1, 100))->map(function ($number) use (
                 $answers,
                 $pdfQuestions,
                 $bankQuestions,
+                $registeredQuestions,
                 &$usedQuestionIds,
                 &$summary
             ) {
                 $patternAnswer = trim((string) ($answers[$number - 1] ?? ''));
                 $pdfBlock = $pdfQuestions[$number] ?? null;
+                $registeredQuestion = $this->formatStoredVerifierQuestion(
+                    $registeredQuestions->get($number),
+                    $number,
+                    $patternAnswer
+                );
 
                 if (!$patternAnswer && !$pdfBlock) {
                     return [
@@ -1484,7 +1493,7 @@ return response()->json(['message' => 'Examen eliminado']);
                         'status' => 'not_found_in_pdf',
                         'match_score' => null,
                         'expected_answer' => '',
-                        'question' => null,
+                        'question' => $registeredQuestion,
                     ];
                 }
 
@@ -1498,12 +1507,14 @@ return response()->json(['message' => 'Examen eliminado']);
                         'status' => 'unmatched',
                         'match_score' => null,
                         'expected_answer' => '',
-                        'question' => [
-                            'number' => $number,
-                            'enunciado' => $pdfBlock,
-                            'tipo' => 'No identificado',
-                            'source' => 'pdf',
-                        ],
+                        'question' => $registeredQuestion
+                            ? array_merge($registeredQuestion, ['pdf_text' => $pdfBlock])
+                            : [
+                                'number' => $number,
+                                'enunciado' => $pdfBlock,
+                                'tipo' => 'No identificado',
+                                'source' => 'pdf',
+                            ],
                     ];
                 }
 
@@ -1861,6 +1872,21 @@ return response()->json(['message' => 'Examen eliminado']);
             'imagen_url' => !empty($question->imagen) ? asset('storage/preguntas/' . $question->imagen) : null,
             'source' => 'banco',
         ];
+    }
+
+    private function formatStoredVerifierQuestion($question, int $number, string $patternAnswer = ''): ?array
+    {
+        if (!is_array($question)) {
+            return null;
+        }
+
+        return array_merge($question, [
+            'number' => $number,
+            'pattern_answer' => $patternAnswer,
+            'expected_answer' => $question['expected_answer'] ?? '',
+            'match_score' => $question['match_score'] ?? null,
+            'source' => $question['source'] ?? 'audit',
+        ]);
     }
 
     private function normalizeVerifierAnswer($answer, string $type = ''): string

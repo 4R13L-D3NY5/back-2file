@@ -179,6 +179,7 @@ class BancoPreguntaController extends Controller
             'image_file' => 'nullable|image|max:5120',
             'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
             'asignatura_id' => 'required|exists:asignaturas,id',
+            'docente_id' => 'nullable|exists:docentes,id',
             'sede_id' => 'nullable|exists:sedes,id',
         ]);
 
@@ -203,7 +204,8 @@ class BancoPreguntaController extends Controller
         }
 
         $validated['created_by'] = $request->user()?->id;
-        $validated['docente_id'] = Docente::where('user_id', $validated['created_by'])->first()?->id;
+        $validated['docente_id'] = $request->input('docente_id')
+            ?? Docente::where('user_id', $validated['created_by'])->first()?->id;
         $validated['peso'] = $validated['peso'] ?? 1;
 
         $this->storePreguntaImage($request, $validated);
@@ -226,6 +228,7 @@ class BancoPreguntaController extends Controller
     {
         $validated = $request->validate([
             'asignatura_id' => 'required|exists:asignaturas,id',
+            'docente_id' => 'nullable|exists:docentes,id',
             'grupo_teorico' => 'required|string',
             'parcial' => 'required|string',
         ]);
@@ -233,7 +236,8 @@ class BancoPreguntaController extends Controller
         $queryDelete = $this->buildBancoDeleteQuery(
             $validated['asignatura_id'],
             $validated['grupo_teorico'],
-            $validated['parcial']
+            $validated['parcial'],
+            $validated['docente_id'] ?? null
         );
 
         $preguntas = (clone $queryDelete)->get(['id', 'imagen']);
@@ -253,6 +257,7 @@ class BancoPreguntaController extends Controller
             'asignatura_id' => $validated['asignatura_id'],
             'grupo_teorico' => $validated['grupo_teorico'],
             'parcial' => $this->normalizarTipoExamen($validated['parcial']),
+            'docente_id' => $validated['docente_id'] ?? null,
             'deleted' => $deletedCount,
             'user_id' => auth()->id(),
         ]);
@@ -281,6 +286,7 @@ class BancoPreguntaController extends Controller
             'grupo' => 'nullable|string',
             'grupoTeorico' => 'nullable|string',
             'image_file' => 'nullable|image|max:5120',
+            'remove_image' => 'nullable|boolean',
             'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
             'asignatura_id' => 'nullable|exists:asignaturas,id',
             'sede_id' => 'nullable|exists:sedes,id',
@@ -306,6 +312,12 @@ class BancoPreguntaController extends Controller
             $validated['grupoTeorico'] = $validated['grupo'];
         }
 
+        if (($validated['remove_image'] ?? false) && !$request->hasFile('image_file') && $pregunta->imagen) {
+            Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+            $validated['imagen'] = null;
+        }
+        unset($validated['remove_image']);
+
         $this->storePreguntaImage($request, $validated, $pregunta);
 
         $pregunta->update($validated);
@@ -317,9 +329,14 @@ class BancoPreguntaController extends Controller
         $request->validate([
             'file' => 'required|file|mimes:xlsx,xls,csv',
             'asignatura_id' => 'required|exists:asignaturas,id',
+            'docente_id' => 'nullable|exists:docentes,id',
             'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
             'sede_id' => 'nullable|exists:sedes,id',
             'grupo' => 'nullable|string|max:255',
+            'grupoTeorico' => 'nullable|string|max:255',
+            'con_cartilla' => 'nullable|boolean',
+            'parcial' => 'nullable|string',
+            'modo' => 'nullable|in:agregar,reemplazar',
         ]);
 
         $file = $request->file('file');
