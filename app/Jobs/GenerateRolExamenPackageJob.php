@@ -52,9 +52,9 @@ class GenerateRolExamenPackageJob implements ShouldQueue
 
             $backendBase = base_path();
             $workspaceBase = dirname($backendBase);
-            $payloadPath = storage_path('app/tmp/exam-generation-' . $examen->id . '.json');
+            $payloadPath = storage_path('app/tmp/exam-generation-'.$examen->id.'.json');
 
-            if (!is_dir(dirname($payloadPath))) {
+            if (! is_dir(dirname($payloadPath))) {
                 mkdir(dirname($payloadPath), 0777, true);
             }
 
@@ -69,7 +69,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
                     'parcial' => $examen->tipo_examen,
                     'fecha_examen' => optional($examen->fecha)?->format('Y-m-d'),
                     'semestre' => $examContext['semestre'] ?? '',
-                    'hora' => trim(($examen->hora_inicio ?? '') . ' - ' . ($examen->hora_fin ?? '')),
+                    'hora' => trim(($examen->hora_inicio ?? '').' - '.($examen->hora_fin ?? '')),
                     'gestion' => $examen->gestion,
                 ],
                 'config' => [
@@ -93,8 +93,8 @@ class GenerateRolExamenPackageJob implements ShouldQueue
 
             file_put_contents($payloadPath, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
-            $scriptPath = $workspaceBase . DIRECTORY_SEPARATOR . 'Academico' . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'generate-exam-package.mjs';
-            $process = new Process(['node', $scriptPath, $payloadPath], $workspaceBase . DIRECTORY_SEPARATOR . 'Academico');
+            $scriptPath = $workspaceBase.DIRECTORY_SEPARATOR.'Academico'.DIRECTORY_SEPARATOR.'scripts'.DIRECTORY_SEPARATOR.'generate-exam-package.mjs';
+            $process = new Process(['node', $scriptPath, $payloadPath], $workspaceBase.DIRECTORY_SEPARATOR.'Academico');
             $process->setTimeout(900);
             $process->mustRun();
 
@@ -105,24 +105,25 @@ class GenerateRolExamenPackageJob implements ShouldQueue
             $config['job_error'] = null;
             $config['pattern_audit'] = $result['audit'] ?? [];
             $variantes = collect($result['variantes'] ?? [])->map(function ($item) {
-                if (!is_array($item)) {
+                if (! is_array($item)) {
                     return $item;
                 }
 
-                $item['path'] = 'tmp/examenes/' . $item['archivo'];
+                $item['path'] = 'tmp/examenes/'.$item['archivo'];
+
                 return $item;
             })->values()->all();
             $patrones = collect($result['patrones'] ?? [])->map(function ($item) {
-                if (!is_array($item)) {
+                if (! is_array($item)) {
                     return $item;
                 }
 
-                if (!empty($item['pdf'])) {
-                    $item['pdf_path'] = 'tmp/patrones/' . $item['pdf'];
+                if (! empty($item['pdf'])) {
+                    $item['pdf_path'] = 'tmp/patrones/'.$item['pdf'];
                 }
 
-                if (!empty($item['xlsx'])) {
-                    $item['xlsx_path'] = 'tmp/patrones/' . $item['xlsx'];
+                if (! empty($item['xlsx'])) {
+                    $item['xlsx_path'] = 'tmp/patrones/'.$item['xlsx'];
                 }
 
                 return $item;
@@ -161,7 +162,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
         $normalizedGroup = $this->normalizeGroup($examen->grupo);
         $partial = $this->normalizePartial($examen->tipo_examen);
         $asignaturaId = (int) $examContext['asignatura_id'];
-        $docenteId = !empty($examContext['docente_id']) ? (int) $examContext['docente_id'] : null;
+        $docenteId = ! empty($examContext['docente_id']) ? (int) $examContext['docente_id'] : null;
 
         $questions = BancoPregunta::query()
             ->where('asignatura_id', $asignaturaId)
@@ -172,15 +173,22 @@ class GenerateRolExamenPackageJob implements ShouldQueue
             })
             ->where(function ($query) use ($examen, $normalizedGroup) {
                 $query->where('grupoTeorico', $examen->grupo)
-                    ->orWhere('grupo', $examen->grupo)
                     ->orWhereRaw(
                         "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
                         [$normalizedGroup]
                     )
-                    ->orWhereRaw(
-                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
-                        [$normalizedGroup]
-                    );
+                    ->orWhere(function ($legacy) use ($examen, $normalizedGroup) {
+                        $legacy->where(function ($emptyGrupoTeorico) {
+                            $emptyGrupoTeorico->whereNull('grupoTeorico')
+                                ->orWhere('grupoTeorico', '');
+                        })->where(function ($legacyGrupo) use ($examen, $normalizedGroup) {
+                            $legacyGrupo->where('grupo', $examen->grupo)
+                                ->orWhereRaw(
+                                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                                    [$normalizedGroup]
+                                );
+                        });
+                    });
             })
             ->orderBy('id')
             ->get();
@@ -197,7 +205,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
         return $questions
             ->map(function (BancoPregunta $question) {
                 $imagePath = $question->imagen
-                    ? storage_path('app/public/preguntas/' . $question->imagen)
+                    ? storage_path('app/public/preguntas/'.$question->imagen)
                     : null;
 
                 return [
@@ -255,13 +263,14 @@ class GenerateRolExamenPackageJob implements ShouldQueue
         })->implode(', ');
 
         throw new \RuntimeException(
-            'Se detectaron preguntas fuera del contexto de asignatura, sede, docente, grupo o parcial del examen: ' . $sample
+            'Se detectaron preguntas fuera del contexto de asignatura, sede, docente, grupo o parcial del examen: '.$sample
         );
     }
 
     private function normalizeGroup(?string $value): string
     {
         $value = strtoupper(trim((string) $value));
+
         return str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $value);
     }
 
@@ -366,7 +375,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
             ->where('grupos.sede_id', $examen->sede_id)
             ->where('grupos.estado', 'ACTIVO')
             ->whereNull('grupos.deleted_at')
-            ->when($filterGestion && !empty($examen->gestion), function ($query) use ($examen) {
+            ->when($filterGestion && ! empty($examen->gestion), function ($query) use ($examen) {
                 $query->where('grupos.gestion', $examen->gestion);
             })
             ->where(function ($query) use ($examen, $normalizedGroup) {
@@ -402,10 +411,15 @@ class GenerateRolExamenPackageJob implements ShouldQueue
                 $query->whereRaw(
                     "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
                     [$normalizedGroup]
-                )->orWhereRaw(
-                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
-                    [$normalizedGroup]
-                );
+                )->orWhere(function ($legacy) use ($normalizedGroup) {
+                    $legacy->where(function ($emptyGrupoTeorico) {
+                        $emptyGrupoTeorico->whereNull('grupoTeorico')
+                            ->orWhere('grupoTeorico', '');
+                    })->whereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$normalizedGroup]
+                    );
+                });
             })
             ->count();
     }
@@ -436,10 +450,15 @@ class GenerateRolExamenPackageJob implements ShouldQueue
                 $query->whereRaw(
                     "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
                     [$normalizedGroup]
-                )->orWhereRaw(
-                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
-                    [$normalizedGroup]
-                );
+                )->orWhere(function ($legacy) use ($normalizedGroup) {
+                    $legacy->where(function ($emptyGrupoTeorico) {
+                        $emptyGrupoTeorico->whereNull('grupoTeorico')
+                            ->orWhere('grupoTeorico', '');
+                    })->whereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$normalizedGroup]
+                    );
+                });
             })
             ->groupBy('asignatura_id', 'docente_id')
             ->orderByDesc('total')
@@ -483,7 +502,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
 
     private function resolveAsignaturaId(RolExamen $examen): int
     {
-        if (!empty($examen->asignatura_id)) {
+        if (! empty($examen->asignatura_id)) {
             return (int) $examen->asignatura_id;
         }
 

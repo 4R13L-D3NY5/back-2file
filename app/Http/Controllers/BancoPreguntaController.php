@@ -21,7 +21,7 @@ class BancoPreguntaController extends Controller
     public function index(Request $request)
     {
         $questions = BancoPregunta::query();
-        
+
         if ($request->has('logro_id')) {
             $questions->where('logro_esperado_id', $request->logro_id);
         }
@@ -54,40 +54,40 @@ class BancoPreguntaController extends Controller
         if ($request->has('parcial')) {
             $questions->where('parcial', $request->parcial);
         }
-        
+
         // Debug Log
-        \Illuminate\Support\Facades\Log::info("BancoPregunta Index Request", [
+        \Illuminate\Support\Facades\Log::info('BancoPregunta Index Request', [
             'asignatura_id' => $request->asignatura_id,
             'docente_id' => $request->docente_id,
             'sede_id' => $request->sede_id,
             'grupoTeorico' => $request->grupoTeorico,
             'parcial' => $request->parcial,
             'user_id' => auth()->id(),
-            'all_docentes' => $request->boolean('all_docentes')
+            'all_docentes' => $request->boolean('all_docentes'),
         ]);
 
         // Filtrar por docente actual (a menos que se pida todas o sea por asignatura/docente específico)
-        if (!$request->boolean('all_docentes') && !$request->has('asignatura_id') && !$request->has('docente_id')) {
+        if (! $request->boolean('all_docentes') && ! $request->has('asignatura_id') && ! $request->has('docente_id')) {
             $userId = auth()->id();
             if ($userId) {
                 $questions->where('created_by', $userId);
             }
         }
-        
+
         $results = $questions->get()->map(function ($pregunta) {
             return $this->sanitizePreguntaForResponse($pregunta);
         });
         $count = $results->count();
         $stats = [
-            'facil' => $results->filter(fn($p) => $p->dificultad == 'FACIL' || $p->dificultad == '1')->count(),
-            'medio' => $results->filter(fn($p) => $p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == '2')->count(),
-            'dificil' => $results->filter(fn($p) => $p->dificultad == 'DIFICIL' || $p->dificultad == '3')->count(),
+            'facil' => $results->filter(fn ($p) => $p->dificultad == 'FACIL' || $p->dificultad == '1')->count(),
+            'medio' => $results->filter(fn ($p) => $p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == '2')->count(),
+            'dificil' => $results->filter(fn ($p) => $p->dificultad == 'DIFICIL' || $p->dificultad == '3')->count(),
         ];
 
         return response()->json([
             'total' => $count,
             'preguntas' => $results,
-            'stats' => $stats
+            'stats' => $stats,
         ]);
     }
 
@@ -101,7 +101,7 @@ class BancoPreguntaController extends Controller
             'docente_id' => 'nullable',
             'sede_id' => 'nullable',
             'parcial' => 'nullable',
-            'grupo' => 'nullable'
+            'grupo' => 'nullable',
         ]);
 
         $query = BancoPregunta::where('asignatura_id', $request->asignatura_id);
@@ -122,17 +122,24 @@ class BancoPreguntaController extends Controller
             $grupo = $request->grupo;
             $grupoNormalizado = strtoupper(trim((string) $grupo));
             $grupoNormalizado = str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $grupoNormalizado);
-            $query->where(function($q) use ($grupo, $grupoNormalizado) {
+            $query->where(function ($q) use ($grupo, $grupoNormalizado) {
                 $q->where('grupoTeorico', $grupo)
-                  ->orWhereRaw(
-                      "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
-                      [$grupoNormalizado]
-                  )
-                  ->orWhere('grupo', $grupo)
-                  ->orWhereRaw(
-                      "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
-                      [$grupoNormalizado]
-                  );
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    )
+                    ->orWhere(function ($legacy) use ($grupo, $grupoNormalizado) {
+                        $legacy->where(function ($emptyGrupoTeorico) {
+                            $emptyGrupoTeorico->whereNull('grupoTeorico')
+                                ->orWhere('grupoTeorico', '');
+                        })->where(function ($legacyGrupo) use ($grupo, $grupoNormalizado) {
+                            $legacyGrupo->where('grupo', $grupo)
+                                ->orWhereRaw(
+                                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                                    [$grupoNormalizado]
+                                );
+                        });
+                    });
             });
         }
 
@@ -144,8 +151,8 @@ class BancoPreguntaController extends Controller
             COUNT(*) as total
         ")->first();
         $porTipo = $preguntas
-            ->map(fn($pregunta) => $this->normalizarTipoPreguntaBanco($pregunta->tipo) ?: 'SIN_TIPO')
-            ->filter(fn($tipo) => !in_array($tipo, ['EMPAREJAMIENTO', 'PROBLEMA'], true))
+            ->map(fn ($pregunta) => $this->normalizarTipoPreguntaBanco($pregunta->tipo) ?: 'SIN_TIPO')
+            ->filter(fn ($tipo) => ! in_array($tipo, ['EMPAREJAMIENTO', 'PROBLEMA'], true))
             ->countBy()
             ->toArray();
         $porGrupoTipo = $this->contarGruposTipoPregunta($porTipo);
@@ -185,7 +192,7 @@ class BancoPreguntaController extends Controller
             'por_grupo_tipo' => $porGrupoTipo,
             'total_asignatura' => $totalAsignatura,
             'con_cartilla' => $configuracion?->con_cartilla ?? true,
-            'configuracion' => $configuracion
+            'configuracion' => $configuracion,
         ]);
     }
 
@@ -212,7 +219,7 @@ class BancoPreguntaController extends Controller
 
         $validated['tipo'] = $this->normalizarTipoPreguntaManual($validated['tipo'] ?? null);
 
-        if (!in_array($validated['tipo'], $this->tiposPreguntaPermitidos(), true)) {
+        if (! in_array($validated['tipo'], $this->tiposPreguntaPermitidos(), true)) {
             throw ValidationException::withMessages([
                 'tipo' => 'Tipo de pregunta no permitido.',
             ]);
@@ -222,11 +229,11 @@ class BancoPreguntaController extends Controller
         $this->sanitizePreguntaPayload($validated);
         $this->normalizePreguntaPayload($validated);
 
-        if (!empty($validated['parcial'])) {
+        if (! empty($validated['parcial'])) {
             $validated['parcial'] = $this->normalizarTipoExamen($validated['parcial']);
         }
 
-        if (empty($validated['grupoTeorico']) && !empty($validated['grupo'])) {
+        if (empty($validated['grupoTeorico']) && ! empty($validated['grupo'])) {
             $validated['grupoTeorico'] = $validated['grupo'];
         }
 
@@ -238,16 +245,18 @@ class BancoPreguntaController extends Controller
         $this->storePreguntaImage($request, $validated);
 
         $pregunta = BancoPregunta::create($validated);
+
         return response()->json($this->sanitizePreguntaForResponse($pregunta), 201);
     }
-    
+
     public function destroy($id)
     {
         $pregunta = BancoPregunta::findOrFail($id);
         if ($pregunta->imagen) {
-            Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+            Storage::disk('public')->delete('preguntas/'.$pregunta->imagen);
         }
         $pregunta->delete();
+
         return response()->json(null, 204);
     }
 
@@ -277,7 +286,7 @@ class BancoPreguntaController extends Controller
         $deletedCount = $queryDelete->delete();
 
         foreach ($imagenes as $imagen) {
-            Storage::disk('public')->delete('preguntas/' . $imagen);
+            Storage::disk('public')->delete('preguntas/'.$imagen);
         }
 
         Log::info('Borrado masivo del banco de preguntas', [
@@ -321,7 +330,7 @@ class BancoPreguntaController extends Controller
 
         $validated['tipo'] = $this->normalizarTipoPreguntaManual($validated['tipo'] ?? null);
 
-        if (!in_array($validated['tipo'], $this->tiposPreguntaPermitidos(), true)) {
+        if (! in_array($validated['tipo'], $this->tiposPreguntaPermitidos(), true)) {
             throw ValidationException::withMessages([
                 'tipo' => 'Tipo de pregunta no permitido.',
             ]);
@@ -331,16 +340,16 @@ class BancoPreguntaController extends Controller
         $this->sanitizePreguntaPayload($validated);
         $this->normalizePreguntaPayload($validated);
 
-        if (!empty($validated['parcial'])) {
+        if (! empty($validated['parcial'])) {
             $validated['parcial'] = $this->normalizarTipoExamen($validated['parcial']);
         }
 
-        if (empty($validated['grupoTeorico']) && !empty($validated['grupo'])) {
+        if (empty($validated['grupoTeorico']) && ! empty($validated['grupo'])) {
             $validated['grupoTeorico'] = $validated['grupo'];
         }
 
-        if (($validated['remove_image'] ?? false) && !$request->hasFile('image_file') && $pregunta->imagen) {
-            Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+        if (($validated['remove_image'] ?? false) && ! $request->hasFile('image_file') && $pregunta->imagen) {
+            Storage::disk('public')->delete('preguntas/'.$pregunta->imagen);
             $validated['imagen'] = null;
         }
         unset($validated['remove_image']);
@@ -348,6 +357,7 @@ class BancoPreguntaController extends Controller
         $this->storePreguntaImage($request, $validated, $pregunta);
 
         $pregunta->update($validated);
+
         return response()->json($this->sanitizePreguntaForResponse($pregunta));
     }
 
@@ -379,26 +389,26 @@ class BancoPreguntaController extends Controller
 
         try {
             $modo = $request->input('modo', 'agregar');
-            $docenteId = $request->input('docente_id') 
+            $docenteId = $request->input('docente_id')
                 ?? (\App\Models\Docente::where('user_id', auth()->id())->first()?->id);
 
             if ($modo === 'reemplazar') {
                 $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
                     ->where('docente_id', $docenteId);
-                
+
                 if ($grupoTeorico) {
                     $queryDelete->where('grupoTeorico', $grupoTeorico);
                 }
-                
+
                 if ($request->has('parcial') && $request->parcial) {
                     $queryDelete->where('parcial', $this->normalizarTipoExamen($request->parcial));
                 }
 
-                Log::info("Vaciando banco de preguntas filtrado", [
+                Log::info('Vaciando banco de preguntas filtrado', [
                     'asignatura' => $asignaturaId,
                     'docente' => $docenteId,
                     'grupo' => $grupoTeorico,
-                    'parcial' => $request->parcial
+                    'parcial' => $request->parcial,
                 ]);
 
                 $queryDelete->delete();
@@ -407,29 +417,43 @@ class BancoPreguntaController extends Controller
             $spreadsheet = IOFactory::load($file->getPathname());
             $worksheet = $this->resolveBancoWorksheet($spreadsheet);
             $rows = $this->truncateBancoRowsAtNotasCarga($worksheet->toArray());
-            
+
             if (count($rows) < 2) {
-                throw new \Exception("El archivo no tiene filas de datos útiles.");
+                throw new \Exception('El archivo no tiene filas de datos útiles.');
             }
 
-            $headers = array_map(function($h) {
-                return mb_strtoupper(trim((string)$h));
+            $headers = array_map(function ($h) {
+                return mb_strtoupper(trim((string) $h));
             }, $rows[0]);
-            
+
             $cols = [];
             foreach ($headers as $index => $header) {
-                if (empty($header)) continue;
-                if (str_contains($header, 'TIPO')) $cols['TIPO'] = $index;
-                else if (str_contains($header, 'GRUPO')) $cols['GRUPO'] = $index;
-                else if (str_contains($header, 'ENUNCIADO')) $cols['ENUNCIADO'] = $index;
-                else if ($header === 'A' || str_contains($header, 'OPCION A') || str_contains($header, 'OPCIÓN A') || str_contains($header, 'OPCION_A') || str_contains($header, 'OPCIÓN_A')) $cols['A'] = $index;
-                else if ($header === 'B' || str_contains($header, 'OPCION B') || str_contains($header, 'OPCIÓN B') || str_contains($header, 'OPCION_B') || str_contains($header, 'OPCIÓN_B')) $cols['B'] = $index;
-                else if ($header === 'C' || str_contains($header, 'OPCION C') || str_contains($header, 'OPCIÓN C') || str_contains($header, 'OPCION_C') || str_contains($header, 'OPCIÓN_C')) $cols['C'] = $index;
-                else if ($header === 'D' || str_contains($header, 'OPCION D') || str_contains($header, 'OPCIÓN D') || str_contains($header, 'OPCION_D') || str_contains($header, 'OPCIÓN_D')) $cols['D'] = $index;
-                else if ($header === 'E' || str_contains($header, 'OPCION E') || str_contains($header, 'OPCIÓN E') || str_contains($header, 'OPCION_E') || str_contains($header, 'OPCIÓN_E')) $cols['E'] = $index;
-                else if (str_contains($header, 'RESPUESTA')) $cols['RESPUESTA'] = $index;
-                else if (str_contains($header, 'DIFICULTAD')) $cols['DIFICULTAD'] = $index;
-                else if (str_contains($header, 'PARCIAL')) $cols['PARCIAL'] = $index;
+                if (empty($header)) {
+                    continue;
+                }
+                if (str_contains($header, 'TIPO')) {
+                    $cols['TIPO'] = $index;
+                } elseif (str_contains($header, 'GRUPO')) {
+                    $cols['GRUPO'] = $index;
+                } elseif (str_contains($header, 'ENUNCIADO')) {
+                    $cols['ENUNCIADO'] = $index;
+                } elseif ($header === 'A' || str_contains($header, 'OPCION A') || str_contains($header, 'OPCIÓN A') || str_contains($header, 'OPCION_A') || str_contains($header, 'OPCIÓN_A')) {
+                    $cols['A'] = $index;
+                } elseif ($header === 'B' || str_contains($header, 'OPCION B') || str_contains($header, 'OPCIÓN B') || str_contains($header, 'OPCION_B') || str_contains($header, 'OPCIÓN_B')) {
+                    $cols['B'] = $index;
+                } elseif ($header === 'C' || str_contains($header, 'OPCION C') || str_contains($header, 'OPCIÓN C') || str_contains($header, 'OPCION_C') || str_contains($header, 'OPCIÓN_C')) {
+                    $cols['C'] = $index;
+                } elseif ($header === 'D' || str_contains($header, 'OPCION D') || str_contains($header, 'OPCIÓN D') || str_contains($header, 'OPCION_D') || str_contains($header, 'OPCIÓN_D')) {
+                    $cols['D'] = $index;
+                } elseif ($header === 'E' || str_contains($header, 'OPCION E') || str_contains($header, 'OPCIÓN E') || str_contains($header, 'OPCION_E') || str_contains($header, 'OPCIÓN_E')) {
+                    $cols['E'] = $index;
+                } elseif (str_contains($header, 'RESPUESTA')) {
+                    $cols['RESPUESTA'] = $index;
+                } elseif (str_contains($header, 'DIFICULTAD')) {
+                    $cols['DIFICULTAD'] = $index;
+                } elseif (str_contains($header, 'PARCIAL')) {
+                    $cols['PARCIAL'] = $index;
+                }
             }
 
             // Defaults if column isn't found
@@ -473,24 +497,28 @@ class BancoPreguntaController extends Controller
                     }
                 });
 
-            \Log::info("Importación Banco: docente_id detectado: " . ($docenteId ?? 'NULL'));
+            \Log::info('Importación Banco: docente_id detectado: '.($docenteId ?? 'NULL'));
 
             foreach ($rows as $index => $row) {
-                if ($index === 0) continue; // Skip Header
+                if ($index === 0) {
+                    continue;
+                } // Skip Header
 
-                $rawTipo = mb_strtoupper(trim((string)($row[$cols['TIPO']] ?? '')));
-                $rawEnunciado = $this->sanitizePreguntaText(trim((string)($row[$cols['ENUNCIADO']] ?? '')));
-                
-                if (empty($rawTipo) && empty($rawEnunciado)) continue; // Skip Empty Rows
+                $rawTipo = mb_strtoupper(trim((string) ($row[$cols['TIPO']] ?? '')));
+                $rawEnunciado = $this->sanitizePreguntaText(trim((string) ($row[$cols['ENUNCIADO']] ?? '')));
+
+                if (empty($rawTipo) && empty($rawEnunciado)) {
+                    continue;
+                } // Skip Empty Rows
 
                 $tipo = $this->normalizarTipoPreguntaBanco($rawTipo);
                 if (empty($tipo)) {
                     $tipo = 'SELECCION_SIMPLE';
                 }
-                
+
                 $enunciado = nl2br($rawEnunciado); // Soporte saltos de línea (html)
                 $grupo = isset($cols['GRUPO'])
-                    ? $this->sanitizePreguntaText(trim((string)($row[$cols['GRUPO']] ?? '')))
+                    ? $this->sanitizePreguntaText(trim((string) ($row[$cols['GRUPO']] ?? '')))
                     : null;
 
                 // Construir Opciones
@@ -498,7 +526,7 @@ class BancoPreguntaController extends Controller
                 $letters = ['A', 'B', 'C', 'D', 'E'];
                 foreach ($letters as $letter) {
                     if (isset($cols[$letter])) {
-                        $val = $this->sanitizePreguntaText(trim((string)($row[$cols[$letter]] ?? '')));
+                        $val = $this->sanitizePreguntaText(trim((string) ($row[$cols[$letter]] ?? '')));
                         if ($val !== '') {
                             $opciones[] = ['id' => $letter, 'text' => nl2br($val)];
                         }
@@ -507,7 +535,7 @@ class BancoPreguntaController extends Controller
 
                 // Construir Respuesta
                 $rawResp = isset($cols['RESPUESTA'])
-                    ? $this->sanitizePreguntaText(trim((string)($row[$cols['RESPUESTA']] ?? '')))
+                    ? $this->sanitizePreguntaText(trim((string) ($row[$cols['RESPUESTA']] ?? '')))
                     : '';
                 $respuesta = $this->normalizarRespuestaBancoExcel($rawResp);
 
@@ -515,52 +543,52 @@ class BancoPreguntaController extends Controller
                 // 1. Respuesta y Dificultad Obligatorias (Excepto PROBLEMA/EMPAREJAMIENTO)
                 if ($tipo !== 'PROBLEMA' && $tipo !== 'EMPAREJAMIENTO') {
                     if (empty($respuesta)) {
-                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" requiere respuesta.");
+                        throw new \Exception('Fila '.($index + 1).": tipo \"$tipo\" requiere respuesta.");
                     }
                     $rawDif = isset($cols['DIFICULTAD'])
-                        ? $this->sanitizePreguntaText(trim((string)($row[$cols['DIFICULTAD']] ?? '')))
+                        ? $this->sanitizePreguntaText(trim((string) ($row[$cols['DIFICULTAD']] ?? '')))
                         : '';
                     if ($rawDif === '') {
-                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" requiere nivel de dificultad (1, 2 o 3).");
+                        throw new \Exception('Fila '.($index + 1).": tipo \"$tipo\" requiere nivel de dificultad (1, 2 o 3).");
                     }
                 } else {
                     // PROBLEMA y EMPAREJAMIENTO deben estar vacíos
-                    if (!empty($respuesta)) {
-                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" NO debe tener respuesta (debe estar vacía).");
+                    if (! empty($respuesta)) {
+                        throw new \Exception('Fila '.($index + 1).": tipo \"$tipo\" NO debe tener respuesta (debe estar vacía).");
                     }
                     $rawDif = isset($cols['DIFICULTAD'])
-                        ? $this->sanitizePreguntaText(trim((string)($row[$cols['DIFICULTAD']] ?? '')))
+                        ? $this->sanitizePreguntaText(trim((string) ($row[$cols['DIFICULTAD']] ?? '')))
                         : '';
                     if ($rawDif !== '') {
-                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" NO debe tener dificultad (debe estar vacía).");
+                        throw new \Exception('Fila '.($index + 1).": tipo \"$tipo\" NO debe tener dificultad (debe estar vacía).");
                     }
                 }
 
                 // 2. Validaciones por estructura especial
                 if ($tipo === 'RESPUESTA_COMPUESTA') {
                     $respLetter = is_array($respuesta) ? ($respuesta[0] ?? '') : $respuesta;
-                    if (!in_array($respLetter, ['A', 'B', 'C', 'D'], true)) {
-                        throw new \Exception("Fila " . ($index + 1) . ": Respuesta Compuesta debe tener una respuesta entre A y D.");
+                    if (! in_array($respLetter, ['A', 'B', 'C', 'D'], true)) {
+                        throw new \Exception('Fila '.($index + 1).': Respuesta Compuesta debe tener una respuesta entre A y D.');
                     }
                     if (count($opciones) !== 4) {
-                        throw new \Exception("Fila " . ($index + 1) . ": Respuesta Compuesta debe tener exactamente 4 opciones fijas (A, B, C y D).");
+                        throw new \Exception('Fila '.($index + 1).': Respuesta Compuesta debe tener exactamente 4 opciones fijas (A, B, C y D).');
                     }
                 }
 
                 if ($tipo === 'PREGUNTA_CON_CLAVE') {
                     $respLetter = is_array($respuesta) ? ($respuesta[0] ?? '') : $respuesta;
-                    if (!in_array($respLetter, ['A', 'B', 'C', 'D', 'E'], true)) {
-                        throw new \Exception("Fila " . ($index + 1) . ": Pregunta con Clave debe tener una respuesta entre A y E.");
+                    if (! in_array($respLetter, ['A', 'B', 'C', 'D', 'E'], true)) {
+                        throw new \Exception('Fila '.($index + 1).': Pregunta con Clave debe tener una respuesta entre A y E.');
                     }
                     if (count($opciones) !== 4) {
-                        throw new \Exception("Fila " . ($index + 1) . ": Pregunta con Clave debe tener exactamente 4 incisos (1, 2, 3 y 4).");
+                        throw new \Exception('Fila '.($index + 1).': Pregunta con Clave debe tener exactamente 4 incisos (1, 2, 3 y 4).');
                     }
                 }
 
                 $dificultad = isset($cols['DIFICULTAD'])
-                    ? $this->sanitizePreguntaText(trim((string)($row[$cols['DIFICULTAD']] ?? '')))
+                    ? $this->sanitizePreguntaText(trim((string) ($row[$cols['DIFICULTAD']] ?? '')))
                     : '';
-                
+
                 // PR y EM no llevan dificultad por regla de negocio
                 if ($tipo === 'PROBLEMA' || $tipo === 'EMPAREJAMIENTO') {
                     $dificultad = '';
@@ -569,7 +597,7 @@ class BancoPreguntaController extends Controller
                 }
 
                 $parcial = isset($cols['PARCIAL'])
-                    ? $this->sanitizePreguntaText(trim((string)($row[$cols['PARCIAL']] ?? '')))
+                    ? $this->sanitizePreguntaText(trim((string) ($row[$cols['PARCIAL']] ?? '')))
                     : null;
                 if ($parcial) {
                     $parcial = $this->normalizarTipoExamen($parcial);
@@ -589,6 +617,7 @@ class BancoPreguntaController extends Controller
                     && (isset($existingDuplicateKeys[$duplicateKey]) || isset($batchDuplicateKeys[$duplicateKey]))
                 ) {
                     $omitidas++;
+
                     continue;
                 }
 
@@ -607,7 +636,7 @@ class BancoPreguntaController extends Controller
                     'parcial' => $parcial,
                     'peso' => 1,
                     'con_cartilla' => $conCartilla,
-                    'created_by' => auth()->id()
+                    'created_by' => auth()->id(),
                 ]);
 
                 if ($duplicateKey !== '') {
@@ -630,7 +659,7 @@ class BancoPreguntaController extends Controller
                 'total' => $count,
                 'evaluables' => $evaluables,
                 'auxiliares' => $auxiliares,
-                'omitidas' => $omitidas
+                'omitidas' => $omitidas,
             ]);
 
         } catch (\Exception $e) {
@@ -647,7 +676,7 @@ class BancoPreguntaController extends Controller
 
             return response()->json([
                 'success' => false,
-                'error' => 'Error al procesar el archivo Excel: ' . $message
+                'error' => 'Error al procesar el archivo Excel: '.$message,
             ], $statusCode);
         }
     }
@@ -669,7 +698,7 @@ class BancoPreguntaController extends Controller
         foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
             $rows = $sheet->toArray(null, false, false, false);
             $headers = array_map(
-                fn($header) => mb_strtoupper(trim((string) $header)),
+                fn ($header) => mb_strtoupper(trim((string) $header)),
                 $rows[0] ?? []
             );
 
@@ -753,7 +782,7 @@ class BancoPreguntaController extends Controller
             'docente_id' => 'nullable|exists:docentes,id',
             'grupo_teorico' => 'required|string',
             'parcial' => 'required|string',
-            'con_cartilla' => 'required|boolean'
+            'con_cartilla' => 'required|boolean',
         ]);
 
         $asignaturaId = $request->asignatura_id;
@@ -763,15 +792,15 @@ class BancoPreguntaController extends Controller
         $conCartilla = $request->con_cartilla;
 
         // Si es Sin Cartilla (false), procedemos a limpiar el banco de preguntas para este grupo/parcial
-        if (!$conCartilla) {
+        if (! $conCartilla) {
             $queryDelete = $this->buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial, $docenteId);
 
             $deletedCount = $queryDelete->delete();
-            
+
             Log::info("Preferencia Sin Cartilla: Se eliminaron {$deletedCount} preguntas", [
                 'asignatura' => $asignaturaId,
                 'grupo' => $grupoTeorico,
-                'parcial' => $parcial
+                'parcial' => $parcial,
             ]);
         }
 
@@ -785,7 +814,7 @@ class BancoPreguntaController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Configuración guardada correctamente',
-            'configuracion' => $config
+            'configuracion' => $config,
         ]);
     }
 
@@ -812,6 +841,7 @@ class BancoPreguntaController extends Controller
 
         if ($docenteId && in_array($rolCodigo, $rolesConAlcanceAmpliado, true)) {
             $queryDelete->where('docente_id', $docenteId);
+
             return $queryDelete;
         }
 
@@ -828,8 +858,10 @@ class BancoPreguntaController extends Controller
 
     private function updateOrCreateConfig($asignaturaId, $grupoTeorico, $parcial, $conCartilla)
     {
-        if (!$parcial) return null;
-        
+        if (! $parcial) {
+            return null;
+        }
+
         $parcialNormalizado = $this->normalizarTipoExamen($parcial);
 
         return BancoPreguntaConfiguracion::updateOrCreate(
@@ -840,14 +872,14 @@ class BancoPreguntaController extends Controller
             ],
             [
                 'con_cartilla' => $conCartilla,
-                'updated_by' => auth()->id()
+                'updated_by' => auth()->id(),
             ]
         );
     }
 
     private function normalizarTipoExamen($tipo)
     {
-        $tipo = strtolower(trim((string)$tipo));
+        $tipo = strtolower(trim((string) $tipo));
 
         $mapping = [
             '1er parcial' => '1er Parcial',
@@ -1171,6 +1203,7 @@ class BancoPreguntaController extends Controller
     private function mojibakeScore(string $text): int
     {
         preg_match_all('/[ÃÂâ�]/u', $text, $matches);
+
         return count($matches[0]);
     }
 
@@ -1194,19 +1227,20 @@ class BancoPreguntaController extends Controller
     private function normalizePreguntaPayload(array &$validated): void
     {
         $tipo = $validated['tipo'] ?? null;
-        $requiereRespuesta = !in_array($tipo, ['PROBLEMA', 'EMPAREJAMIENTO'], true);
+        $requiereRespuesta = ! in_array($tipo, ['PROBLEMA', 'EMPAREJAMIENTO'], true);
         $usaOpciones = in_array(
             $tipo,
             ['FALSO_VERDADERO', 'RESPUESTA_COMPUESTA', 'PREGUNTA_CON_CLAVE', 'SELECCION_SIMPLE', 'SUBPROBLEMA'],
             true
         );
 
-        if (!$requiereRespuesta) {
+        if (! $requiereRespuesta) {
             $validated['respuesta_correcta'] = [];
             if ($tipo !== 'EMPAREJAMIENTO') {
                 $validated['opciones'] = [];
             }
             $validated['dificultad'] = '';
+
             return;
         }
 
@@ -1221,42 +1255,44 @@ class BancoPreguntaController extends Controller
             ]);
         }
 
-        if (!$usaOpciones) {
+        if (! $usaOpciones) {
             $validated['opciones'] = [];
         }
     }
 
     private function storePreguntaImage(Request $request, array &$validated, ?BancoPregunta $pregunta = null): void
     {
-        if (!$request->hasFile('image_file')) {
+        if (! $request->hasFile('image_file')) {
             return;
         }
 
         if ($pregunta?->imagen) {
-            Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+            Storage::disk('public')->delete('preguntas/'.$pregunta->imagen);
         }
 
         $file = $request->file('image_file');
-        $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
+        $filename = time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
         $file->storeAs('preguntas', $filename, 'public');
         $validated['imagen'] = $filename;
     }
 
     public function showImage($filename)
     {
-        $path = storage_path('app/public/preguntas/' . $filename);
-        if (!file_exists($path)) {
+        $path = storage_path('app/public/preguntas/'.$filename);
+        if (! file_exists($path)) {
             abort(404);
         }
+
         return response()->file($path);
     }
 
     public function getLogo()
     {
         $path = public_path('descargas/unitepc-logo.png');
-        if (!file_exists($path)) {
+        if (! file_exists($path)) {
             abort(404);
         }
+
         return response()->file($path);
     }
 }

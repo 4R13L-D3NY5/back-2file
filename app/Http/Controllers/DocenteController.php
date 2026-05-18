@@ -248,7 +248,17 @@ class DocenteController extends Controller
                     'carrera' => $carreraId,
                     'carrera_nombre' => $carreraNombre,
                     'materiasData' => $materiasData,
-                    'grupos' => $grupos, // Include raw groups for frontend logic
+                    'grupos' => $grupos->map(function ($grupo) {
+                        return [
+                            'id' => $grupo->id,
+                            'nombre' => $grupo->nombre,
+                            'tipo' => $grupo->tipo,
+                            'sede_id' => $grupo->sede_id,
+                            'carrera_id' => $grupo->carrera_id,
+                            'asignatura_id' => $grupo->asignatura_id,
+                            'docente_id' => $grupo->docente_id,
+                        ];
+                    })->values(),
                     'estado' => $docente->estado, // Active/Inactive status
                     'sede' => $docente->sede, // Sede object
                     'sede_id' => $docente->sede_id,
