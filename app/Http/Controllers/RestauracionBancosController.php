@@ -156,6 +156,453 @@ class RestauracionBancosController extends Controller
     // QUERIES FILTRADAS
     // ══════════════════════════════════════════════════════════════
 
+    public function previewPlan(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'sede_id' => 'required|integer',
+            'carrera_id' => 'required|integer',
+            'parcial' => 'nullable|string|max:50',
+            'codigo' => 'nullable|string|max:50',
+        ]);
+
+        $parcial = $validated['parcial'] ?? '2do Parcial';
+        $issues = $this->findPlanIssues(
+            (int) $validated['sede_id'],
+            (int) $validated['carrera_id'],
+            $parcial,
+            $validated['codigo'] ?? null
+        );
+
+        $detalles = collect($issues);
+
+        return response()->json([
+            'ok' => true,
+            'sede_id' => (int) $validated['sede_id'],
+            'carrera_id' => (int) $validated['carrera_id'],
+            'parcial' => $parcial,
+            'resumen' => [
+                'grupos_revisados' => $this->countPlanGroups(
+                    (int) $validated['sede_id'],
+                    (int) $validated['carrera_id'],
+                    $validated['codigo'] ?? null
+                ),
+                'materias_detectadas' => $detalles->pluck('codigo')->unique()->count(),
+                'grupos_detectados' => $detalles->map(function ($item) {
+                    return implode('|', [$item['codigo'], $item['docente_id'], $item['grupo_teorico']]);
+                })->unique()->count(),
+                'hallazgos' => $detalles->count(),
+                'restaurables' => $detalles->where('estado', 'restaurable')->count(),
+                'conflictos' => $detalles->where('estado', 'conflicto')->count(),
+                'sin_grupo_actual' => $detalles->where('estado', 'sin_grupo_actual')->count(),
+                'preguntas_otro_plan' => $detalles->sum('preguntas_otro_plan'),
+                'preguntas_plan_correcto' => $detalles->sum('preguntas_plan_correcto'),
+            ],
+            'detalles' => $detalles->values(),
+        ]);
+    }
+
+    public function questionsPlan(Request $request): JsonResponse
+    {
+        $issue = $this->validatePlanIssueRequest($request);
+        $limit = max(1, min((int) $request->input('limit', 300), 500));
+
+        $baseQuery = $this->planBankQuery(
+            (int) $issue['asignatura_origen_id'],
+            (int) $issue['sede_id'],
+            (int) $issue['docente_id'],
+            $issue['grupo_teorico'],
+            $issue['parcial']
+        );
+        $totalDisponibles = (clone $baseQuery)->count();
+
+        $preguntas = $baseQuery
+            ->select('id', 'enunciado', 'tipo', 'dificultad', 'opciones', 'respuesta_correcta', 'imagen')
+            ->orderBy('id')
+            ->limit($limit)
+            ->get()
+            ->map(function ($pregunta) {
+                return [
+                    'id' => $pregunta->id,
+                    'enunciado' => $this->plainQuestionText($pregunta->enunciado),
+                    'enunciado_html' => $pregunta->enunciado,
+                    'tipo' => $pregunta->tipo,
+                    'dificultad' => $pregunta->dificultad,
+                    'opciones' => $pregunta->opciones,
+                    'respuesta_correcta' => $pregunta->respuesta_correcta,
+                    'imagen' => $pregunta->imagen,
+                ];
+            });
+
+        return response()->json([
+            'ok' => true,
+            'total' => $totalDisponibles,
+            'mostrando' => $preguntas->count(),
+            'preguntas' => $preguntas,
+        ]);
+    }
+
+    public function restorePlan(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.sede_id' => 'required|integer',
+            'items.*.carrera_id' => 'required|integer',
+            'items.*.docente_id' => 'required|integer',
+            'items.*.grupo_teorico' => 'required|string|max:80',
+            'items.*.parcial' => 'required|string|max:50',
+            'items.*.asignatura_origen_id' => 'required|integer',
+            'items.*.asignatura_destino_id' => 'required|integer',
+            'items.*.codigo' => 'nullable|string|max:50',
+        ]);
+
+        $restaurados = [];
+        $omitidos = [];
+
+        DB::transaction(function () use ($validated, &$restaurados, &$omitidos) {
+            foreach ($validated['items'] as $item) {
+                if (!$this->isValidPlanRestoreItem($item)) {
+                    $omitidos[] = [
+                        'item' => $this->buildPlanIssueKey($item),
+                        'motivo' => 'El origen y destino ya no coinciden con el grupo actual',
+                    ];
+                    continue;
+                }
+
+                $source = $this->planBankQuery(
+                    (int) $item['asignatura_origen_id'],
+                    (int) $item['sede_id'],
+                    (int) $item['docente_id'],
+                    $item['grupo_teorico'],
+                    $item['parcial']
+                );
+
+                $ids = $source->pluck('id');
+                if ($ids->isEmpty()) {
+                    $omitidos[] = [
+                        'item' => $this->buildPlanIssueKey($item),
+                        'motivo' => 'Sin preguntas en el plan origen',
+                    ];
+                    continue;
+                }
+
+                $destinoTieneBanco = $this->planBankQuery(
+                    (int) $item['asignatura_destino_id'],
+                    (int) $item['sede_id'],
+                    (int) $item['docente_id'],
+                    $item['grupo_teorico'],
+                    $item['parcial']
+                )->exists();
+
+                if ($destinoTieneBanco) {
+                    $omitidos[] = [
+                        'item' => $this->buildPlanIssueKey($item),
+                        'motivo' => 'El plan correcto ya tiene banco',
+                    ];
+                    continue;
+                }
+
+                DB::table('banco_preguntas')
+                    ->whereIn('id', $ids)
+                    ->update([
+                        'asignatura_id' => (int) $item['asignatura_destino_id'],
+                        'updated_at' => now(),
+                    ]);
+
+                $this->migrarConfiguracionBancoPlan($item);
+
+                $restaurados[] = [
+                    'item' => $this->buildPlanIssueKey($item),
+                    'codigo' => $item['codigo'] ?? null,
+                    'preguntas_restauradas' => $ids->count(),
+                ];
+            }
+        });
+
+        Log::info('RestauracionBancos: restauracion por plan completada', [
+            'user_id' => optional($request->user())->id,
+            'restaurados' => count($restaurados),
+            'omitidos' => count($omitidos),
+        ]);
+
+        return response()->json([
+            'ok' => true,
+            'restaurados' => $restaurados,
+            'omitidos' => $omitidos,
+            'total_restaurado' => collect($restaurados)->sum('preguntas_restauradas'),
+        ]);
+    }
+
+    private function validatePlanIssueRequest(Request $request): array
+    {
+        return $request->validate([
+            'sede_id' => 'required|integer',
+            'carrera_id' => 'required|integer',
+            'docente_id' => 'required|integer',
+            'grupo_teorico' => 'required|string|max:80',
+            'parcial' => 'required|string|max:50',
+            'asignatura_origen_id' => 'required|integer',
+            'asignatura_destino_id' => 'required|integer',
+            'codigo' => 'nullable|string|max:50',
+        ]);
+    }
+
+    private function findPlanIssues(int $sedeId, int $carreraId, string $parcial, ?string $codigo = null): array
+    {
+        $materiasActualesQuery = DB::table('asignatura_carrera AS ac')
+            ->join('asignaturas AS a', 'a.id', '=', 'ac.asignatura_id')
+            ->where('ac.sede_id', $sedeId)
+            ->where('ac.carrera_id', $carreraId)
+            ->whereNull('a.deleted_at')
+            ->select('a.id', 'a.codigo', 'a.nombre', 'a.plan_estudios')
+            ->distinct();
+
+        if ($codigo) {
+            $materiasActualesQuery->where('a.codigo', trim($codigo));
+        }
+
+        $materiasActuales = $materiasActualesQuery->get();
+        if ($materiasActuales->isEmpty()) {
+            return [];
+        }
+
+        $materiasPorCodigo = $materiasActuales->groupBy('codigo');
+        $codigos = $materiasPorCodigo->keys()->values()->all();
+        $grupoTeoricoExpr = DB::raw("TRIM(COALESCE(bp.grupoTeorico, ''))");
+        $grupoTeoricoSelect = DB::raw("TRIM(COALESCE(bp.grupoTeorico, '')) AS grupo_teorico");
+
+        $bancosEnOtroPlan = DB::table('banco_preguntas AS bp')
+            ->join('asignaturas AS ao', 'ao.id', '=', 'bp.asignatura_id')
+            ->leftJoin('docentes AS d', 'd.id', '=', 'bp.docente_id')
+            ->where('bp.sede_id', $sedeId)
+            ->whereNotNull('bp.docente_id')
+            ->whereIn('bp.parcial', $this->parcialValues($parcial))
+            ->whereIn('ao.codigo', $codigos)
+            ->select([
+                'ao.codigo',
+                'ao.id AS asignatura_origen_id',
+                'ao.nombre AS materia_origen',
+                'ao.plan_estudios AS plan_origen',
+                'ao.deleted_at AS origen_deleted_at',
+                'bp.docente_id',
+                $grupoTeoricoSelect,
+                'd.nombre_completo AS docente_nombre',
+                DB::raw('COUNT(*) AS preguntas_otro_plan'),
+            ])
+            ->groupBy(
+                'ao.codigo',
+                'ao.id',
+                'ao.nombre',
+                'ao.plan_estudios',
+                'ao.deleted_at',
+                'bp.docente_id',
+                $grupoTeoricoExpr,
+                'd.nombre_completo'
+            )
+            ->orderBy('ao.codigo')
+            ->get();
+
+        $issues = [];
+
+        foreach ($bancosEnOtroPlan as $banco) {
+            $destinos = ($materiasPorCodigo[$banco->codigo] ?? collect())->filter(function ($materia) use ($banco) {
+                return (int) $materia->id !== (int) $banco->asignatura_origen_id
+                    && $this->normalizePlanValue($materia->plan_estudios)
+                        !== $this->normalizePlanValue($banco->plan_origen);
+            });
+
+            if ($destinos->isEmpty()) {
+                continue;
+            }
+
+            $grupoActual = DB::table('grupos AS g')
+                ->join('asignaturas AS a', 'a.id', '=', 'g.asignatura_id')
+                ->where('g.sede_id', $sedeId)
+                ->where('g.carrera_id', $carreraId)
+                ->where('g.docente_id', (int) $banco->docente_id)
+                ->where('g.nombre', (string) $banco->grupo_teorico)
+                ->where('g.estado', 'ACTIVO')
+                ->whereNull('g.deleted_at')
+                ->where('a.codigo', $banco->codigo)
+                ->select(
+                    'g.id AS grupo_id',
+                    'g.asignatura_id AS asignatura_destino_id',
+                    'a.nombre AS asignatura_nombre',
+                    'a.plan_estudios AS plan_destino'
+                )
+                ->first();
+
+            $destino = $grupoActual ?: $destinos->first();
+            $destinoId = (int) ($grupoActual->asignatura_destino_id ?? $destino->id);
+            $preguntasPlanCorrecto = $this->planBankQuery(
+                $destinoId,
+                $sedeId,
+                (int) $banco->docente_id,
+                (string) $banco->grupo_teorico,
+                $parcial
+            )->count();
+
+            $estado = 'sin_grupo_actual';
+            if ($grupoActual && $preguntasPlanCorrecto === 0) {
+                $estado = 'restaurable';
+            } elseif ($preguntasPlanCorrecto > 0) {
+                $estado = 'conflicto';
+            }
+
+            $issue = [
+                'grupo_id' => $grupoActual->grupo_id ?? null,
+                'grupo_actual_encontrado' => $grupoActual !== null,
+                'sede_id' => $sedeId,
+                'carrera_id' => $carreraId,
+                'codigo' => $banco->codigo,
+                'materia' => $grupoActual->asignatura_nombre ?? $destino->nombre,
+                'grupo_teorico' => (string) $banco->grupo_teorico,
+                'docente_id' => $banco->docente_id,
+                'docente' => $banco->docente_nombre,
+                'parcial' => $parcial,
+                'asignatura_destino_id' => $destinoId,
+                'plan_destino' => $grupoActual->plan_destino ?? $destino->plan_estudios,
+                'asignatura_origen_id' => $banco->asignatura_origen_id,
+                'materia_origen' => $banco->materia_origen,
+                'plan_origen' => $banco->plan_origen,
+                'origen_eliminada' => $banco->origen_deleted_at !== null,
+                'preguntas_otro_plan' => (int) $banco->preguntas_otro_plan,
+                'preguntas_plan_correcto' => $preguntasPlanCorrecto,
+                'estado' => $estado,
+            ];
+            $issue['issue_key'] = $this->buildPlanIssueKey($issue);
+            $issues[] = $issue;
+        }
+
+        return $issues;
+    }
+
+    private function isValidPlanRestoreItem(array $item): bool
+    {
+        $destino = DB::table('asignaturas')->where('id', (int) $item['asignatura_destino_id'])->first();
+        $origen = DB::table('asignaturas')->where('id', (int) $item['asignatura_origen_id'])->first();
+
+        if (!$destino || !$origen || $destino->codigo !== $origen->codigo) {
+            return false;
+        }
+
+        if ($this->normalizePlanValue($destino->plan_estudios) === $this->normalizePlanValue($origen->plan_estudios)) {
+            return false;
+        }
+
+        if (!empty($item['codigo']) && $destino->codigo !== $item['codigo']) {
+            return false;
+        }
+
+        return DB::table('asignatura_carrera')
+            ->where('sede_id', (int) $item['sede_id'])
+            ->where('carrera_id', (int) $item['carrera_id'])
+            ->where('asignatura_id', (int) $item['asignatura_destino_id'])
+            ->exists();
+    }
+
+    private function countPlanGroups(int $sedeId, int $carreraId, ?string $codigo = null): int
+    {
+        $query = DB::table('grupos AS g')
+            ->join('asignaturas AS a', 'a.id', '=', 'g.asignatura_id')
+            ->where('g.sede_id', $sedeId)
+            ->where('g.carrera_id', $carreraId)
+            ->whereNull('g.deleted_at')
+            ->where('g.estado', 'ACTIVO')
+            ->whereNotNull('g.docente_id');
+
+        if ($codigo) {
+            $query->where('a.codigo', trim($codigo));
+        }
+
+        return $query->count();
+    }
+
+    private function planBankQuery(
+        int $asignaturaId,
+        int $sedeId,
+        int $docenteId,
+        string $grupoTeorico,
+        string $parcial
+    ) {
+        return DB::table('banco_preguntas')
+            ->where('asignatura_id', $asignaturaId)
+            ->where('sede_id', $sedeId)
+            ->where('docente_id', $docenteId)
+            ->whereIn('parcial', $this->parcialValues($parcial))
+            ->whereRaw("TRIM(COALESCE(grupoTeorico, '')) = ?", [trim($grupoTeorico)]);
+    }
+
+    private function parcialValues(string $parcial): array
+    {
+        $normalizado = strtoupper(trim($parcial));
+
+        if (in_array($normalizado, ['2P', '2DO PARCIAL', 'SEGUNDO PARCIAL'], true)) {
+            return ['2do Parcial', '2P', 'Segundo Parcial', 'SEGUNDO PARCIAL'];
+        }
+
+        if (in_array($normalizado, ['1P', '1ER PARCIAL', 'PRIMER PARCIAL'], true)) {
+            return ['1er Parcial', '1P', 'Primer Parcial', 'PRIMER PARCIAL'];
+        }
+
+        return [$parcial];
+    }
+
+    private function normalizePlanValue($plan): string
+    {
+        $value = strtoupper(trim((string) $plan));
+        return $value === '' ? 'SIN_PLAN' : $value;
+    }
+
+    private function buildPlanIssueKey(array $item): string
+    {
+        return implode('|', [
+            $item['sede_id'] ?? '',
+            $item['carrera_id'] ?? '',
+            $item['docente_id'] ?? '',
+            $item['grupo_teorico'] ?? '',
+            $item['parcial'] ?? '',
+            $item['asignatura_origen_id'] ?? '',
+            $item['asignatura_destino_id'] ?? '',
+        ]);
+    }
+
+    private function plainQuestionText(?string $text): string
+    {
+        $clean = str_replace(['<br>', '<br/>', '<br />'], ' ', (string) $text);
+        $clean = html_entity_decode(strip_tags($clean), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $clean = preg_replace('/\s+/', ' ', $clean);
+
+        return trim(function_exists('mb_substr') ? mb_substr($clean, 0, 260) : substr($clean, 0, 260));
+    }
+
+    private function migrarConfiguracionBancoPlan(array $item): void
+    {
+        $configs = DB::table('banco_preguntas_configuraciones')
+            ->where('asignatura_id', (int) $item['asignatura_origen_id'])
+            ->where('grupo_teorico', $item['grupo_teorico'])
+            ->whereIn('parcial', $this->parcialValues($item['parcial']))
+            ->get();
+
+        foreach ($configs as $config) {
+            $yaExiste = DB::table('banco_preguntas_configuraciones')
+                ->where('asignatura_id', (int) $item['asignatura_destino_id'])
+                ->where('grupo_teorico', $config->grupo_teorico)
+                ->where('parcial', $config->parcial)
+                ->exists();
+
+            if ($yaExiste) {
+                continue;
+            }
+
+            DB::table('banco_preguntas_configuraciones')
+                ->where('id', $config->id)
+                ->update([
+                    'asignatura_id' => (int) $item['asignatura_destino_id'],
+                    'updated_at' => now(),
+                ]);
+        }
+    }
+
     private function extractFilters(Request $request): array
     {
         return [

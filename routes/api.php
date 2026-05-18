@@ -437,4 +437,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/execute', [\App\Http\Controllers\RestauracionBancosController::class, 'execute']);
     });
 
+    Route::prefix('restauracion/bancos-plan')->middleware('role:ADMIN,SUPER_ADMIN')->group(function () {
+        Route::post('/sedes', [\App\Http\Controllers\RestauracionBancosController::class, 'sedes']);
+        Route::post('/carreras', [\App\Http\Controllers\RestauracionBancosController::class, 'carreras']);
+        Route::post('/preview', [\App\Http\Controllers\RestauracionBancosController::class, 'previewPlan']);
+        Route::post('/questions', [\App\Http\Controllers\RestauracionBancosController::class, 'questionsPlan']);
+        Route::post('/restore', [\App\Http\Controllers\RestauracionBancosController::class, 'restorePlan']);
+    });
+
 });

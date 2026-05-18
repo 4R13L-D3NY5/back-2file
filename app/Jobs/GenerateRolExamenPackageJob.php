@@ -159,11 +159,15 @@ class GenerateRolExamenPackageJob implements ShouldQueue
     {
         $normalizedGroup = $this->normalizeGroup($examen->grupo);
         $partial = $this->normalizePartial($examen->tipo_examen);
-        $asignaturaIds = $this->resolveAsignaturaIds($examen);
+        $asignaturaId = $this->resolveAsignaturaId($examen);
 
         $questions = BancoPregunta::query()
-            ->whereIn('asignatura_id', $asignaturaIds)
+            ->where('asignatura_id', $asignaturaId)
+            ->where('sede_id', $examen->sede_id)
             ->where('parcial', $partial)
+            ->when(!empty($examen->docente_id), function ($query) use ($examen) {
+                $query->where('docente_id', $examen->docente_id);
+            })
             ->where(function ($query) use ($examen, $normalizedGroup) {
                 $query->where('grupoTeorico', $examen->grupo)
                     ->orWhereRaw(
@@ -174,7 +178,14 @@ class GenerateRolExamenPackageJob implements ShouldQueue
             ->orderBy('id')
             ->get();
 
-        $this->assertQuestionsMatchExamContext($questions, $asignaturaIds, $normalizedGroup, $partial);
+        $this->assertQuestionsMatchExamContext(
+            $questions,
+            $asignaturaId,
+            (int) $examen->sede_id,
+            $examen->docente_id ? (int) $examen->docente_id : null,
+            $normalizedGroup,
+            $partial
+        );
 
         return $questions
             ->map(function (BancoPregunta $question) {
@@ -185,6 +196,8 @@ class GenerateRolExamenPackageJob implements ShouldQueue
                 return [
                     'id' => $question->id,
                     'asignatura_id' => $question->asignatura_id,
+                    'sede_id' => $question->sede_id,
+                    'docente_id' => $question->docente_id,
                     'enunciado' => $question->enunciado,
                     'tipo' => $question->tipo,
                     'grupo' => $question->grupo,
@@ -199,13 +212,21 @@ class GenerateRolExamenPackageJob implements ShouldQueue
             });
     }
 
-    private function assertQuestionsMatchExamContext($questions, array $asignaturaIds, string $normalizedGroup, string $partial): void
-    {
-        $invalid = $questions->filter(function (BancoPregunta $question) use ($asignaturaIds, $normalizedGroup, $partial) {
+    private function assertQuestionsMatchExamContext(
+        $questions,
+        int $asignaturaId,
+        int $sedeId,
+        ?int $docenteId,
+        string $normalizedGroup,
+        string $partial
+    ): void {
+        $invalid = $questions->filter(function (BancoPregunta $question) use ($asignaturaId, $sedeId, $docenteId, $normalizedGroup, $partial) {
             $questionGroup = $this->normalizeGroup($question->grupoTeorico ?: $question->grupo);
             $questionPartial = $this->normalizePartial($question->parcial);
 
-            return !in_array((int) $question->asignatura_id, $asignaturaIds, true)
+            return (int) $question->asignatura_id !== $asignaturaId
+                || (int) $question->sede_id !== $sedeId
+                || ($docenteId && (int) $question->docente_id !== $docenteId)
                 || $questionGroup !== $normalizedGroup
                 || $questionPartial !== $partial;
         })->values();
@@ -216,16 +237,18 @@ class GenerateRolExamenPackageJob implements ShouldQueue
 
         $sample = $invalid->take(5)->map(function (BancoPregunta $question) {
             return sprintf(
-                '#%s[a:%s g:%s p:%s]',
+                '#%s[a:%s s:%s d:%s g:%s p:%s]',
                 $question->id,
                 $question->asignatura_id,
+                $question->sede_id,
+                $question->docente_id,
                 $question->grupoTeorico ?: $question->grupo,
                 $question->parcial
             );
         })->implode(', ');
 
         throw new \RuntimeException(
-            'Se detectaron preguntas fuera del contexto de asignatura, grupo o parcial del examen: ' . $sample
+            'Se detectaron preguntas fuera del contexto de asignatura, sede, docente, grupo o parcial del examen: ' . $sample
         );
     }
 
@@ -260,50 +283,47 @@ class GenerateRolExamenPackageJob implements ShouldQueue
         ][$value] ?? (string) $value;
     }
 
+    private function resolveAsignaturaId(RolExamen $examen): int
+    {
+        if (!empty($examen->asignatura_id)) {
+            return (int) $examen->asignatura_id;
+        }
+
+        if (empty($examen->materia_codigo)) {
+            throw new \RuntimeException('El examen no tiene asignatura_id ni codigo de materia para ubicar su banco.');
+        }
+
+        $scopedIds = DB::table('asignaturas')
+            ->join('asignatura_carrera', 'asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
+            ->where('asignaturas.codigo', $examen->materia_codigo)
+            ->where('asignatura_carrera.carrera_id', $examen->carrera_id)
+            ->where('asignatura_carrera.sede_id', $examen->sede_id)
+            ->where('asignaturas.estado', '!=', 'cancelado')
+            ->pluck('asignaturas.id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($scopedIds->count() === 1) {
+            return (int) $scopedIds->first();
+        }
+
+        Log::warning('GenerateRolExamenPackageJob: asignatura context ambiguous or missing', [
+            'rol_examen_id' => $examen->id,
+            'materia_codigo' => $examen->materia_codigo,
+            'carrera_id' => $examen->carrera_id,
+            'sede_id' => $examen->sede_id,
+            'asignatura_ids' => $scopedIds->all(),
+        ]);
+
+        throw new \RuntimeException(
+            'No se pudo determinar una unica asignatura del plan correcto para generar el examen.'
+        );
+    }
+
     private function resolveAsignaturaIds(RolExamen $examen): array
     {
-        $ids = collect();
-
-        if (!empty($examen->asignatura_id)) {
-            $ids->push((int) $examen->asignatura_id);
-        }
-
-        if (!empty($examen->materia_codigo)) {
-            $scopedIds = DB::table('asignaturas')
-                ->join('asignatura_carrera', 'asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
-                ->where('asignaturas.codigo', $examen->materia_codigo)
-                ->where('asignatura_carrera.carrera_id', $examen->carrera_id)
-                ->where('asignatura_carrera.sede_id', $examen->sede_id)
-                ->where('asignaturas.estado', '!=', 'cancelado')
-                ->when((int) $examen->sede_id === 1, function ($query) {
-                    $query->where('asignaturas.plan_estudios', 'N');
-                })
-                ->pluck('asignaturas.id')
-                ->map(fn ($id) => (int) $id);
-
-            $ids = $ids->merge($scopedIds);
-
-            if ($scopedIds->isEmpty()) {
-                Log::warning('GenerateRolExamenPackageJob: no scoped asignatura ids found, using codigo fallback', [
-                    'rol_examen_id' => $examen->id,
-                    'materia_codigo' => $examen->materia_codigo,
-                    'carrera_id' => $examen->carrera_id,
-                    'sede_id' => $examen->sede_id,
-                ]);
-            }
-
-            $ids = $ids->merge(
-                DB::table('asignaturas')
-                    ->where('codigo', $examen->materia_codigo)
-                    ->when($scopedIds->isNotEmpty(), function ($query) use ($scopedIds) {
-                        $query->whereIn('id', $scopedIds->all());
-                    })
-                    ->pluck('id')
-                    ->map(fn ($id) => (int) $id)
-            );
-        }
-
-        return $ids->filter()->unique()->values()->all();
+        return [$this->resolveAsignaturaId($examen)];
     }
 
     private function resolveDocenteName(RolExamen $examen): string

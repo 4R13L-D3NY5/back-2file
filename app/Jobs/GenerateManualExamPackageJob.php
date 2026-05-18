@@ -44,6 +44,10 @@ class GenerateManualExamPackageJob implements ShouldQueue
             }
 
             $this->assertQuestionsMatchManualContext($questions, [
+                'asignatura_id' => $registro->asignatura_id,
+                'sede_id' => $registro->sede_id,
+                'docente_id' => $registro->docente_id,
+                'grupo' => $registro->grupo,
                 'parcial' => $registro->parcial,
             ]);
 
@@ -137,12 +141,30 @@ class GenerateManualExamPackageJob implements ShouldQueue
 
     private function assertQuestionsMatchManualContext(array $questions, array $context): void
     {
+        $expectedAsignaturaId = (int) ($context['asignatura_id'] ?? 0);
+        $expectedSedeId = (int) ($context['sede_id'] ?? 0);
+        $expectedDocenteId = (int) ($context['docente_id'] ?? 0);
+        $expectedGroup = $this->normalizeGroup($context['grupo'] ?? null);
         $expectedPartial = $this->normalizePartial($context['parcial'] ?? null);
 
-        $invalid = collect($questions)->filter(function ($question) use ($expectedPartial) {
+        $invalid = collect($questions)->filter(function ($question) use (
+            $expectedAsignaturaId,
+            $expectedSedeId,
+            $expectedDocenteId,
+            $expectedGroup,
+            $expectedPartial
+        ) {
+            $questionAsignaturaId = (int) ($question['asignatura_id'] ?? 0);
+            $questionSedeId = (int) ($question['sede_id'] ?? 0);
+            $questionDocenteId = (int) ($question['docente_id'] ?? 0);
+            $questionGroup = $this->normalizeGroup($question['grupoTeorico'] ?? $question['grupo_teorico'] ?? null);
             $questionPartial = $this->normalizePartial($question['parcial'] ?? null);
 
-            return $expectedPartial && $questionPartial && $questionPartial !== $expectedPartial;
+            return ($expectedAsignaturaId && $questionAsignaturaId && $questionAsignaturaId !== $expectedAsignaturaId)
+                || ($expectedSedeId && $questionSedeId && $questionSedeId !== $expectedSedeId)
+                || ($expectedDocenteId && $questionDocenteId && $questionDocenteId !== $expectedDocenteId)
+                || ($expectedGroup && $questionGroup && $questionGroup !== $expectedGroup)
+                || ($expectedPartial && $questionPartial && $questionPartial !== $expectedPartial);
         })->values();
 
         if ($invalid->isEmpty()) {
@@ -151,15 +173,18 @@ class GenerateManualExamPackageJob implements ShouldQueue
 
         $sample = $invalid->take(5)->map(function ($question) {
             return sprintf(
-                '#%s[g:%s p:%s]',
+                '#%s[a:%s s:%s d:%s g:%s p:%s]',
                 $question['id'] ?? $question['idx'] ?? '?',
-                $question['grupoTeorico'] ?? $question['grupo'] ?? '',
+                $question['asignatura_id'] ?? '',
+                $question['sede_id'] ?? '',
+                $question['docente_id'] ?? '',
+                $question['grupoTeorico'] ?? $question['grupo_teorico'] ?? $question['grupo'] ?? '',
                 $question['parcial'] ?? ''
             );
         })->implode(', ');
 
         throw new \RuntimeException(
-            'Se detectaron preguntas fuera del parcial de la generacion manual: ' . $sample
+            'Se detectaron preguntas fuera del contexto de la generacion manual: ' . $sample
         );
     }
 

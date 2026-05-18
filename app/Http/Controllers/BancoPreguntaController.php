@@ -34,8 +34,21 @@ class BancoPreguntaController extends Controller
             $questions->where('docente_id', $request->docente_id);
         }
 
+        if ($request->has('sede_id')) {
+            $questions->where('sede_id', $request->sede_id);
+        }
+
         if ($request->has('grupoTeorico')) {
-            $questions->where('grupoTeorico', $request->grupoTeorico);
+            $grupoTeorico = $request->grupoTeorico;
+            $grupoNormalizado = strtoupper(trim((string) $grupoTeorico));
+            $grupoNormalizado = str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $grupoNormalizado);
+            $questions->where(function ($query) use ($grupoTeorico, $grupoNormalizado) {
+                $query->where('grupoTeorico', $grupoTeorico)
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    );
+            });
         }
 
         if ($request->has('parcial')) {
@@ -46,6 +59,9 @@ class BancoPreguntaController extends Controller
         \Illuminate\Support\Facades\Log::info("BancoPregunta Index Request", [
             'asignatura_id' => $request->asignatura_id,
             'docente_id' => $request->docente_id,
+            'sede_id' => $request->sede_id,
+            'grupoTeorico' => $request->grupoTeorico,
+            'parcial' => $request->parcial,
             'user_id' => auth()->id(),
             'all_docentes' => $request->boolean('all_docentes')
         ]);
@@ -104,11 +120,19 @@ class BancoPreguntaController extends Controller
 
         if ($request->has('grupo')) {
             $grupo = $request->grupo;
-            $query->where(function($q) use ($grupo) {
+            $grupoNormalizado = strtoupper(trim((string) $grupo));
+            $grupoNormalizado = str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $grupoNormalizado);
+            $query->where(function($q) use ($grupo, $grupoNormalizado) {
                 $q->where('grupoTeorico', $grupo)
-                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%')
+                  ->orWhereRaw(
+                      "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                      [$grupoNormalizado]
+                  )
                   ->orWhere('grupo', $grupo)
-                  ->orWhere('grupo', 'LIKE', '%' . $grupo . '%');
+                  ->orWhereRaw(
+                      "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                      [$grupoNormalizado]
+                  );
             });
         }
 
@@ -140,6 +164,9 @@ class BancoPreguntaController extends Controller
         // Conteo general para la asignatura y docente (sin parcial/grupo)
         $totalAsignatura = BancoPregunta::where('asignatura_id', $request->asignatura_id)
             ->where('docente_id', $request->docente_id)
+            ->when($request->filled('sede_id'), function ($query) use ($request) {
+                $query->where('sede_id', $request->sede_id);
+            })
             ->count();
 
         $configuracion = null;
