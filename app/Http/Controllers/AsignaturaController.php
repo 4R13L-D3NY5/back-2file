@@ -170,6 +170,7 @@ class AsignaturaController extends Controller
                 'id' => $a->id,
                 'codigo' => $a->codigo,
                 'nombre' => $a->nombre,
+                'plan_estudios' => $a->plan_estudios,
                 'comun_token' => $a->comun_token, // Added for frontend indicator
                 'creditos' => $a->creditos,
                 'semestre' => $context?->pivot?->semestre,
@@ -2142,5 +2143,130 @@ class AsignaturaController extends Controller
             \Illuminate\Support\Facades\Log::error("Import Personal Excel Error: " . $e->getMessage());
             return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Obtiene TODAS las asignaturas asociadas a una carrera (de cualquier sede),
+     * indicando en qué sedes YA están asignadas.
+     * Agrupado por plan_estudios (N=Malla Nueva, A=Malla Antigua).
+     *
+     * GET /api/asignaturas/master/{carrera_id}?sede_id=X
+     */
+    public function masterPorCarrera($carreraId, Request $request)
+    {
+        $carrera = Carrera::findOrFail($carreraId);
+        $sedeActualId = $request->input('sede_id');
+
+        $asignaturaIds = \DB::table('asignatura_carrera')
+            ->where('carrera_id', $carreraId)
+            ->pluck('asignatura_id')
+            ->unique();
+
+        $asignaturas = Asignatura::whereIn('id', $asignaturaIds)
+            ->where('estado', '!=', 'cancelado')
+            ->orderBy('plan_estudios')
+            ->orderBy('codigo')
+            ->get();
+
+        $sedesMap = \App\Models\Sede::pluck('nombre', 'id');
+
+        $resultado = [
+            'carrera_id' => $carrera->id,
+            'carrera_nombre' => $carrera->nombre,
+            'mallas' => [
+                'N' => [],
+                'A' => []
+            ]
+        ];
+
+        foreach ($asignaturas as $asig) {
+            $pivotData = \DB::table('asignatura_carrera')
+                ->where('asignatura_id', $asig->id)
+                ->where('carrera_id', $carreraId)
+                ->first();
+
+            $asignadaEnSedes = \DB::table('asignatura_carrera')
+                ->join('sedes', 'asignatura_carrera.sede_id', '=', 'sedes.id')
+                ->where('asignatura_carrera.asignatura_id', $asig->id)
+                ->where('asignatura_carrera.carrera_id', $carreraId)
+                ->select('asignatura_carrera.sede_id', 'sedes.nombre as sede_nombre')
+                ->get()
+                ->map(fn($r) => [
+                    'sede_id' => $r->sede_id,
+                    'sede_nombre' => $r->sede_nombre
+                ])
+                ->values()
+                ->toArray();
+
+            $yaAsignadaEnSedeActual = collect($asignadaEnSedes)->contains('sede_id', $sedeActualId);
+
+            $item = [
+                'asignatura_id' => $asig->id,
+                'codigo' => $asig->codigo,
+                'nombre' => $asig->nombre,
+                'semestre' => $pivotData->semestre ?? null,
+                'creditos' => $asig->creditos,
+                'plan_estudios' => $asig->plan_estudios,
+                'asignada_en_sedes' => $asignadaEnSedes,
+                'ya_asignada_en_sede_actual' => $yaAsignadaEnSedeActual
+            ];
+
+            $planKey = $asig->plan_estudios === 'A' ? 'A' : 'N';
+            $resultado['mallas'][$planKey][] = $item;
+        }
+
+        return response()->json($resultado);
+    }
+
+    /**
+     * Asigna una o varias asignaturas a una carrera+sede+semestre.
+     * Omite las que ya están asignadas (evita duplicados en el pivot).
+     *
+     * POST /api/asignaturas/asignar
+     * Body: { asignatura_ids: [], carrera_id, sede_id, semestre }
+     */
+    public function asignarMasivo(Request $request)
+    {
+        $validated = $request->validate([
+            'asignatura_ids' => 'required|array|min:1',
+            'asignatura_ids.*' => 'integer|exists:asignaturas,id',
+            'carrera_id' => 'required|integer|exists:carreras,id',
+            'sede_id' => 'required|integer|exists:sedes,id',
+            'semestre' => 'required|integer|min:1|max:20'
+        ]);
+
+        $asignadas = 0;
+        $yaExistian = 0;
+
+        foreach ($validated['asignatura_ids'] as $asignaturaId) {
+            $existe = \DB::table('asignatura_carrera')
+                ->where('asignatura_id', $asignaturaId)
+                ->where('carrera_id', $validated['carrera_id'])
+                ->where('sede_id', $validated['sede_id'])
+                ->exists();
+
+            if ($existe) {
+                $yaExistian++;
+                continue;
+            }
+
+            \DB::table('asignatura_carrera')->insert([
+                'asignatura_id' => $asignaturaId,
+                'carrera_id' => $validated['carrera_id'],
+                'sede_id' => $validated['sede_id'],
+                'semestre' => $validated['semestre'],
+                'created_at' => now(),
+                'updated_at' => now()
+            ]);
+
+            $asignadas++;
+        }
+
+        return response()->json([
+            'message' => "Asignación completada",
+            'asignadas' => $asignadas,
+            'ya_existian' => $yaExistian,
+            'total' => count($validated['asignatura_ids'])
+        ]);
     }
 }

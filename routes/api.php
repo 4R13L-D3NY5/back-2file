@@ -100,6 +100,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Asignaturas
     Route::get('/asignaturas', [AsignaturaController::class, 'index']);
     Route::post('/asignaturas', [AsignaturaController::class, 'store']);
+    Route::get('/asignaturas/master/{carrera_id}', [AsignaturaController::class, 'masterPorCarrera']);
+    Route::post('/asignaturas/asignar', [AsignaturaController::class, 'asignarMasivo']);
     Route::get('/asignaturas/{id}', [AsignaturaController::class, 'show']);
     Route::put('/asignaturas/{id}', [AsignaturaController::class, 'update']);
     Route::put('/asignaturas/{id}/estado', [AsignaturaController::class, 'cambiarEstado']);
