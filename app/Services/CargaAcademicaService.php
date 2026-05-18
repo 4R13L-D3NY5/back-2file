@@ -851,8 +851,8 @@ class CargaAcademicaService
         foreach ($gruposApi as $info) {
             if (empty($info['nombre'])) continue;
 
-            // Buscar grupo local (con o sin carrera_id exacto)
-            $query = Grupo::withoutGlobalScope('activo')
+            // Buscar grupo local (con o sin carrera_id exacto, incluyendo soft-deleted)
+            $query = Grupo::withTrashed()
                 ->where('gestion', $gestion)
                 ->where('asignatura_id', $asignatura->id)
                 ->where('sede_id', $sede->id)

@@ -248,8 +248,8 @@ class PlanningSyncService
 
                     // MIGRATION FIX: Check for legacy group (null carrera_id) matching other criteria
                     // This prevents "Duplicate Entry" errors if a unique index exists on (gestion, asignatura, nombre...)
-                    // withoutGlobalScope: necesitamos encontrar cualquier grupo (activo o inactivo)
-                    $legacyGrupo = Grupo::withoutGlobalScope('activo')->where([
+                    // withTrashed: necesitamos encontrar cualquier grupo (activo, inactivo o soft-deleted)
+                    $legacyGrupo = Grupo::withTrashed()->where([
                         'gestion' => $dto->gestion,
                         'asignatura_id' => $asignatura->id,
                         'carrera_id' => null, // Legacy has no career
@@ -264,8 +264,8 @@ class PlanningSyncService
                     }
 
                     // Un grupo es el mismo si tiene la misma gestión, asignatura, carrera, nombre, tipo y sede
-                    // withoutGlobalScope: updateOrCreate debe buscar también grupos INACTIVOS para reactivarlos
-                    $grupo = Grupo::withoutGlobalScope('activo')->updateOrCreate(
+                    // withTrashed: buscar también grupos ELIMINADOS (soft-deletes) para restaurarlos
+                    $grupo = Grupo::withTrashed()->firstOrNew(
                         [
                             'gestion' => $dto->gestion,
                             'asignatura_id' => $asignatura->id,
@@ -273,12 +273,19 @@ class PlanningSyncService
                             'nombre' => $dto->grupo,
                             'tipo' => $tipo,
                             'sede_id' => $sede->id
-                        ],
-                        [
-                            'docente_id'    => $docenteId,
-                            'estado'        => 'ACTIVO'
                         ]
                     );
+
+                    // Restaurar si estaba soft-deleted
+                    if ($grupo->trashed()) {
+                        $grupo->restore();
+                    }
+
+                    $grupo->fill([
+                        'docente_id' => $docenteId,
+                        'estado'     => 'ACTIVO',
+                    ]);
+                    $grupo->save();
 
                     $stats['grupos']++;
 
@@ -295,32 +302,36 @@ class PlanningSyncService
                     // 8. HORARIO (SESIÓN): Identificación por ID único de API
                     // Esto permite que el Grupo "A" tenga N sesiones sin duplicar el grupo.
                     if ($dto->idHorario) {
-                        $horario = Horario::updateOrCreate(
-                            [
-                                'id_horario_api' => $dto->idHorario,
-                            ],
-                            [
-                                'grupo_id' => $grupo->id,
-                                'aula_id' => $aula->id,
-                                'dia' => strtoupper($dto->dia),
-                                'hora_inicio' => $dto->horaInicio,
-                                'hora_fin' => $dto->horaFin,
-                            ]
+                        $horario = Horario::withTrashed()->firstOrNew(
+                            ['id_horario_api' => $dto->idHorario]
                         );
+                        if ($horario->trashed()) {
+                            $horario->restore();
+                        }
+                        $horario->fill([
+                            'grupo_id' => $grupo->id,
+                            'aula_id' => $aula->id,
+                            'dia' => strtoupper($dto->dia),
+                            'hora_inicio' => $dto->horaInicio,
+                            'hora_fin' => $dto->horaFin,
+                        ]);
+                        $horario->save();
                         $horariosByGroup[$grupo->id][] = $horario->id;
                     } else {
                         // Fallback para APIs sin ID (vínculo por contenido)
-                        $horario = Horario::updateOrCreate(
-                            [
-                                'grupo_id' => $grupo->id,
-                                'dia' => strtoupper($dto->dia),
-                                'hora_inicio' => $dto->horaInicio,
-                            ],
-                            [
-                                'aula_id' => $aula->id,
-                                'hora_fin' => $dto->horaFin,
-                            ]
-                        );
+                        $horario = Horario::withTrashed()->firstOrNew([
+                            'grupo_id' => $grupo->id,
+                            'dia' => strtoupper($dto->dia),
+                            'hora_inicio' => $dto->horaInicio,
+                        ]);
+                        if ($horario->trashed()) {
+                            $horario->restore();
+                        }
+                        $horario->fill([
+                            'aula_id' => $aula->id,
+                            'hora_fin' => $dto->horaFin,
+                        ]);
+                        $horario->save();
                         $horariosByGroup[$grupo->id][] = $horario->id;
                     }
                     $stats['horarios']++;
