@@ -7,11 +7,11 @@ use App\Models\BancoPregunta;
 use App\Models\RolExamen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Facades\Validator;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Smalot\PdfParser\Parser as PdfParser;
 
@@ -40,9 +40,12 @@ class RolExamenController extends Controller
                                banco_preguntas.grupoTeorico = rol_examenes.grupo 
                                OR banco_preguntas.grupoTeorico LIKE CONCAT('%', rol_examenes.grupo, '%')
                                OR rol_examenes.grupo LIKE CONCAT('%', banco_preguntas.grupoTeorico, '%')
-                               OR banco_preguntas.grupo = rol_examenes.grupo
                                OR REPLACE(REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
                                   REPLACE(REPLACE(REPLACE(REPLACE(UPPER(banco_preguntas.grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '')
+                               OR (
+                                  (banco_preguntas.grupoTeorico IS NULL OR banco_preguntas.grupoTeorico = '')
+                                  AND banco_preguntas.grupo = rol_examenes.grupo
+                               )
                            )
                           ) as total_banco"),
                 DB::raw("(SELECT con_cartilla FROM banco_preguntas_configuraciones 
@@ -59,8 +62,8 @@ class RolExamenController extends Controller
             ->join('sedes', 'rol_examenes.sede_id', '=', 'sedes.id')
             ->join('asignaturas', function ($join) {
                 $join->on('rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
-                     ->where('asignaturas.estado', '!=', 'cancelado')
-                     ->whereRaw("(rol_examenes.sede_id != 1 OR (rol_examenes.sede_id = 1 AND asignaturas.plan_estudios = 'N'))");
+                    ->where('asignaturas.estado', '!=', 'cancelado')
+                    ->whereRaw("(rol_examenes.sede_id != 1 OR (rol_examenes.sede_id = 1 AND asignaturas.plan_estudios = 'N'))");
             })
             ->join('asignatura_carrera', function ($join) {
                 $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
@@ -73,9 +76,9 @@ class RolExamenController extends Controller
                     ->on('asignaturas.id', '=', 'grupos.asignatura_id')
                     ->where('grupos.estado', 'ACTIVO')
                     ->whereNull('grupos.deleted_at')
-                    ->where(function($q) {
+                    ->where(function ($q) {
                         $q->whereColumn('rol_examenes.grupo', '=', 'grupos.nombre')
-                          ->orWhereRaw("REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
+                            ->orWhereRaw("REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
                                         REPLACE(REPLACE(REPLACE(UPPER(grupos.nombre), 'GRUPO ', ''), 'G-', ''), 'G', '')");
                     });
             })
@@ -92,13 +95,17 @@ class RolExamenController extends Controller
             if ($user && isset($user->rol) && $user->rol->codigo === 'DIRECTOR_CARRERA') {
                 $carreraIds = [];
                 if ($user->director) {
-                    if ($user->director->carrera_id) $carreraIds[] = $user->director->carrera_id;
+                    if ($user->director->carrera_id) {
+                        $carreraIds[] = $user->director->carrera_id;
+                    }
                     // Incluir carreras de la relación legacy HasMany (carreras.director_id)
-                    if ($user->director->carreras) $carreraIds = array_merge($carreraIds, $user->director->carreras->pluck('id')->toArray());
+                    if ($user->director->carreras) {
+                        $carreraIds = array_merge($carreraIds, $user->director->carreras->pluck('id')->toArray());
+                    }
                     // Incluir carreras de la nueva relación muchos-a-muchos (tabla pivot)
                     $carreraIds = array_merge($carreraIds, $user->director->carreras()->pluck('carrera_id')->toArray());
                 }
-                if (!in_array($carreraId, array_unique($carreraIds))) {
+                if (! in_array($carreraId, array_unique($carreraIds))) {
                     return response()->json(['message' => 'No tiene permiso para ver esta carrera'], 403);
                 }
             }
@@ -165,7 +172,7 @@ class RolExamenController extends Controller
                     ? collect([$requestedSedeId])
                     : $campusRows->pluck('sede_id')->filter()->unique()->values();
 
-                if (!$requestedSedeId && $user->sede_id) {
+                if (! $requestedSedeId && $user->sede_id) {
                     $sedeIds = $sedeIds->push($user->sede_id)->unique()->values();
                 }
 
@@ -208,7 +215,7 @@ class RolExamenController extends Controller
 
         if ($request->has('estado')) {
             $estados = is_array($request->estado) ? $request->estado : explode(',', $request->estado);
-            if (!empty($estados) && $estados[0] !== 'Todos' && $estados[0] !== '') {
+            if (! empty($estados) && $estados[0] !== 'Todos' && $estados[0] !== '') {
                 $query->whereIn('rol_examenes.estado', $estados);
             }
         }
@@ -241,7 +248,7 @@ class RolExamenController extends Controller
             'meta' => [
                 'total' => $examenes->count(),
                 'gestion' => $request->gestion,
-            ]
+            ],
         ]);
     }
 
@@ -259,20 +266,31 @@ class RolExamenController extends Controller
             ->where(function ($q) use ($examen) {
                 $q->where('docente_id', $examen->docente_id);
 
-                if (!$examen->docente_id) {
+                if (! $examen->docente_id) {
                     $q->orWhereNull('docente_id');
                 }
             })
             ->where(function ($q) use ($grupo, $grupoNormalizado) {
                 $q->where('grupoTeorico', $grupo)
-                    ->orWhere('grupo', $grupo)
                     ->orWhere('grupoTeorico', 'LIKE', "%{$grupo}%")
-                    ->orWhere('grupo', 'LIKE', "%{$grupo}%")
                     ->orWhereRaw('? LIKE CONCAT("%", grupoTeorico, "%")', [$grupo])
                     ->orWhereRaw(
                         "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
                         [$grupoNormalizado]
-                    );
+                    )
+                    ->orWhere(function ($legacy) use ($grupo, $grupoNormalizado) {
+                        $legacy->where(function ($emptyGrupoTeorico) {
+                            $emptyGrupoTeorico->whereNull('grupoTeorico')
+                                ->orWhere('grupoTeorico', '');
+                        })->where(function ($legacyGrupo) use ($grupo, $grupoNormalizado) {
+                            $legacyGrupo->where('grupo', $grupo)
+                                ->orWhere('grupo', 'LIKE', "%{$grupo}%")
+                                ->orWhereRaw(
+                                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                                    [$grupoNormalizado]
+                                );
+                        });
+                    });
             });
 
         $stats = [
@@ -392,12 +410,12 @@ class RolExamenController extends Controller
      */
     public function getByMateria(Request $request, $materiaId)
     {
-        $gestion = $request->get('gestion', date('Y') . '-I');
+        $gestion = $request->get('gestion', date('Y').'-I');
 
         $user = auth()->user();
-        $query = RolExamen::where(function($q) use ($materiaId) {
+        $query = RolExamen::where(function ($q) use ($materiaId) {
             $q->where('materia_codigo', $materiaId)
-              ->orWhereRaw('UPPER(materia_codigo) = ?', [strtoupper($materiaId)]);
+                ->orWhereRaw('UPPER(materia_codigo) = ?', [strtoupper($materiaId)]);
         })->where('gestion', $gestion);
 
         // Restricción por Sede para Directores y Autoridades
@@ -413,7 +431,7 @@ class RolExamenController extends Controller
         // Filtro por docente_id (mostrar solo los exámenes asignados a los grupos del docente)
         if ($request->has('docente_id') && ($user && $user->rol && $user->rol->codigo === 'DOCENTE')) {
             $docenteId = $request->docente_id;
-            
+
             $gruposDocente = DB::table('grupos')
                 ->join('asignaturas', 'grupos.asignatura_id', '=', 'asignaturas.id')
                 ->where('grupos.docente_id', $docenteId)
@@ -421,22 +439,22 @@ class RolExamenController extends Controller
                 ->whereNull('grupos.deleted_at')
                 ->where(function ($q) use ($materiaId) {
                     $q->where('asignaturas.codigo', $materiaId)
-                      ->orWhereRaw('UPPER(asignaturas.codigo) = ?', [strtoupper($materiaId)]);
+                        ->orWhereRaw('UPPER(asignaturas.codigo) = ?', [strtoupper($materiaId)]);
                 })
                 ->pluck('grupos.nombre')
                 ->toArray();
 
-            $query->where(function($q) use ($gruposDocente) {
+            $query->where(function ($q) use ($gruposDocente) {
                 $q->whereIn('grupo', $gruposDocente)
-                  ->orWhereNull('grupo')
-                  ->orWhere('grupo', '');
+                    ->orWhereNull('grupo')
+                    ->orWhere('grupo', '');
             });
         }
 
         $examenes = $query->orderBy('semana')->get();
 
         return response()->json([
-            'data' => $examenes
+            'data' => $examenes,
         ]);
     }
 
@@ -454,7 +472,7 @@ class RolExamenController extends Controller
             return response()->json(['message' => 'Archivo inválido', 'errors' => $validator->errors()], 422);
         }
 
-        $gestion = $request->get('gestion', date('Y') . '-I');
+        $gestion = $request->get('gestion', date('Y').'-I');
         $carreraId = $request->get('carrera_id');
         $sedeId = $request->get('sede_id');
         $grupoTeorico = $request->get('grupoTeorico'); // Opcional, por si se quiere asignar a todo
@@ -469,7 +487,7 @@ class RolExamenController extends Controller
                     $sedeId = $user->sede_id;
                 }
                 Log::info("Subida de RolExamen: Usando sede_id ({$sedeId}) del Director autenticado: {$user->username}");
-            } elseif (!$sedeId) {
+            } elseif (! $sedeId) {
                 // Fallback si no viene en el request
                 if ($user->docente && $user->docente->sede_id) {
                     $sedeId = $user->docente->sede_id;
@@ -480,17 +498,17 @@ class RolExamenController extends Controller
             }
         }
 
-        if (!$sedeId) {
+        if (! $sedeId) {
             $sedeId = 1; // Default fallback final si nada funciona
-            Log::warning("Subida de RolExamen: No se pudo determinar sede_id, usando default 1.");
+            Log::warning('Subida de RolExamen: No se pudo determinar sede_id, usando default 1.');
         }
 
         try {
             $file = $request->file('file');
             $spreadsheet = IOFactory::load($file->getPathname());
-            
+
             $sheet = $spreadsheet->getSheetByName('ROL GENERAL');
-            if (!$sheet) {
+            if (! $sheet) {
                 $sheet = $spreadsheet->getActiveSheet();
             }
 
@@ -527,40 +545,43 @@ class RolExamenController extends Controller
 
                 // C: Código Materia (indice 2)
                 $codigo = trim($row[2] ?? '');
-                
+
                 // B: Asignatura (indice 1)
                 $nombreMateriaExcel = trim($row[1] ?? '');
-                
+
                 // E: Grupo (indice 4)
                 $grupo = trim($row[4] ?? '');
 
-                if (empty($codigo) || trim(strtoupper($codigo)) === '#REF!') continue;
+                if (empty($codigo) || trim(strtoupper($codigo)) === '#REF!') {
+                    continue;
+                }
 
                 // 1. Validar Materia
                 // Buscar la materia asegurando que pertenezca a la carrera seleccionada para obtener su nombre correcto
                 $asignaturaQuery = \App\Models\Asignatura::where('codigo', $codigo)
                     ->whereHas('carreras', function ($q) use ($carreraId, $sedeId) {
                         $q->where('asignatura_carrera.carrera_id', $carreraId)
-                          ->where('asignatura_carrera.sede_id', $sedeId);
+                            ->where('asignatura_carrera.sede_id', $sedeId);
                     });
-                
-                if ((int)$sedeId === 1) {
+
+                if ((int) $sedeId === 1) {
                     $asignaturaQuery->where('plan_estudios', 'N');
                 }
-                
+
                 $asignatura = $asignaturaQuery->first();
-                
+
                 // Fallback por si no está vinculada pero existe
-                if (!$asignatura) {
+                if (! $asignatura) {
                     $fallbackQuery = \App\Models\Asignatura::where('codigo', $codigo);
-                    if ((int)$sedeId === 1) {
+                    if ((int) $sedeId === 1) {
                         $fallbackQuery->where('plan_estudios', 'N');
                     }
                     $asignatura = $fallbackQuery->first();
                 }
 
-                if (!$asignatura) {
+                if (! $asignatura) {
                     $errors[] = "Fila {$rowNumber}: No se encontró la materia con código '{$codigo}'";
+
                     continue;
                 }
 
@@ -568,23 +589,27 @@ class RolExamenController extends Controller
                 $bloques = [
                     ['1er Parcial', 6, 7],   // G, H
                     ['2do Parcial', 8, 9],   // I, J
-                    ['Final', 10, 11]        // K, L
+                    ['Final', 10, 11],        // K, L
                 ];
 
                 foreach ($bloques as $bloque) {
                     [$tipo, $fechaIdx, $horaIdx] = $bloque;
-                    
+
                     $fechaRaw = $row[$fechaIdx] ?? '';
                     $horaRaw = $row[$horaIdx] ?? '';
 
-                    if (empty($fechaRaw) || $fechaRaw === 'A') continue;
+                    if (empty($fechaRaw) || $fechaRaw === 'A') {
+                        continue;
+                    }
 
                     try {
                         $fecha = $this->parseDate($fechaRaw, $gestionAño);
                         $horaInicio = $this->parseTime($horaRaw);
-                        $horaFin = date('H:i', strtotime($horaInicio . ' +90 minutes'));
+                        $horaFin = date('H:i', strtotime($horaInicio.' +90 minutes'));
 
-                        if (!$fecha) continue;
+                        if (! $fecha) {
+                            continue;
+                        }
 
                         // Automatización de semana por defecto
                         $semanasDefault = [
@@ -598,8 +623,9 @@ class RolExamenController extends Controller
                         // Validar reglas
                         $validation = $this->validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipo);
 
-                        if (!empty($validation['errors'])) {
-                            $errors[] = "Fila {$rowNumber} - Materia {$codigo} ({$tipo}): " . implode(', ', $validation['errors']);
+                        if (! empty($validation['errors'])) {
+                            $errors[] = "Fila {$rowNumber} - Materia {$codigo} ({$tipo}): ".implode(', ', $validation['errors']);
+
                             continue;
                         }
 
@@ -616,8 +642,8 @@ class RolExamenController extends Controller
                             }
                         }
 
-                        if (!empty($conflictos)) {
-                            $warnings[] = "Fila {$rowNumber} - Materia {$codigo} ({$tipo}): " . implode(', ', $conflictos);
+                        if (! empty($conflictos)) {
+                            $warnings[] = "Fila {$rowNumber} - Materia {$codigo} ({$tipo}): ".implode(', ', $conflictos);
                         }
 
                         // Crear o actualizar
@@ -632,20 +658,20 @@ class RolExamenController extends Controller
                             ],
                             [
                                 'grupoTeorico' => $grupoTeorico ?: $grupo,
-                                'materia_nombre' => !empty($nombreMateriaExcel) ? $nombreMateriaExcel : $asignatura->nombre,
+                                'materia_nombre' => ! empty($nombreMateriaExcel) ? $nombreMateriaExcel : $asignatura->nombre,
                                 'semana' => $semana,
                                 'fecha' => $fecha,
                                 'hora_inicio' => $horaInicio,
                                 'hora_fin' => $horaFin,
                                 'created_by' => auth()->id(),
-                                'conflictos' => !empty($conflictosData) ? $conflictosData : null,
+                                'conflictos' => ! empty($conflictosData) ? $conflictosData : null,
                             ]
                         );
 
                         $imported++;
 
                     } catch (\Exception $e) {
-                        $errors[] = "Fila {$rowNumber} ({$tipo}): " . $e->getMessage();
+                        $errors[] = "Fila {$rowNumber} ({$tipo}): ".$e->getMessage();
                     }
                 }
             }
@@ -660,8 +686,9 @@ class RolExamenController extends Controller
             ]);
         } catch (\Exception $e) {
             DB::rollBack();
+
             return response()->json([
-                'message' => 'Error crítico procesando archivo: ' . $e->getMessage()
+                'message' => 'Error crítico procesando archivo: '.$e->getMessage(),
             ], 500);
         }
     }
@@ -692,7 +719,7 @@ class RolExamenController extends Controller
                 ->whereHas('carreras', function ($q) use ($carreraId) {
                     $q->where('asignatura_carrera.carrera_id', $carreraId);
                 })->first() ?? \App\Models\Asignatura::where('codigo', $codigo)->first();
-                
+
             if ($asignatura) {
                 // Buscar grupo por nombre vinculado a la asignatura
                 // VALIDACION: Solo buscar en grupos TEORICOS (numerales)
@@ -729,7 +756,7 @@ class RolExamenController extends Controller
                         'sábado' => 6,
                         'sab' => 6,
                         'domingo' => 7,
-                        'dom' => 7
+                        'dom' => 7,
                     ];
 
                     $diasClase = [];
@@ -739,11 +766,11 @@ class RolExamenController extends Controller
                         if (isset($dayMap[$key])) {
                             $diasClase[] = $dayMap[$key];
                         } elseif (is_numeric($dia)) {
-                            $diasClase[] = (int)$dia;
+                            $diasClase[] = (int) $dia;
                         }
                     }
 
-                    if (!empty($diasClase) && !in_array($diaExamen, $diasClase)) {
+                    if (! empty($diasClase) && ! in_array($diaExamen, $diasClase)) {
                         $nombresDias = [1 => 'Lunes', 2 => 'Martes', 3 => 'Miércoles', 4 => 'Jueves', 5 => 'Viernes', 6 => 'Sábado', 7 => 'Domingo'];
                         $diaNombre = $nombresDias[$diaExamen] ?? $diaExamen;
                         $result['warnings'][] = "El examen es el {$diaNombre}, pero el grupo no tiene horario teórico ese día.";
@@ -758,7 +785,7 @@ class RolExamenController extends Controller
                 ->whereHas('carreras', function ($q) use ($carreraId) {
                     $q->where('asignatura_carrera.carrera_id', $carreraId);
                 })->first() ?? \App\Models\Asignatura::where('codigo', $codigo)->first();
-                
+
             if ($asignatura) {
                 // Obtener semestre via pivot table
                 $pivot = \Illuminate\Support\Facades\DB::table('asignatura_carrera')
@@ -782,6 +809,7 @@ class RolExamenController extends Controller
 
                     if ($collision) {
                         $result['error'] = "Ya existe otro examen programado para el semestre {$semestre} en la fecha {$fecha}. (Restricción: Máx 1 examen por día para el mismo semestre)";
+
                         return $result;
                     }
                 }
@@ -822,7 +850,7 @@ class RolExamenController extends Controller
                 } else {
                     $data['sede_id'] = $user->sede_id;
                 }
-            } elseif (!isset($data['sede_id'])) {
+            } elseif (! isset($data['sede_id'])) {
                 $data['sede_id'] = $user->sede_id ?: 1;
             }
         }
@@ -862,7 +890,7 @@ class RolExamenController extends Controller
         $data = $request->all();
         if (isset($data['estado']) && $data['estado'] === 'programados') {
             // 1. Limpiar Archivos Físicos del Storage
-            if (!empty($examen->variantes)) {
+            if (! empty($examen->variantes)) {
                 foreach ($examen->variantes as $v) {
                     if (is_array($v)) {
                         $this->deleteManagedFile($v['path'] ?? null, $v['archivo'] ?? null, 'examenes');
@@ -871,7 +899,7 @@ class RolExamenController extends Controller
                     }
                 }
             }
-            if (!empty($examen->patrones)) {
+            if (! empty($examen->patrones)) {
                 foreach ($examen->patrones as $p) {
                     if (is_array($p)) {
                         $this->deleteManagedFile($p['pdf_path'] ?? null, $p['pdf'] ?? null, 'patrones');
@@ -899,13 +927,13 @@ class RolExamenController extends Controller
 
         if ($examen->estado !== 'programados') {
             return response()->json([
-                'message' => 'Solo se puede iniciar la generación desde el estado PROGRAMADO.'
+                'message' => 'Solo se puede iniciar la generación desde el estado PROGRAMADO.',
             ], 422);
         }
 
         if ($examen->tipo_examen !== '2do Parcial') {
             return response()->json([
-                'message' => 'La generación asincrónica consolidada está habilitada solo para 2do Parcial.'
+                'message' => 'La generación asincrónica consolidada está habilitada solo para 2do Parcial.',
             ], 422);
         }
 
@@ -959,24 +987,24 @@ class RolExamenController extends Controller
     public function uploadExamen(Request $request, $id)
     {
         $examen = RolExamen::findOrFail($id);
-        
+
         $request->validate([
             'archivo' => 'required|file|mimes:pdf|max:5120',
             'variante' => 'required|string',
-            'filename' => 'required|string'
+            'filename' => 'required|string',
         ]);
 
         $file = $request->file('archivo');
         $filename = $request->filename;
-        
+
         $path = $file->storeAs('examenes', $filename, 'public');
 
         // Actualizar la columna 'variantes' (JSON)
         $variantes = $examen->variantes ?? [];
-        
+
         // Si antes era un array de strings, normalizar a objetos
         if (count($variantes) > 0 && is_string($variantes[0])) {
-             $variantes = array_map(fn($v) => ['letra' => $v, 'archivo' => null], $variantes);
+            $variantes = array_map(fn ($v) => ['letra' => $v, 'archivo' => null], $variantes);
         }
 
         $letra = $request->variante;
@@ -987,8 +1015,8 @@ class RolExamenController extends Controller
                 $found = true;
             }
         }
-        
-        if (!$found) {
+
+        if (! $found) {
             $variantes[] = ['letra' => $letra, 'archivo' => $filename];
         }
 
@@ -1005,8 +1033,8 @@ class RolExamenController extends Controller
 
         return response()->json([
             'success' => true,
-            'url' => asset('storage/' . $path),
-            'examen' => $examen
+            'url' => asset('storage/'.$path),
+            'examen' => $examen,
         ]);
     }
 
@@ -1024,25 +1052,25 @@ class RolExamenController extends Controller
                 return response()->json(['message' => 'No tiene permiso para subir archivos a este examen de otra sede'], 403);
             }
         }
-        
+
         $request->validate([
             'archivo' => 'required|file|max:5120',
             'variante' => 'required|string',
             'tipo' => 'required|in:pdf,xlsx',
-            'filename' => 'required|string'
+            'filename' => 'required|string',
         ]);
 
         $file = $request->file('archivo');
         $filename = $request->filename;
-        
+
         $path = $file->storeAs('patrones', $filename, 'public');
 
         // Actualizar la columna 'patrones' (JSON)
         $patrones = $examen->patrones ?? [];
-        
+
         // Si antes era un array de strings, normalizar a objetos
         if (count($patrones) > 0 && is_string($patrones[0])) {
-             $patrones = array_map(fn($p) => ['letra' => $p, 'pdf' => null, 'xlsx' => null], $patrones);
+            $patrones = array_map(fn ($p) => ['letra' => $p, 'pdf' => null, 'xlsx' => null], $patrones);
         }
 
         $letra = $request->variante;
@@ -1054,12 +1082,12 @@ class RolExamenController extends Controller
                 $found = true;
             }
         }
-        
-        if (!$found) {
+
+        if (! $found) {
             $patrones[] = [
-                'letra' => $letra, 
+                'letra' => $letra,
                 'pdf' => ($tipo === 'pdf' ? $filename : null),
-                'xlsx' => ($tipo === 'xlsx' ? $filename : null)
+                'xlsx' => ($tipo === 'xlsx' ? $filename : null),
             ];
         }
 
@@ -1068,8 +1096,8 @@ class RolExamenController extends Controller
 
         return response()->json([
             'success' => true,
-            'url' => asset('storage/' . $path),
-            'examen' => $examen
+            'url' => asset('storage/'.$path),
+            'examen' => $examen,
         ]);
     }
 
@@ -1079,7 +1107,7 @@ class RolExamenController extends Controller
     public function destroy($id)
     {
         $examen = RolExamen::findOrFail($id);
-        
+
         $user = auth()->user();
         if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
             $sedeId = $user->director?->sede_id ?? $user->sede_id;
@@ -1090,7 +1118,7 @@ class RolExamenController extends Controller
 
         $examen->delete();
 
-return response()->json(['message' => 'Examen eliminado']);
+        return response()->json(['message' => 'Examen eliminado']);
     }
 
     public function downloadExamen($id, Request $request)
@@ -1098,7 +1126,7 @@ return response()->json(['message' => 'Examen eliminado']);
         $examen = RolExamen::findOrFail($id);
         $filename = $request->query('file');
 
-        if (!$filename) {
+        if (! $filename) {
             return response()->json(['message' => 'Archivo no especificado'], 422);
         }
 
@@ -1106,7 +1134,7 @@ return response()->json(['message' => 'Examen eliminado']);
             return is_array($item) && ($item['archivo'] ?? null) === $filename;
         });
 
-        if (!$variant) {
+        if (! $variant) {
             return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
         }
 
@@ -1118,13 +1146,13 @@ return response()->json(['message' => 'Examen eliminado']);
         $examen = RolExamen::findOrFail($id);
         $filename = $request->query('file');
 
-        if (!$filename) {
+        if (! $filename) {
             return response()->json(['message' => 'Archivo no especificado'], 422);
         }
 
         $variant = $this->findRegisteredVariant($examen, $filename);
 
-        if (!$variant) {
+        if (! $variant) {
             return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
         }
 
@@ -1142,7 +1170,7 @@ return response()->json(['message' => 'Examen eliminado']);
         $examen = RolExamen::findOrFail($id);
         $variant = $this->findRegisteredVariant($examen, $filename);
 
-        if (!$variant) {
+        if (! $variant) {
             return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
         }
 
@@ -1160,7 +1188,7 @@ return response()->json(['message' => 'Examen eliminado']);
         $filename = $request->query('file');
         $tipo = $request->query('tipo');
 
-        if (!$filename || !in_array($tipo, ['pdf', 'xlsx'], true)) {
+        if (! $filename || ! in_array($tipo, ['pdf', 'xlsx'], true)) {
             return response()->json(['message' => 'Parámetros inválidos'], 422);
         }
 
@@ -1168,7 +1196,7 @@ return response()->json(['message' => 'Examen eliminado']);
             return is_array($item) && ($item[$tipo] ?? null) === $filename;
         });
 
-        if (!$pattern) {
+        if (! $pattern) {
             return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
         }
 
@@ -1185,13 +1213,13 @@ return response()->json(['message' => 'Examen eliminado']);
         $filename = $request->query('file');
         $tipo = $request->query('tipo');
 
-        if (!$filename || !in_array($tipo, ['pdf', 'xlsx'], true)) {
+        if (! $filename || ! in_array($tipo, ['pdf', 'xlsx'], true)) {
             return response()->json(['message' => 'Parámetros inválidos'], 422);
         }
 
         $pattern = $this->findRegisteredPattern($examen, $filename, $tipo);
 
-        if (!$pattern) {
+        if (! $pattern) {
             return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
         }
 
@@ -1208,13 +1236,13 @@ return response()->json(['message' => 'Examen eliminado']);
     {
         $examen = RolExamen::findOrFail($id);
 
-        if (!in_array($tipo, ['pdf', 'xlsx'], true)) {
+        if (! in_array($tipo, ['pdf', 'xlsx'], true)) {
             return response()->json(['message' => 'Parámetros inválidos'], 422);
         }
 
         $pattern = $this->findRegisteredPattern($examen, $filename, $tipo);
 
-        if (!$pattern) {
+        if (! $pattern) {
             return response()->json(['message' => 'Archivo no registrado para este examen'], 404);
         }
 
@@ -1253,7 +1281,7 @@ return response()->json(['message' => 'Examen eliminado']);
             'subidos',
         ];
 
-        if (!in_array(strtolower(trim((string) $examen->estado)), $allowedStatuses, true)) {
+        if (! in_array(strtolower(trim((string) $examen->estado)), $allowedStatuses, true)) {
             return response()->json([
                 'message' => 'El verificador de patrones solo est\u00e1 disponible desde la etapa Generado en adelante.',
             ], 422);
@@ -1325,7 +1353,7 @@ return response()->json(['message' => 'Examen eliminado']);
     {
         $absolutePath = $this->resolveManagedAbsolutePath($managedPath, $filename, $publicDir);
 
-        if (!$absolutePath) {
+        if (! $absolutePath) {
             return response()->json(['message' => 'Archivo no encontrado'], 404);
         }
 
@@ -1376,7 +1404,7 @@ return response()->json(['message' => 'Examen eliminado']);
     {
         $user = auth()->user();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['message' => 'No autenticado'], 401);
         }
 
@@ -1406,7 +1434,7 @@ return response()->json(['message' => 'Examen eliminado']);
             }
 
             $allowedCareerIds = array_values(array_unique(array_filter($allowedCareerIds)));
-            if (!empty($allowedCareerIds) && !in_array((int) $examen->carrera_id, $allowedCareerIds, true)) {
+            if (! empty($allowedCareerIds) && ! in_array((int) $examen->carrera_id, $allowedCareerIds, true)) {
                 return response()->json(['message' => 'No tiene permiso para acceder a este examen'], 403);
             }
         }
@@ -1417,14 +1445,14 @@ return response()->json(['message' => 'Examen eliminado']);
     private function deleteManagedFile(?string $managedPath, ?string $filename, string $publicDir): void
     {
         if ($managedPath) {
-            $absolutePath = storage_path('app/' . ltrim($managedPath, '/'));
+            $absolutePath = storage_path('app/'.ltrim($managedPath, '/'));
             if (is_file($absolutePath)) {
                 @unlink($absolutePath);
             }
         }
 
         if ($filename) {
-            Storage::disk('public')->delete($publicDir . '/' . $filename);
+            Storage::disk('public')->delete($publicDir.'/'.$filename);
         }
     }
 
@@ -1470,7 +1498,7 @@ return response()->json(['message' => 'Examen eliminado']);
                     $patternAnswer
                 );
 
-                if (!$patternAnswer && !$pdfBlock) {
+                if (! $patternAnswer && ! $pdfBlock) {
                     return [
                         'number' => $number,
                         'answer' => '',
@@ -1481,12 +1509,13 @@ return response()->json(['message' => 'Examen eliminado']);
                     ];
                 }
 
-                if (!$patternAnswer) {
+                if (! $patternAnswer) {
                     $summary['without_pattern']++;
                 }
 
-                if (!$pdfBlock) {
+                if (! $pdfBlock) {
                     $summary['unmatched']++;
+
                     return [
                         'number' => $number,
                         'answer' => $patternAnswer,
@@ -1499,8 +1528,9 @@ return response()->json(['message' => 'Examen eliminado']);
 
                 $match = $this->findBestBankQuestionMatch($pdfBlock, $bankQuestions, $usedQuestionIds);
 
-                if (!$match) {
+                if (! $match) {
                     $summary['unmatched']++;
+
                     return [
                         'number' => $number,
                         'answer' => $patternAnswer,
@@ -1564,7 +1594,7 @@ return response()->json(['message' => 'Examen eliminado']);
 
     private function extractPdfText(string $pdfPath): string
     {
-        $parser = new PdfParser();
+        $parser = new PdfParser;
         $pdf = $parser->parseFile($pdfPath);
 
         return preg_replace('/[ \t]+/', ' ', str_replace("\r", "\n", $pdf->getText())) ?? '';
@@ -1597,6 +1627,7 @@ return response()->json(['message' => 'Examen eliminado']);
                 if ($letter !== '') {
                     $currentLetter = $letter;
                     $segments[$currentLetter] = [];
+
                     continue;
                 }
             }
@@ -1612,7 +1643,7 @@ return response()->json(['message' => 'Examen eliminado']);
 
         return collect($segments)
             ->map(fn ($segmentLines) => $this->parseQuestionBlocks($segmentLines))
-            ->filter(fn ($questions) => !empty($questions))
+            ->filter(fn ($questions) => ! empty($questions))
             ->all();
     }
 
@@ -1642,13 +1673,14 @@ return response()->json(['message' => 'Examen eliminado']);
                 $rest = trim($match[2] ?? '');
 
                 if ($this->isPrimaryPdfQuestionLine($number, $expectedNumber, $rest, $section)) {
-                    if ($currentNumber !== null && !empty($currentLines)) {
+                    if ($currentNumber !== null && ! empty($currentLines)) {
                         $questions[$currentNumber] = trim(implode(' ', $currentLines));
                     }
 
                     $currentNumber = $number;
                     $currentLines = [$rest];
                     $expectedNumber = $number + 1;
+
                     continue;
                 }
             }
@@ -1658,7 +1690,7 @@ return response()->json(['message' => 'Examen eliminado']);
             }
         }
 
-        if ($currentNumber !== null && !empty($currentLines)) {
+        if ($currentNumber !== null && ! empty($currentLines)) {
             $questions[$currentNumber] = trim(implode(' ', $currentLines));
         }
 
@@ -1750,13 +1782,18 @@ return response()->json(['message' => 'Examen eliminado']);
                 $query->whereRaw(
                     "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
                     [$normalizedGroup]
-                )->orWhereRaw(
-                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
-                    [$normalizedGroup]
-                );
+                )->orWhere(function ($legacy) use ($normalizedGroup) {
+                    $legacy->where(function ($emptyGrupoTeorico) {
+                        $emptyGrupoTeorico->whereNull('grupoTeorico')
+                            ->orWhere('grupoTeorico', '');
+                    })->whereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$normalizedGroup]
+                    );
+                });
             })
             ->get()
-            ->filter(fn (BancoPregunta $question) => !$this->isMacroPatternHeader($question->tipo))
+            ->filter(fn (BancoPregunta $question) => ! $this->isMacroPatternHeader($question->tipo))
             ->values();
     }
 
@@ -1781,7 +1818,7 @@ return response()->json(['message' => 'Examen eliminado']);
                 $percent = max($percent, 92);
             }
 
-            if (!$best || $percent > $best['score']) {
+            if (! $best || $percent > $best['score']) {
                 $best = ['question' => $question, 'score' => round($percent, 2)];
             }
         }
@@ -1797,7 +1834,7 @@ return response()->json(['message' => 'Examen eliminado']);
             $visibleOptions = $this->extractVisibleOptionsFromPdfBlock($pdfBlock);
             $correctOptionText = $this->resolveCorrectOptionText($question);
 
-            if ($correctOptionText !== '' && !empty($visibleOptions)) {
+            if ($correctOptionText !== '' && ! empty($visibleOptions)) {
                 $correctComparable = $this->normalizeComparableText($correctOptionText);
                 $bestLetter = '';
                 $bestScore = 0;
@@ -1869,14 +1906,14 @@ return response()->json(['message' => 'Examen eliminado']);
             'dificultad' => $question->dificultad,
             'grupo' => $question->grupoTeorico ?: $question->grupo,
             'pdf_text' => $pdfBlock,
-            'imagen_url' => !empty($question->imagen) ? asset('storage/preguntas/' . $question->imagen) : null,
+            'imagen_url' => ! empty($question->imagen) ? asset('storage/preguntas/'.$question->imagen) : null,
             'source' => 'banco',
         ];
     }
 
     private function formatStoredVerifierQuestion($question, int $number, string $patternAnswer = ''): ?array
     {
-        if (!is_array($question)) {
+        if (! is_array($question)) {
             return null;
         }
 
@@ -1982,6 +2019,7 @@ return response()->json(['message' => 'Examen eliminado']);
     private function normalizeVerifierGroup(?string $value): string
     {
         $value = strtoupper(trim((string) $value));
+
         return str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $value);
     }
 
@@ -2008,9 +2046,9 @@ return response()->json(['message' => 'Examen eliminado']);
         $config = $examen->config_generacion ?? [];
         $auditVariants = $config['pattern_audit'] ?? $config['audit'] ?? null;
 
-        if (is_array($auditVariants) && !empty($auditVariants)) {
+        if (is_array($auditVariants) && ! empty($auditVariants)) {
             return collect($auditVariants)
-                ->filter(fn ($item) => is_array($item) && !empty($item['letra']))
+                ->filter(fn ($item) => is_array($item) && ! empty($item['letra']))
                 ->map(function ($item) {
                     $answers = collect($item['patron_respuestas'] ?? [])
                         ->map(fn ($value) => is_scalar($value) ? (string) $value : '')
@@ -2039,10 +2077,10 @@ return response()->json(['message' => 'Examen eliminado']);
     private function resolvePatternVariantsFromXlsx(RolExamen $examen): array
     {
         $patternEntry = collect($examen->patrones ?? [])->first(function ($item) {
-            return is_array($item) && (!empty($item['xlsx_path']) || !empty($item['xlsx']));
+            return is_array($item) && (! empty($item['xlsx_path']) || ! empty($item['xlsx']));
         });
 
-        if (!$patternEntry) {
+        if (! $patternEntry) {
             return [];
         }
 
@@ -2052,7 +2090,7 @@ return response()->json(['message' => 'Examen eliminado']);
             'patrones'
         );
 
-        if (!$xlsxPath || !is_file($xlsxPath)) {
+        if (! $xlsxPath || ! is_file($xlsxPath)) {
             return [];
         }
 
@@ -2065,7 +2103,7 @@ return response()->json(['message' => 'Examen eliminado']);
         }
 
         return collect(array_slice($rows, 1))
-            ->filter(fn ($row) => !empty($row[1]))
+            ->filter(fn ($row) => ! empty($row[1]))
             ->map(function ($row) {
                 $answers = collect(array_slice($row, 3, 100))
                     ->map(fn ($value) => trim((string) $value))
@@ -2089,14 +2127,14 @@ return response()->json(['message' => 'Examen eliminado']);
     private function resolveManagedAbsolutePath(?string $managedPath, ?string $filename, string $publicDir): ?string
     {
         if ($managedPath) {
-            $absolutePath = storage_path('app/' . ltrim($managedPath, '/'));
+            $absolutePath = storage_path('app/'.ltrim($managedPath, '/'));
             if (is_file($absolutePath)) {
                 return $absolutePath;
             }
         }
 
         if ($filename) {
-            $publicPath = storage_path('app/public/' . trim($publicDir, '/') . '/' . $filename);
+            $publicPath = storage_path('app/public/'.trim($publicDir, '/').'/'.$filename);
             if (is_file($publicPath)) {
                 return $publicPath;
             }
@@ -2108,7 +2146,7 @@ return response()->json(['message' => 'Examen eliminado']);
     private function buildVariantQuestionDetails(array $auditVariant, array $answers): array
     {
         $auditQuestions = collect($auditVariant['preguntas'] ?? [])
-            ->filter(fn ($item) => is_array($item) && !$this->isMacroPatternHeader($item['tipo'] ?? null))
+            ->filter(fn ($item) => is_array($item) && ! $this->isMacroPatternHeader($item['tipo'] ?? null))
             ->values();
 
         if ($auditQuestions->isEmpty()) {
@@ -2117,7 +2155,7 @@ return response()->json(['message' => 'Examen eliminado']);
 
         $questionIds = $auditQuestions
             ->pluck('id')
-            ->filter(fn ($id) => !empty($id))
+            ->filter(fn ($id) => ! empty($id))
             ->map(fn ($id) => (int) $id)
             ->unique()
             ->values();
@@ -2130,7 +2168,7 @@ return response()->json(['message' => 'Examen eliminado']);
         return $auditQuestions
             ->take(100)
             ->map(function ($question, $index) use ($bankQuestions, $answers) {
-                $bankQuestion = !empty($question['id']) ? $bankQuestions->get((int) $question['id']) : null;
+                $bankQuestion = ! empty($question['id']) ? $bankQuestions->get((int) $question['id']) : null;
                 $resolved = $bankQuestion ?: null;
 
                 return [
@@ -2145,8 +2183,8 @@ return response()->json(['message' => 'Examen eliminado']);
                     ),
                     'dificultad' => $resolved?->dificultad ?? ($question['dificultad'] ?? ''),
                     'grupo' => $resolved?->grupoTeorico ?: $resolved?->grupo ?: ($question['grupo'] ?? ''),
-                    'imagen_url' => !empty($resolved?->imagen)
-                        ? asset('storage/preguntas/' . $resolved->imagen)
+                    'imagen_url' => ! empty($resolved?->imagen)
+                        ? asset('storage/preguntas/'.$resolved->imagen)
                         : null,
                     'source' => $resolved ? 'banco' : 'audit',
                 ];
@@ -2227,12 +2265,12 @@ return response()->json(['message' => 'Examen eliminado']);
      */
     public function template()
     {
-        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
 
         // 1. Set Headers
         $headers = ['Código Materia', 'Tipo Examen', 'Grupo (Teórico)', 'Fecha', 'Hora Inicio'];
-        $sheet->fromArray($headers, NULL, 'A1');
+        $sheet->fromArray($headers, null, 'A1');
 
         // 2. Add Formatting
         $headerStyle = [
@@ -2256,7 +2294,7 @@ return response()->json(['message' => 'Examen eliminado']);
 
         $row = 2;
         foreach ($samples as $sample) {
-            $sheet->fromArray($sample, NULL, 'A' . $row);
+            $sheet->fromArray($sample, null, 'A'.$row);
             $row++;
         }
 
@@ -2280,7 +2318,9 @@ return response()->json(['message' => 'Examen eliminado']);
 
     private function parseDate($value, $añoDefault = 2025)
     {
-        if (empty($value)) return null;
+        if (empty($value)) {
+            return null;
+        }
 
         // Si es número (Excel date serial)
         if (is_numeric($value)) {
@@ -2290,31 +2330,32 @@ return response()->json(['message' => 'Examen eliminado']);
         // Si es string, limpiar y normalizar
         try {
             $value = strtolower(trim($value));
-            
+
             // Eliminar conectores comunes en español
             $value = str_replace([' de ', ' del '], ' ', $value);
-            
+
             // Mapeo extendido de meses (incluyendo variaciones)
             $meses = [
                 'ene' => 'Jan', 'feb' => 'Feb', 'mar' => 'Mar',
                 'abr' => 'Apr', 'may' => 'May', 'jun' => 'Jun',
                 'jul' => 'Jul', 'ago' => 'Aug', 'sep' => 'Sep', 'set' => 'Sep',
-                'oct' => 'Oct', 'nov' => 'Nov', 'dic' => 'Dec'
+                'oct' => 'Oct', 'nov' => 'Nov', 'dic' => 'Dec',
             ];
-            
+
             foreach ($meses as $es => $en) {
                 if (str_contains($value, $es)) {
                     $value = str_replace($es, $en, $value);
-                    break; 
+                    break;
                 }
             }
-            
+
             // Asegurar año si no está presente
-            if (!preg_match('/\d{4}/', $value)) {
-                $value .= ' ' . $añoDefault;
+            if (! preg_match('/\d{4}/', $value)) {
+                $value .= ' '.$añoDefault;
             }
 
             $timestamp = strtotime($value);
+
             return $timestamp ? date('Y-m-d', $timestamp) : null;
         } catch (\Exception $e) {
             return null;
@@ -2323,12 +2364,15 @@ return response()->json(['message' => 'Examen eliminado']);
 
     private function parseTime($value)
     {
-        if (empty($value)) return '00:00';
+        if (empty($value)) {
+            return '00:00';
+        }
 
         // Si es número decimal (Excel time)
         if (is_numeric($value) && $value < 1) {
             $hours = floor($value * 24);
             $minutes = round(($value * 24 - $hours) * 60);
+
             return sprintf('%02d:%02d', $hours, $minutes);
         }
 
