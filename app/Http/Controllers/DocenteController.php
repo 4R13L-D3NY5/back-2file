@@ -380,7 +380,15 @@ class DocenteController extends Controller
         $query = Docente::query()->select('id', 'nombre_completo', 'sede_id');
 
         if ($request->filled('sede_id')) {
-            $query->where('sede_id', $request->sede_id);
+            $sedeId = $request->sede_id;
+            // Mostrar docentes cuya sede principal sea la indicada
+            // O que tengan grupos asignados en esa sede
+            $query->where(function ($q) use ($sedeId) {
+                $q->where('sede_id', $sedeId)
+                  ->orWhereHas('grupos', function ($sub) use ($sedeId) {
+                      $sub->where('sede_id', $sedeId);
+                  });
+            });
         }
 
         if ($request->filled('q')) {
