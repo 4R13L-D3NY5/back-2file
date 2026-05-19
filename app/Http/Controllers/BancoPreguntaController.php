@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use App\Models\BancoPregunta;
 use App\Models\BancoPreguntaConfiguracion;
 use App\Models\Docente;
+use App\Models\Asignatura;
+use App\Models\RolExamen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -180,6 +182,9 @@ class BancoPreguntaController extends Controller
         if ($request->filled('grupo') && $request->filled('parcial')) {
             $configuracion = BancoPreguntaConfiguracion::query()
                 ->where('asignatura_id', $request->asignatura_id)
+                ->when($request->filled('sede_id'), function ($query) use ($request) {
+                    $query->where('sede_id', $request->sede_id);
+                })
                 ->where('grupo_teorico', $request->grupo)
                 ->where('parcial', $this->normalizarTipoExamen($request->parcial))
                 ->first();
@@ -381,7 +386,7 @@ class BancoPreguntaController extends Controller
         $logroId = $request->input('logro_esperado_id');
         $sedeId = $request->input('sede_id');
         $grupoTeorico = $request->input('grupoTeorico');
-        $conCartilla = $request->boolean('con_cartilla', true);
+        $conCartilla = true;
         $parcialSolicitado = $request->input('parcial');
         $parcialSolicitadoNormalizado = $parcialSolicitado
             ? $this->normalizarTipoExamen($parcialSolicitado)
@@ -396,6 +401,10 @@ class BancoPreguntaController extends Controller
                 $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
                     ->where('docente_id', $docenteId);
 
+                if ($sedeId) {
+                    $queryDelete->where('sede_id', $sedeId);
+                }
+
                 if ($grupoTeorico) {
                     $queryDelete->where('grupoTeorico', $grupoTeorico);
                 }
@@ -406,6 +415,7 @@ class BancoPreguntaController extends Controller
 
                 Log::info('Vaciando banco de preguntas filtrado', [
                     'asignatura' => $asignaturaId,
+                    'sede_id' => $sedeId,
                     'docente' => $docenteId,
                     'grupo' => $grupoTeorico,
                     'parcial' => $request->parcial,
@@ -651,8 +661,6 @@ class BancoPreguntaController extends Controller
                 }
             }
 
-            $this->updateOrCreateConfig($asignaturaId, $grupoTeorico, $request->parcial, $conCartilla);
-
             return response()->json([
                 'success' => true,
                 'message' => "Se han importado {$evaluables} preguntas nuevas correctamente.",
@@ -779,26 +787,37 @@ class BancoPreguntaController extends Controller
     {
         $request->validate([
             'asignatura_id' => 'required|exists:asignaturas,id',
+            'sede_id' => 'required|exists:sedes,id',
             'docente_id' => 'nullable|exists:docentes,id',
             'grupo_teorico' => 'required|string',
             'parcial' => 'required|string',
             'con_cartilla' => 'required|boolean',
         ]);
 
-        $asignaturaId = $request->asignatura_id;
-        $docenteId = $request->docente_id;
+        $asignaturaId = (int) $request->asignatura_id;
+        $sedeId = (int) $request->sede_id;
+        $docenteId = $request->docente_id ? (int) $request->docente_id : null;
         $grupoTeorico = $request->grupo_teorico;
         $parcial = $request->parcial;
-        $conCartilla = $request->con_cartilla;
+        $conCartilla = $request->boolean('con_cartilla');
+
+        $this->assertCanManageCartillaConfig($asignaturaId, $sedeId, $grupoTeorico, $parcial);
 
         // Si es Sin Cartilla (false), procedemos a limpiar el banco de preguntas para este grupo/parcial
         if (! $conCartilla) {
-            $queryDelete = $this->buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial, $docenteId);
+            $queryDelete = $this->buildBancoDeleteQuery(
+                $asignaturaId,
+                $sedeId,
+                $grupoTeorico,
+                $parcial,
+                $docenteId
+            );
 
             $deletedCount = $queryDelete->delete();
 
             Log::info("Preferencia Sin Cartilla: Se eliminaron {$deletedCount} preguntas", [
                 'asignatura' => $asignaturaId,
+                'sede_id' => $sedeId,
                 'grupo' => $grupoTeorico,
                 'parcial' => $parcial,
             ]);
@@ -806,6 +825,7 @@ class BancoPreguntaController extends Controller
 
         $config = $this->updateOrCreateConfig(
             $asignaturaId,
+            $sedeId,
             $grupoTeorico,
             $parcial,
             $conCartilla
@@ -818,9 +838,10 @@ class BancoPreguntaController extends Controller
         ]);
     }
 
-    private function buildBancoDeleteQuery($asignaturaId, $grupoTeorico, $parcial, $docenteId = null)
+    private function buildBancoDeleteQuery($asignaturaId, $sedeId, $grupoTeorico, $parcial, $docenteId = null)
     {
         $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
+            ->where('sede_id', $sedeId)
             ->where('grupoTeorico', $grupoTeorico)
             ->where('parcial', $this->normalizarTipoExamen($parcial));
 
@@ -834,6 +855,8 @@ class BancoPreguntaController extends Controller
             'DIRECTOR_CARRERA',
             'VICERRECTORADO',
             'VICERRECTOR_SEDE',
+            'VICERRECTOR_NACIONAL',
+            'VICERRECTORADO_NACIONAL',
             'DIRECCION_ACADEMICA',
             'DIRECCIÓN ACADÉMICA',
             'RESPONSABLE_EVALUACIONES',
@@ -856,9 +879,9 @@ class BancoPreguntaController extends Controller
         return $queryDelete;
     }
 
-    private function updateOrCreateConfig($asignaturaId, $grupoTeorico, $parcial, $conCartilla)
+    private function updateOrCreateConfig($asignaturaId, $sedeId, $grupoTeorico, $parcial, $conCartilla)
     {
-        if (! $parcial) {
+        if (! $parcial || ! $sedeId) {
             return null;
         }
 
@@ -867,6 +890,7 @@ class BancoPreguntaController extends Controller
         return BancoPreguntaConfiguracion::updateOrCreate(
             [
                 'asignatura_id' => $asignaturaId,
+                'sede_id' => $sedeId,
                 'grupo_teorico' => $grupoTeorico,
                 'parcial' => $parcialNormalizado,
             ],
@@ -875,6 +899,75 @@ class BancoPreguntaController extends Controller
                 'updated_by' => auth()->id(),
             ]
         );
+    }
+
+    private function assertCanManageCartillaConfig($asignaturaId, $sedeId, $grupoTeorico, $parcial): void
+    {
+        $user = auth()->user();
+        $user?->loadMissing('rol');
+        $rolCodigo = $user?->rol?->codigo;
+        $rolesPermitidos = [
+            'SUPER_ADMIN',
+            'ADMIN',
+            'DIRECTOR_CARRERA',
+            'VICERRECTORADO',
+            'VICERRECTOR_SEDE',
+            'VICERRECTOR_NACIONAL',
+            'VICERRECTORADO_NACIONAL',
+            'DIRECCION_ACADEMICA',
+            'DIRECCIÓN ACADÉMICA',
+            'RESPONSABLE_EVALUACIONES',
+        ];
+
+        if (! in_array($rolCodigo, $rolesPermitidos, true)) {
+            abort(403, 'No tiene permiso para cambiar el estado de cartilla.');
+        }
+
+        $asignatura = Asignatura::find($asignaturaId);
+        $parcialNormalizado = $this->normalizarTipoExamen($parcial);
+        $grupoNormalizado = $this->normalizarGrupoTeorico($grupoTeorico);
+
+        $rolExamen = RolExamen::query()
+            ->where('materia_codigo', $asignatura?->codigo)
+            ->where('sede_id', $sedeId)
+            ->where('tipo_examen', $parcialNormalizado)
+            ->where(function ($query) use ($grupoTeorico, $grupoNormalizado) {
+                $query->where('grupo', $grupoTeorico)
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    );
+            })
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $rolExamen) {
+            throw ValidationException::withMessages([
+                'rol_examen' => 'No se encontró un rol de examen para esta sede, asignatura, grupo y parcial.',
+            ]);
+        }
+
+        $estado = $this->normalizarEstadoRolExamen($rolExamen->estado);
+        if (! in_array($estado, ['programado', 'programados'], true)) {
+            throw ValidationException::withMessages([
+                'estado' => 'Solo se puede cambiar la cartilla mientras el examen esté en estado Programado.',
+            ]);
+        }
+    }
+
+    private function normalizarGrupoTeorico($grupo): string
+    {
+        $grupo = strtoupper(trim((string) $grupo));
+
+        return str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $grupo);
+    }
+
+    private function normalizarEstadoRolExamen($estado): string
+    {
+        $estado = trim((string) $estado);
+        $estado = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $estado) ?: $estado;
+
+        return strtolower($estado);
     }
 
     private function normalizarTipoExamen($tipo)

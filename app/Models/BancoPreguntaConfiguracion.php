@@ -10,13 +10,14 @@ class BancoPreguntaConfiguracion extends Model
 
     protected $fillable = [
         'asignatura_id',
+        'sede_id',
         'grupo_teorico',
         'parcial',
         'con_cartilla',
-        'updated_by'
+        'updated_by',
     ];
 
     protected $casts = [
-        'con_cartilla' => 'boolean'
+        'con_cartilla' => 'boolean',
     ];
 }

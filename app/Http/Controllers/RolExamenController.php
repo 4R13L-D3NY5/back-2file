@@ -50,6 +50,7 @@ class RolExamenController extends Controller
                           ) as total_banco"),
                 DB::raw("(SELECT con_cartilla FROM banco_preguntas_configuraciones 
                            WHERE banco_preguntas_configuraciones.asignatura_id = COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id))
+                           AND banco_preguntas_configuraciones.sede_id = rol_examenes.sede_id
                            AND banco_preguntas_configuraciones.parcial = rol_examenes.tipo_examen 
                            AND (
                                REPLACE(REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = 
