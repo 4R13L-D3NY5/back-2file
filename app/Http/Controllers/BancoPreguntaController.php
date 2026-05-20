@@ -81,9 +81,9 @@ class BancoPreguntaController extends Controller
         });
         $count = $results->count();
         $stats = [
-            'facil' => $results->filter(fn ($p) => $p->dificultad == 'FACIL' || $p->dificultad == '1')->count(),
-            'medio' => $results->filter(fn ($p) => $p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == '2')->count(),
-            'dificil' => $results->filter(fn ($p) => $p->dificultad == 'DIFICIL' || $p->dificultad == '3')->count(),
+            'facil' => $results->filter(fn ($p) => in_array($this->normalizarDificultadBanco($p->dificultad), ['FACIL', '1'], true))->count(),
+            'medio' => $results->filter(fn ($p) => in_array($this->normalizarDificultadBanco($p->dificultad), ['MEDIA', 'MEDIO', '2'], true))->count(),
+            'dificil' => $results->filter(fn ($p) => in_array($this->normalizarDificultadBanco($p->dificultad), ['DIFICIL', '3'], true))->count(),
         ];
 
         return response()->json([
@@ -145,13 +145,20 @@ class BancoPreguntaController extends Controller
             });
         }
 
-        $preguntas = (clone $query)->get(['tipo']);
-        $stats = $query->selectRaw("
-            SUM(CASE WHEN dificultad = 'FACIL' OR dificultad = '1' THEN 1 ELSE 0 END) as facil,
-            SUM(CASE WHEN dificultad = 'MEDIA' OR dificultad = 'MEDIO' OR dificultad = '2' THEN 1 ELSE 0 END) as medio,
-            SUM(CASE WHEN dificultad = 'DIFICIL' OR dificultad = '3' THEN 1 ELSE 0 END) as dificil,
-            COUNT(*) as total
-        ")->first();
+        $preguntas = (clone $query)->get(['tipo', 'dificultad']);
+        $stats = $preguntas->reduce(function ($carry, $pregunta) {
+            $dificultad = $this->normalizarDificultadBanco($pregunta->dificultad);
+            if (in_array($dificultad, ['FACIL', '1'], true)) {
+                $carry['facil']++;
+            } elseif (in_array($dificultad, ['MEDIA', 'MEDIO', '2'], true)) {
+                $carry['medio']++;
+            } elseif (in_array($dificultad, ['DIFICIL', '3'], true)) {
+                $carry['dificil']++;
+            }
+            $carry['total']++;
+
+            return $carry;
+        }, ['facil' => 0, 'medio' => 0, 'dificil' => 0, 'total' => 0]);
         $porTipo = $preguntas
             ->map(fn ($pregunta) => $this->normalizarTipoPreguntaBanco($pregunta->tipo) ?: 'SIN_TIPO')
             ->filter(fn ($tipo) => ! in_array($tipo, ['EMPAREJAMIENTO', 'PROBLEMA'], true))
@@ -159,10 +166,10 @@ class BancoPreguntaController extends Controller
             ->toArray();
         $porGrupoTipo = $this->contarGruposTipoPregunta($porTipo);
         $statsPayload = [
-            'facil' => (int) ($stats->facil ?? 0),
-            'medio' => (int) ($stats->medio ?? 0),
-            'dificil' => (int) ($stats->dificil ?? 0),
-            'total' => (int) ($stats->total ?? 0),
+            'facil' => (int) ($stats['facil'] ?? 0),
+            'medio' => (int) ($stats['medio'] ?? 0),
+            'dificil' => (int) ($stats['dificil'] ?? 0),
+            'total' => (int) ($stats['total'] ?? 0),
             'por_tipo' => $porTipo,
             'por_grupo_tipo' => $porGrupoTipo,
             'g1' => $porGrupoTipo['g1'],
@@ -269,6 +276,7 @@ class BancoPreguntaController extends Controller
     {
         $validated = $request->validate([
             'asignatura_id' => 'required|exists:asignaturas,id',
+            'sede_id' => 'required|exists:sedes,id',
             'docente_id' => 'nullable|exists:docentes,id',
             'grupo_teorico' => 'required|string',
             'parcial' => 'required|string',
@@ -276,6 +284,7 @@ class BancoPreguntaController extends Controller
 
         $queryDelete = $this->buildBancoDeleteQuery(
             $validated['asignatura_id'],
+            $validated['sede_id'],
             $validated['grupo_teorico'],
             $validated['parcial'],
             $validated['docente_id'] ?? null
@@ -296,6 +305,7 @@ class BancoPreguntaController extends Controller
 
         Log::info('Borrado masivo del banco de preguntas', [
             'asignatura_id' => $validated['asignatura_id'],
+            'sede_id' => $validated['sede_id'],
             'grupo_teorico' => $validated['grupo_teorico'],
             'parcial' => $this->normalizarTipoExamen($validated['parcial']),
             'docente_id' => $validated['docente_id'] ?? null,
@@ -780,6 +790,21 @@ class BancoPreguntaController extends Controller
         return trim((string) $text);
     }
 
+    private function normalizarDificultadBanco($value): string
+    {
+        $text = $this->normalizarTextoDuplicadoBanco($value);
+        $text = strtr($text, [
+            'FµCIL' => 'FACIL',
+            'FÁCIL' => 'FACIL',
+            'INTERMEDIA' => 'MEDIA',
+            'INTERMEDIO' => 'MEDIO',
+            'DIFÖCIL' => 'DIFICIL',
+            'DIFÍCIL' => 'DIFICIL',
+        ]);
+
+        return $text;
+    }
+
     /**
      * Guardar configuración de cartilla (independiente de la importación)
      */
@@ -840,9 +865,28 @@ class BancoPreguntaController extends Controller
 
     private function buildBancoDeleteQuery($asignaturaId, $sedeId, $grupoTeorico, $parcial, $docenteId = null)
     {
+        $grupoNormalizado = $this->normalizarGrupoTeorico($grupoTeorico);
         $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
             ->where('sede_id', $sedeId)
-            ->where('grupoTeorico', $grupoTeorico)
+            ->where(function ($query) use ($grupoTeorico, $grupoNormalizado) {
+                $query->where('grupoTeorico', $grupoTeorico)
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    )
+                    ->orWhere(function ($legacy) use ($grupoTeorico, $grupoNormalizado) {
+                        $legacy->where(function ($emptyGrupoTeorico) {
+                            $emptyGrupoTeorico->whereNull('grupoTeorico')
+                                ->orWhere('grupoTeorico', '');
+                        })->where(function ($legacyGrupo) use ($grupoTeorico, $grupoNormalizado) {
+                            $legacyGrupo->where('grupo', $grupoTeorico)
+                                ->orWhereRaw(
+                                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                                    [$grupoNormalizado]
+                                );
+                        });
+                    });
+            })
             ->where('parcial', $this->normalizarTipoExamen($parcial));
 
         $user = auth()->user();

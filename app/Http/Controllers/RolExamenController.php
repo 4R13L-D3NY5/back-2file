@@ -34,6 +34,7 @@ class RolExamenController extends Controller
                 DB::raw('MAX(asignatura_carrera.semestre) as semestre'),
                 DB::raw("(SELECT COUNT(*) FROM banco_preguntas 
                            WHERE banco_preguntas.asignatura_id = COALESCE(MAX(grupos.asignatura_id), MAX(asignaturas.id))
+                           AND banco_preguntas.sede_id = rol_examenes.sede_id
                            AND (banco_preguntas.docente_id = MAX(docentes.id) OR MAX(docentes.id) IS NULL)
                            AND banco_preguntas.parcial = rol_examenes.tipo_examen 
                            AND (
@@ -263,6 +264,7 @@ class RolExamenController extends Controller
 
         $query = DB::table('banco_preguntas')
             ->where('asignatura_id', $examen->asignatura_id)
+            ->where('sede_id', $examen->sede_id)
             ->where('parcial', $examen->tipo_examen)
             ->where(function ($q) use ($examen) {
                 $q->where('docente_id', $examen->docente_id);
@@ -309,7 +311,7 @@ class RolExamenController extends Controller
         foreach ($query->get(['tipo', 'dificultad']) as $pregunta) {
             $stats['total']++;
 
-            $dificultad = $this->normalizarTextoBanco($pregunta->dificultad);
+            $dificultad = $this->normalizarDificultadBanco($pregunta->dificultad);
             if (in_array($dificultad, ['FACIL', '1'], true)) {
                 $stats['facil']++;
             } elseif (in_array($dificultad, ['MEDIA', 'MEDIO', '2'], true)) {
@@ -328,6 +330,21 @@ class RolExamenController extends Controller
         }
 
         return $stats;
+    }
+
+    private function normalizarDificultadBanco($valor): string
+    {
+        $texto = $this->normalizarTextoBanco($valor);
+        $texto = strtr($texto, [
+            'FµCIL' => 'FACIL',
+            'FÁCIL' => 'FACIL',
+            'INTERMEDIA' => 'MEDIA',
+            'INTERMEDIO' => 'MEDIO',
+            'DIFÖCIL' => 'DIFICIL',
+            'DIFÍCIL' => 'DIFICIL',
+        ]);
+
+        return $texto;
     }
 
     private function normalizarTextoBanco($valor): string

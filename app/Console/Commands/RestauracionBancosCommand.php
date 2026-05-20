@@ -190,6 +190,6 @@ class RestauracionBancosCommand extends Command
     private function migrarConfiguracionesSeguro(int $oldId, int $newId, string $parcial): void
     {
         $cfgs = DB::table(self::CURRENT_DB.'.banco_preguntas_configuraciones')->where('asignatura_id',$oldId)->where('parcial',$parcial)->get();
-        foreach ($cfgs as $c) { if (DB::table(self::CURRENT_DB.'.banco_preguntas_configuraciones')->where('asignatura_id',$newId)->where('grupo_teorico',$c->grupo_teorico)->where('parcial',$parcial)->exists()) continue; DB::table(self::CURRENT_DB.'.banco_preguntas_configuraciones')->where('id',$c->id)->update(['asignatura_id'=>$newId]); }
+        foreach ($cfgs as $c) { if (DB::table(self::CURRENT_DB.'.banco_preguntas_configuraciones')->where('asignatura_id',$newId)->where('sede_id',$c->sede_id)->where('grupo_teorico',$c->grupo_teorico)->where('parcial',$parcial)->exists()) continue; DB::table(self::CURRENT_DB.'.banco_preguntas_configuraciones')->where('id',$c->id)->update(['asignatura_id'=>$newId]); }
     }
 }

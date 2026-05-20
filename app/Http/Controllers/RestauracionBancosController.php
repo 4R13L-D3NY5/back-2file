@@ -586,6 +586,7 @@ class RestauracionBancosController extends Controller
         foreach ($configs as $config) {
             $yaExiste = DB::table('banco_preguntas_configuraciones')
                 ->where('asignatura_id', (int) $item['asignatura_destino_id'])
+                ->where('sede_id', $config->sede_id)
                 ->where('grupo_teorico', $config->grupo_teorico)
                 ->where('parcial', $config->parcial)
                 ->exists();
@@ -848,6 +849,7 @@ class RestauracionBancosController extends Controller
         foreach ($configs as $config) {
             $yaExiste = DB::table('banco_preguntas_configuraciones')
                 ->where('asignatura_id', $newAsigId)
+                ->where('sede_id', $config->sede_id)
                 ->where('grupo_teorico', $config->grupo_teorico)->where('parcial', $parcial)->exists();
             if ($yaExiste) continue;
             DB::table('banco_preguntas_configuraciones')->where('id', $config->id)
