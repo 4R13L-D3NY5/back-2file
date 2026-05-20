@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SISA - 02. Estructura Académica</title>
+  <title>SISA - 08. Gestión de Evaluaciones</title>
   <!-- Tailwind CSS Play CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Marked.js for markdown rendering -->
@@ -78,7 +78,7 @@
 <a href="01_autenticacion_seguridad.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
       🔒 01. Autenticación y Seguridad
     </a>
-<a href="02_estructura_academica.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm bg-indigo-950/70 text-indigo-300 border-l-4 border-indigo-500 pl-3 font-semibold shadow-inner">
+<a href="02_estructura_academica.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
       🏫 02. Estructura Académica
     </a>
 <a href="03_pac_y_bibliografia.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
@@ -96,7 +96,7 @@
 <a href="07_banco_preguntas_evaluaciones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
       🎯 07. Banco y Evaluaciones
     </a>
-<a href="08_gestion_evaluaciones_y_examenes.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+<a href="08_gestion_evaluaciones_y_examenes.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm bg-indigo-950/70 text-indigo-300 border-l-4 border-indigo-500 pl-3 font-semibold shadow-inner">
       ⚙️ 08. Gestión de Evaluaciones
     </a>
 <a href="09_sincronizacion_y_patrones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
@@ -125,207 +125,252 @@
   </main>
 
   <!-- Raw Markdown Content Injected Safely -->
-  <script type="text/markdown" id="markdown-content"># Módulo 2: Estructura Académica (SISA 2.0)
+  <script type="text/markdown" id="markdown-content"># Módulo 8: Gestión de Evaluaciones y Rol de Exámenes (SISA 2.0)
 
-Este módulo gestiona la infraestructura académica física (Sedes, Campus, Bloques, Aulas) y la estructura curricular (Carreras, Semestres y Mallas Curriculares). Soporta filtros en cascada rápidos y consistentes para docentes y administradores.
+Este módulo describe la arquitectura, la lógica del lado del cliente y los servicios del backend que gobiernan la **administración de evaluaciones** (configuración jerárquica) y el **Rol de Exámenes** (grilla interactiva de calendarización con validaciones duras en tiempo real). 
 
 ---
 
 ## 1. Ficha Técnica
 
-*   **Backend:** Laravel v12.x (API REST) + PHP v8.2+.
-*   **Frontend:** Quasar Framework v2.16.x + Vue 3.5.20 (Composition API con `<script setup>`).
-*   **Caché:** Pinia Stores (`carreras.js`, `sedes.js`, `aulas.js`, `bloques.js`) persistidos localmente.
-*   **Mecanismo de Filtros:** Filtros reactivos en cascada: `Sede` -> `Carrera` -> `Plan de Malla`.
+*   **Tecnología del Frontend:** Quasar Framework v2.x + Vue 3 (Composition API) + Pinia (Gestor de Estado).
+*   **Vistas de Frontend:** 
+    *   `src/pages/admin/AdministracionEvaluacionPage.vue` (Administración de directivas).
+    *   `src/pages/admin/EvaluacionesPage.vue` (Listado y control de evaluaciones).
+    *   `src/pages/director/RolExamenesPage.vue` (Grilla de calendarización para directores).
+    *   `src/pages/evaluaciones/RolExamenesEvaluacionPage.vue` (Vistas de evaluaciones del departamento).
+*   **Tecnología del Backend:** Laravel v12.x + PHP 8.2+ + Eloquent ORM + Form Requests.
+*   **Controladores Backend:**
+    *   `App\Http\Controllers\EvaluacionConfiguracionController` (Jerarquías y fallbacks).
+    *   `App\Http\Controllers\RolExamenController` (Calendarización, reglas de choque y cargas masivas).
 
 ---
 
-## 2. Arquitectura de Datos (ER)
+## 2. Administración de Evaluaciones (`adm.Evaluaciones`)
 
-El módulo utiliza un conjunto de tablas que reflejan la estructura corporativa de **UNITEPC** a nivel nacional y de sedes regionales.
+El submódulo `adm.Evaluaciones` permite regular de forma jerárquica y centralizada los parámetros y directivas institucionales que rigen la creación de evaluaciones en UNITEPC.
+
+### 2.1 Modelo de Configuración Jerárquica y Fallback
+
+Las políticas no son necesariamente homogéneas a nivel nacional. Por ello, el sistema implementa un árbol de herencia/especificidad con tres niveles:
 
 ```mermaid
-erDiagram
-    SEDES {
-        bigint id PK
-        string nombre "Cochabamba, La Paz, Santa Cruz..."
-        string ciudad
-        string id_api "Código Integración Externa"
-        json georeferencia "Lat, Lng, Radio"
-    }
-
-    CAMPUS {
-        bigint id PK
-        bigint sede_id FK
-        string nombre
-        string direccion
-    }
-
-    BLOQUES {
-        bigint id PK
-        bigint campus_id FK
-        string nombre "Bloque A, Bloque de Medicina..."
-    }
-
-    AULAS {
-        bigint id PK
-        bigint bloque_id FK
-        string nombre "Aula 301, Laboratorio de Cómputo..."
-        integer capacidad
-        string tipo "Teórica, Laboratorio, Taller"
-    }
-
-    CARRERAS {
-        bigint id PK
-        bigint director_id FK
-        bigint sede_id FK "Nullable"
-        string nombre "Ingeniería de Sistemas, Medicina..."
-        string codigo "Sigla (ej: SIS, MED)"
-        string turno "Mañana, Tarde, Noche"
-        boolean activo "Default: true"
-    }
-
-    ASIGNATURAS {
-        bigint id PK
-        string codigo "Espejo"
-        string nombre
-        string plan_estudios "N, A, etc."
-    }
-
-    ASIGNATURA_CARRERA {
-        bigint id PK
-        bigint asignatura_id FK
-        bigint carrera_id FK
-        bigint sede_id FK
-        string semestre "1er Semestre, 2do..."
-    }
-
-    CAMPUS }o--|| SEDES : pertenece_a
-    BLOQUES }o--|| CAMPUS : esta_en
-    AULAS }o--|| BLOQUES : contiene
-    CARRERAS }o--|| SEDES : se_dicta_en
-    ASIGNATURA_CARRERA }o--|| ASIGNATURAS : vincula
-    ASIGNATURA_CARRERA }o--|| CARRERAS : vincula
-    ASIGNATURA_CARRERA }o--|| SEDES : vincula
+graph TD
+    N[Nivel 1: Configuración Nacional] -->|Fallback si no hay específica| S[Nivel 2: Configuración Sede]
+    S -->|Fallback si no hay específica| C[Nivel 3: Configuración Carrera]
+    
+    style N fill:#1e1b4b,stroke:#4f46e5,stroke-width:2px,color:#fff
+    style S fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#fff
+    style C fill:#1c1917,stroke:#f59e0b,stroke-width:2px,color:#fff
 ```
 
----
+Al solicitar los parámetros para un docente y grupo de una materia, el backend ejecuta la función estática `EvaluacionConfiguracion::obtenerConfiguracionEfectiva($sedeId, $carreraId)` que opera bajo las siguientes reglas:
+1.  **Busca Carrera:** Si existe una fila específica para la combinación `sede_id` y `carrera_id` con `nivel = 'carrera'`, retorna dicha configuración.
+2.  **Busca Sede:** Si no se encuentra, busca una fila para `sede_id` con `nivel = 'sede'` y `carrera_id = null`.
+3.  **Aplica Nacional (Raíz):** En caso de ausencia de las anteriores, hereda la fila genérica con `nivel = 'nacional'`, `sede_id = null`, `carrera_id = null`.
 
-## 3. Especificación de la API (Endpoints)
+### 2.2 Estructura JSON de la Configuración (`configuracion`)
 
-### 3.1 Listar Sedes
+Los parámetros del examen se almacenan en un campo estructurado de tipo `JSON` en la tabla `evaluacion_configuraciones`:
+
+```json
+{
+  "duracion_minutos_defecto": 90,
+  "tolerancia_ingreso_minutos": 15,
+  "mezclar_preguntas": true,
+  "mezclar_opciones": true,
+  "preguntas_total": 10,
+  "distribucion_dificultad": {
+    "facil": 4,
+    "medio": 4,
+    "dificil": 2
+  },
+  "permite_cartilla_virtual": true,
+  "publicacion_patron_demora_horas": 3
+}
+```
+
+> [!IMPORTANT]
+> **Regla de Validación Balanceada:** 
+> Al guardar una configuración en `guardarConfiguracion` (vía `EvaluacionConfiguracionController`), el sistema valida de manera dura en el backend que la suma de reactivos de dificultad:
+> $$\text{facil} + \text{medio} + \text{dificil} = \text{preguntas\_total}$$
+> En caso de discrepancia, el servidor aborta la transacción y responde con un código `422 Unprocessable Entity` para evitar inconsistencias en el motor de selección aleatoria.
+
+### 2.3 Detalle de Endpoints de Configuración
+
+#### Obtener Configuración Efectiva
 *   **Método:** `GET`
-*   **Ruta:** `/api/sedes`
-*   **Response de Éxito (`200 OK`):**
-    ```json
-    [
-      {
-        "id": 1,
-        "nombre": "Cochabamba - Central",
-        "ciudad": "Cochabamba",
-        "id_api": "CBA",
-        "georeferencia": { "lat": -17.3912, "lng": -66.1523, "radio_metros": 150 }
-      }
-    ]
-    ```
-
-### 3.2 Listar Carreras por Sede (Filtro en Cascada)
-*   **Método:** `GET`
-*   **Ruta:** `/api/carreras`
-*   **Query Parameters:** `?sede_id=1`
-*   **Response de Éxito (`200 OK`):**
-    ```json
-    [
-      {
-        "id": 5,
-        "nombre": "Ingeniería de Sistemas",
-        "codigo": "SIS",
-        "sede_id": 1,
-        "activo": true,
-        "asignaturas_count": 45,
-        "docentes_count": 12
-      }
-    ]
-    ```
-
-### 3.3 Listar Asignaturas por Carrera y Semestre
-*   **Método:** `GET`
-*   **Ruta:** `/api/carreras/{carrera_id}/asignaturas`
-*   **Query Parameters:** `?sede_id=1&semestre=1er%20Semestre`
-*   **Response de Éxito (`200 OK`):**
-    ```json
-    [
-      {
-        "id": 12,
-        "codigo": "SIS-111",
-        "nombre": "Cálculo I",
-        "semestre": "1er Semestre",
-        "plan_estudios": "N",
-        "creditos": 5
-      }
-    ]
-    ```
-
-### 3.4 CRUD Aulas (Gestión de Infraestructura)
-*   **Método:** `GET` / `POST` / `PUT` / `DELETE`
-*   **Ruta:** `/api/aulas` y `/api/aulas/{id}`
-*   **Request Crear Aula (JSON):**
+*   **Ruta:** `/api/evaluaciones/configuracion`
+*   **Query Params:**
+    *   `nivel`: `"nacional" | "sede" | "carrera"` (Nivel a consultar)
+    *   `sede_id`: (int, opcional) ID de la sede
+    *   `carrera_id`: (int, opcional) ID de la carrera
+*   **Response (`200 OK`):**
     ```json
     {
-      "bloque_id": 3,
-      "nombre": "Aula 402 - Virtual",
-      "capacidad": 45,
-      "tipo": "Teorica"
+      "success": true,
+      "configuracion": {
+        "duracion_minutos_defecto": 90,
+        "tolerancia_ingreso_minutos": 15,
+        "mezclar_preguntas": true,
+        "mezclar_opciones": true,
+        "preguntas_total": 10,
+        "distribucion_dificultad": {
+          "facil": 4,
+          "medio": 4,
+          "dificil": 2
+        }
+      },
+      "nivel_hallado": "sede",
+      "es_propia": true
     }
     ```
-*   **Response de Éxito (`201 Created`):** Retorna el objeto `Aula` con el bloque asociado.
+
+#### Guardar/Actualizar Configuración
+*   **Método:** `POST`
+*   **Ruta:** `/api/evaluaciones/configuracion`
+*   **Payload (JSON):**
+    ```json
+    {
+      "nivel": "sede",
+      "sede_id": 2,
+      "carrera_id": null,
+      "configuracion": {
+        "duracion_minutos_defecto": 90,
+        "tolerancia_ingreso_minutos": 10,
+        "mezclar_preguntas": true,
+        "mezclar_opciones": true,
+        "preguntas_total": 20,
+        "distribucion_dificultad": {
+          "facil": 8,
+          "medio": 8,
+          "dificil": 4
+        }
+      }
+    }
+    ```
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "success": true,
+      "message": "Configuración de evaluaciones guardada correctamente."
+    }
+    ```
 
 ---
 
-## 4. Componentes y Capa de Frontend (Quasar)
+## 3. Rol de Exámenes (Calendarización de Evaluaciones)
 
-### 4.1 Stores de Pinia para Infraestructura
-*   `src/stores/sedes.js`: Cachea las sedes autorizadas para el usuario y maneja la sede activa seleccionada en los paneles.
-*   `src/stores/carreras.js`: Almacena la lista de carreras a nivel nacional/regional, permitiendo el filtrado rápido mediante `getCarrerasBySede(sedeId)`.
-*   `src/stores/aulas.js` y `src/stores/bloques.js`: Dan soporte al CRUD reactivo para la administración física del sistema.
+El **Rol de Exámenes** es el módulo centralizado para programar de forma estricta las fechas, bloques horarios, aulas y paralelos de todos los parciales. A diferencia de las planificaciones comunes, el Rol de Exámenes implementa validaciones cruzadas críticas para impedir choques horarios de docentes, alumnos e infraestructura.
 
-### 4.2 Selectores y Filtros Reactivos en Cascada
-En las vistas administrativas y de directores (como `GestionAcademicaPage.vue` o `SincronizacionPage.vue`), se utiliza una reactividad encadenada en Vue 3 para filtrar asignaturas y grupos:
-
-```javascript
-// Reactividad en Cascada
-const selSede = ref(null)
-const selCarrera = ref(null)
-const selAsignatura = ref(null)
-
-// Watchers que limpian selecciones inferiores al cambiar el nivel superior
-watch(selSede, () => {
-  selCarrera.value = null
-  selAsignatura.value = null
-  carrerasFiltradas.value = carrerasStore.getCarrerasBySede(selSede.value)
-})
-
-watch(selCarrera, async () => {
-  selAsignatura.value = null
-  if (selCarrera.value) {
-    await cargarAsignaturas(selCarrera.value, selSede.value)
-  }
-})
+```mermaid
+flowchart TD
+    A[Nueva Programación de Examen] --> B{Validar Rango de Semanas}
+    B -->|Fuera de Rango| B1[Warning: Fuera de Semana Sugerida]
+    B -->|En Rango| C{Validar Día del Grupo}
+    
+    C -->|No coincide con día de clase| C1[Warning: Día sin Horario Teórico]
+    C -->|Coincide con clase| D{Validar Colisión en el Semestre}
+    
+    D -->|Ya hay examen ese día en el semestre| E[Error Bloqueante: Max 1 Examen al día por Semestre]
+    D -->|Libre| F[Examen Agendado Correctamente]
 ```
 
-### 4.3 Vistas Involucradas
-*   `src/pages/admin/SedesPage.vue`: Interfaz de administración para configurar coordenadas de geocercas por sede (para el control de asistencia).
-*   `src/pages/admin/GestionAcademicaPage.vue`: Panel unificado de control de carreras, bloques, aulas y asignaturas asociadas.
+### 3.1 Motor de Reglas y Validación de Choques (`validateExamRules`)
+
+Antes de agendar un examen (vía creación manual o importación de plantilla general), el sistema ejecuta el motor interno `validateExamRules` en el backend. Este analiza tres restricciones:
+
+#### 1. Rango de Semanas Académicas Sugeridas
+El sistema parametriza los rangos de semanas del calendario semestral (20 semanas en total) de acuerdo al tipo de parcial:
+
+| Tipo de Parcial | Rango de Semanas Válidas | Estado de Restricción |
+|---|---|---|
+| **1er Parcial** | Semanas $7 \text{ a } 9$ | Alerta (Warning No-Bloqueante) |
+| **2do Parcial** | Semanas $14 \text{ a } 16$ | Alerta (Warning No-Bloqueante) |
+| **Final** | Semanas $18 \text{ a } 20$ | Alerta (Warning No-Bloqueante) |
+| **2da Instancia** | Semanas $21 \text{ a } 25$ | Alerta (Warning No-Bloqueante) |
+
+Si el examen se programa en una semana diferente, se inyecta en el objeto `conflictos` la advertencia `"Fuera de semana sugerida (Semanas X-Y)"`.
+
+#### 2. Validación de Día de Clase Efectivo
+Para evitar que se convoque a los estudiantes en horarios fuera de su rutina académica convencional, el sistema recupera los horarios registrados para el grupo teórico (`tipo = 'TEORICO'`).
+*   Extrae el día de la semana de la fecha propuesta (ej. `2026-05-20` es miércoles $\rightarrow$ día `3`).
+*   Normaliza los nombres de los días de la base de datos locales (ej: `"Miercoles"`, `"miércoles"`, `"MIE"` $\rightarrow$ `3`).
+*   **Acción:** Si el examen se agenda en un día en el cual el paralelo no tiene clases teóricas registradas, añade el warning: `"El examen es el [Día], pero el grupo no tiene horario teórico ese día."`.
+
+#### 3. Regla Estricta de Sobrecarga de Estudiantes (Colisiones de Semestre)
+Es una directiva de la Vicerrectoría Académica que **ningún estudiante de un mismo semestre y carrera rinda más de un examen parcial por día**.
+*   **Algoritmo de Detección:**
+    1.  Identifica la asignatura que se intenta calendarizar y recupera el semestre del plan al que pertenece (vía relación de pivote en `asignatura_carrera` para el `carrera_id` provisto).
+    2.  Busca registros existentes en `rol_examenes` para la misma `carrera_id`, la misma `fecha` y el mismo semestre curricular.
+    3.  **Acción Bloqueante:** Si encuentra colisiones, se detiene la inserción y retorna: `"Ya existe otro examen programado para el semestre [S] en la fecha [F]. (Restricción: Máx 1 examen por día para el mismo semestre)"`.
+
+### 3.2 Endpoints del Rol de Exámenes
+
+#### Listar Rol de Exámenes Filtrado
+*   **Método:** `GET`
+*   **Ruta:** `/api/rol-examenes`
+*   **Query Params:** `sede_id`, `carrera_id`, `gestion`, `semestre`, `tipo_examen`
+*   **Response (`200 OK`):**
+    ```json
+    [
+      {
+        "id": 84,
+        "materia_codigo": "MED-201",
+        "materia_nombre": "Fisiología Humana",
+        "tipo_examen": "2do Parcial",
+        "grupo": "G1",
+        "semana": 14,
+        "fecha": "2026-06-03",
+        "hora_inicio": "08:00:00",
+        "hora_fin": "09:30:00",
+        "conflictos": {
+          "horario": "El examen es el Miércoles, pero el grupo no tiene horario teórico ese día."
+        }
+      }
+    ]
+    ```
+
+#### Crear Examen Individual Manual
+*   **Método:** `POST`
+*   **Ruta:** `/api/rol-examenes`
+*   **Payload:**
+    ```json
+    {
+      "gestion": "I-2026",
+      "carrera_id": 3,
+      "sede_id": 1,
+      "materia_codigo": "MED-201",
+      "materia_nombre": "Fisiología Humana",
+      "tipo_examen": "2do Parcial",
+      "semana": 14,
+      "fecha": "2026-06-03",
+      "hora_inicio": "08:00",
+      "hora_fin": "09:30"
+    }
+    ```
+*   **Response de Inserción Fallida por Colisión (`422 Unprocessable`):**
+    ```json
+    {
+      "message": "Ya existe otro examen programado para el semestre 3 en la fecha 2026-06-03. (Restricción: Máx 1 examen por día para el mismo semestre)"
+    }
+    ```
 
 ---
 
-## 5. Arquitectura de Sincronización y Offline-First
+## 4. Flujo de Trabajo en la Interfaz de Usuario
 
-Las tablas de infraestructura y currículas son típicamente estáticas o de baja variación temporal. Esto permite un flujo óptimo sin cobertura de internet:
+### 4.1 Pantalla de Configuración General
+En `AdministracionEvaluacionPage.vue`, el administrador selecciona la sede y la carrera. El frontend invoca `/api/evaluaciones/configuracion` y pinta el formulario interactivo:
+1.  **Selectores en cascada:** Sedes nacionales y sus correspondientes carreras activas.
+2.  **Parámetros reactivos:** Si se modifica `preguntas_total`, un watcher de Vue valida dinámicamente y distribuye las cantidades sugiriendo pesos por defecto en dificultades (ej: $40\%$ fácil, $40\%$ medio, $20\%$ difícil).
+3.  **Herencia Visual:** Muestra un badge dinámico ("Heredado de Nacional" o "Configuración Local") basándose en el campo `nivel_hallado` provisto por el backend.
 
-1.  **Carga Inicial y Seed en LocalStorage:** Al iniciar sesión por primera vez con red, el frontend precarga el listado completo de sedes, campus, aulas, carreras y materias en Pinia.
-2.  **Modo Offline Permanente:** Toda la navegación curricular de SISA 2.0 (consultar materias, horarios asignados, aulas de clases, semestres, docentes) funciona **100% offline** consumiendo la memoria local del Store.
-3.  **Inhibición de Operaciones CRUD en Offline:** Si el estado del Capacitor Network reporta desconexión, la UI bloquea automáticamente los botones de creación/edición de aulas, bloques y sedes, mostrando un indicador visual de "Sin conexión: Operación no disponible".
+### 4.2 Grilla de Programación de Exámenes
+En `RolExamenesPage.vue`, el Director de Carrera programa el rol semestral mediante una grilla temporal de planificación:
+*   Visualiza en celdas de colores los exámenes agendados.
+*   **Indicadores de Advertencia:** Las celdas con advertencias (warnings) de semanas o discordancia de horario de clase se marcan con bordes naranjas y un tooltip que despliega el JSON formateado de `conflictos`.
+*   **Bloqueos Visuales:** Si intenta arrastrar o guardar un examen en una fecha colisionada (mismo semestre, mismo día), la grilla rechaza el cambio y despliega un diálogo de rechazo Toast con el mensaje de error provisto por el motor Laravel.
 </script>
 
   <script>

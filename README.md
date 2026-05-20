@@ -33,6 +33,8 @@ graph TD
 5.  **[📅 Planificación Semestral](docs/05_planificacion_semestral.md):** Generador de secuencias didácticas automáticas basadas en el calendario académico.
 6.  **[📝 Control de Asistencia y Clases](docs/06_control_clase_seguimiento.md):** API de sincronización activa de clases firmadas, recepción y almacenamiento de imágenes en servidor.
 7.  **[🎯 Banco de Evaluaciones](docs/07_banco_preguntas_evaluaciones.md):** Motor de selección aleatoria de reactivos según parámetros y generación masiva de PDF de exámenes.
+8.  **[⚙️ Gestión de Evaluaciones y Rol de Exámenes](docs/08_gestion_evaluaciones_y_examenes.md):** Directivas de exámenes y calendario del Rol de Exámenes con validaciones de colisión en tiempo real.
+9.  **[🔄 Sincronización y Motores de Comparación](docs/09_sincronizacion_y_patrones.md):** Sincronización centralizada, comparadores analíticos pre/post sync, verificador lexical PDF y restaurador granular de backups.
 
 ---
 

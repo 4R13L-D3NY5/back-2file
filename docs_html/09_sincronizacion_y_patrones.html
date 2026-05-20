@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SISA - 09. Sincronización y Motores</title>
+  <!-- Tailwind CSS Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js for markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Mermaid.js for visual flows -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <!-- Google Fonts: Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #020617; }
+    /* Custom markdown classes */
+    .markdown-body h1 { font-size: 2rem; font-weight: 800; border-bottom: 1px solid #1e293b; padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.25rem; color: #f8fafc; }
+    .markdown-body h2 { font-size: 1.5rem; font-weight: 700; border-bottom: 1px solid #1e293b; padding-bottom: 0.35rem; margin-top: 1.75rem; margin-bottom: 1rem; color: #f1f5f9; }
+    .markdown-body h3 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #e2e8f0; }
+    .markdown-body h4 { font-size: 1.1rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #cbd5e1; }
+    .markdown-body p { margin-top: 0; margin-bottom: 1rem; line-height: 1.75; color: #cbd5e1; }
+    .markdown-body ul, .markdown-body ol { margin-top: 0; margin-bottom: 1rem; padding-left: 1.75rem; }
+    .markdown-body ul { list-style-type: disc; }
+    .markdown-body ol { list-style-type: decimal; }
+    .markdown-body li { margin-top: 0.25rem; margin-bottom: 0.25rem; line-height: 1.625; color: #cbd5e1; }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-top: 1.25rem; margin-bottom: 1.25rem; display: block; overflow-x: auto; }
+    .markdown-body th, .markdown-body td { border: 1px solid #334155; padding: 0.6rem 0.8rem; text-align: left; min-width: 120px; }
+    .markdown-body th { background-color: #1e293b; font-weight: 600; color: #f8fafc; }
+    .markdown-body td { color: #cbd5e1; }
+    .markdown-body tr:nth-child(even) td { background-color: rgba(30, 41, 59, 0.25); }
+    .markdown-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; background-color: rgba(30, 41, 59, 0.6); padding: 0.2rem 0.4rem; border-radius: 0.25rem; color: #fb7185; }
+    .markdown-body pre { background-color: #0f172a; border: 1px solid #1e293b; border-radius: 0.5rem; padding: 1rem; overflow-x: auto; margin-top: 1.25rem; margin-bottom: 1.25rem; }
+    .markdown-body pre code { background-color: transparent; padding: 0; border-radius: 0; color: #e2e8f0; font-size: 0.95em; }
+    .markdown-body hr { border: 0; border-top: 1px solid #1e293b; margin: 1.75rem 0; }
+    .markdown-body a { color: #818cf8; text-decoration: none; font-weight: 500; transition: color 0.2s; }
+    .markdown-body a:hover { color: #c084fc; text-decoration: underline; }
+    
+    /* Mermaid styling */
+    .mermaid {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+      border-radius: 0.5rem;
+      margin: 1.25rem 0;
+      display: flex;
+      justify-content: center;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 flex min-h-screen">
+
+  <!-- Mobile Toggle Button -->
+  <button id="menu-toggle" class="lg:hidden fixed bottom-5 right-5 z-50 bg-indigo-600 text-white p-3.5 rounded-full shadow-lg hover:bg-indigo-500 focus:outline-none transition">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path id="menu-icon" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+    </svg>
+  </button>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="w-80 bg-slate-900 border-r border-slate-800 flex flex-col fixed inset-y-0 left-0 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
+    <div class="p-6 border-b border-slate-800 bg-slate-950/80">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8.5 h-8.5 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-indigo-500/20">S</div>
+        <div>
+          <h1 class="text-base font-bold text-slate-100 leading-tight">SISA 2.0 Docs</h1>
+          <p class="text-[10px] text-slate-500">Documentación Técnica Local</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Sidebar Navigation -->
+    <nav class="flex-1 overflow-y-auto p-4 space-y-1">
+      <a href="README.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🚀 Portal Principal
+    </a>
+<a href="01_autenticacion_seguridad.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🔒 01. Autenticación y Seguridad
+    </a>
+<a href="02_estructura_academica.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🏫 02. Estructura Académica
+    </a>
+<a href="03_pac_y_bibliografia.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      📚 03. PAC y Bibliografía
+    </a>
+<a href="04_materias_comunes.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🔗 04. Materias Comunes
+    </a>
+<a href="05_planificacion_semestral.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      📅 05. Planificación Semestral
+    </a>
+<a href="06_control_clase_seguimiento.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      📝 06. Control y Seguimiento
+    </a>
+<a href="07_banco_preguntas_evaluaciones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🎯 07. Banco y Evaluaciones
+    </a>
+<a href="08_gestion_evaluaciones_y_examenes.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      ⚙️ 08. Gestión de Evaluaciones
+    </a>
+<a href="09_sincronizacion_y_patrones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm bg-indigo-950/70 text-indigo-300 border-l-4 border-indigo-500 pl-3 font-semibold shadow-inner">
+      🔄 09. Sincronización y Motores
+    </a>
+<a href="diagrama_er_completo.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🗄️ Diagrama ER Completo
+    </a>
+<a href="endpoints.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🔌 Endpoints de la API
+    </a>
+    </nav>
+    
+    <div class="p-4 border-t border-slate-800 text-center text-xs text-slate-500 bg-slate-950/40">
+      Desarrollado para UNITEPC
+    </div>
+  </aside>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 lg:pl-80 min-h-screen flex flex-col bg-slate-950">
+    <div class="flex-1 max-w-4xl w-full mx-auto px-6 py-12 lg:px-12">
+      <article id="content" class="markdown-body">
+        <!-- Rendered markdown goes here -->
+      </article>
+    </div>
+  </main>
+
+  <!-- Raw Markdown Content Injected Safely -->
+  <script type="text/markdown" id="markdown-content"># Módulo 9: Sincronización de Datos y Motores de Comparación (SISA 2.0)
+
+Este módulo detalla los mecanismos técnicos, flujos de datos, controladores y vistas que gobiernan el **Módulo de Sincronización Académica** con la API externa de planificación centralizada, el **Desacoplamiento de Bancos de Preguntas** (sin logros esperados), y la suite de motores analíticos de comparación: **Engine 1 (Verificador Lexical de PDF)** y **Engine 2 (Comparador de Respaldos de Base de Datos)**.
+
+---
+
+## 1. Ficha Técnica y Estructura Arquitectural
+
+*   **Vistas en el Frontend (Quasar + Vue 3):**
+    *   `src/pages/admin/SincronizacionPage.vue` (Panel interactivo de sincronización y logs).
+    *   `src/pages/admin/ComparacionSincronizacionPage.vue` (Visualizador de diferencias pre/post sincronización).
+    *   `src/pages/admin/AuditoriaBancoPlanPage.vue` (Gestión de bancos asignados a planes erróneos).
+    *   `src/pages/admin/ComparadorBackupPage.vue` (Comparador y restaurador granular de bases de datos).
+*   **Controladores en el Backend (Laravel v12.x):**
+    *   `App\Http\Controllers\SyncController` (Sincronización API, snapshots e instantáneas).
+    *   `App\Http\Controllers\RestauracionBancosController` (Resolución de bancos de preguntas huérfanas y reasignación por plan).
+    *   `App\Http\Controllers\BackupComparisonController` (Comparación de esquemas y restauración granular segmentada).
+    *   `App\Http\Controllers\RolExamenController` (Métodos de escaneo de hojas de examen en PDF y verificación lexical contra reactivos).
+
+---
+
+## 2. Banco de Preguntas sin Logros Esperados (Desacoplamiento)
+
+En versiones anteriores de SISA, los reactivos del banco de preguntas dependían obligatoriamente de la estructura curricular de competencias a través del campo `logro_esperado_id`. SISA 2.0 implementa una arquitectura desacoplada para dar soporte a reactivos autónomos e independientes.
+
+### 2.1 Modificaciones del Esquema de Datos (`banco_preguntas`)
+
+El campo `logro_esperado_id` en la tabla `banco_preguntas` se ha modificado para admitir valores nulos (`nullable`), permitiendo que las preguntas existan desvinculadas de logros temáticos específicos, pero enlazadas directamente a la asignatura (`asignatura_id`), docente (`docente_id`) y período evaluativo (`parcial`).
+
+```sql
+ALTER TABLE banco_preguntas MODIFY COLUMN logro_esperado_id INT NULL;
+```
+
+### 2.2 Auditoría y Traslación de Planes (`AuditoriaBancoPlanPage.vue`)
+
+Dado que los docentes frecuentemente registran reactivos en asignaturas con el mismo código pero bajo mallas curriculares o planes de estudios obsoletos, se implementó una herramienta de auditoría interactiva. 
+
+Esta herramienta detecta "bancos huérfanos" (preguntas guardadas en un plan inactivo) y permite la migración masiva y controlada de preguntas al plan curricular vigente.
+
+```mermaid
+flowchart LR
+    A[Docente sube banco a plan obsoleto] --> B[Auditoría: previewPlan]
+    B --> C{¿Materia destino tiene banco?}
+    C -->|Sí| D[Conflicto: Conservar / Omitir]
+    C -->|No| E[Acción: preview / restorePlan]
+    E --> F[Migración segura vía Transacción DB]
+```
+
+### 2.3 Detalle de Endpoints de Traslación (`restauracion/bancos-plan`)
+
+Estos endpoints requieren el rol de `ADMIN` o `SUPER_ADMIN`.
+
+#### Vista Previa de Inconsistencias (Preview)
+*   **Método:** `POST`
+*   **Ruta:** `/api/restauracion/bancos-plan/preview`
+*   **Payload:**
+    ```json
+    {
+      "sede_id": 1,
+      "carrera_id": 3,
+      "parcial": "2do Parcial",
+      "codigo": "MED-201"
+    }
+    ```
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "ok": true,
+      "sede_id": 1,
+      "carrera_id": 3,
+      "parcial": "2do Parcial",
+      "resumen": {
+        "grupos_revisados": 12,
+        "materias_detectadas": 1,
+        "grupos_detectados": 2,
+        "hallazgos": 2,
+        "restaurables": 2,
+        "conflictos": 0,
+        "sin_grupo_actual": 0,
+        "preguntas_otro_plan": 45,
+        "preguntas_plan_correcto": 0
+      },
+      "detalles": [
+        {
+          "key": "MED-201|12|G1",
+          "codigo": "MED-201",
+          "docente_id": 12,
+          "docente_nombre": "Dr. Juan Pérez",
+          "grupo_teorico": "G1",
+          "asignatura_origen_id": 105,
+          "plan_origen": "2018",
+          "asignatura_destino_id": 204,
+          "plan_destino": "2024",
+          "preguntas_otro_plan": 25,
+          "preguntas_plan_correcto": 0,
+          "estado": "restaurable"
+        }
+      ]
+    }
+    ```
+
+#### Ejecutar Restauración/Traslación (Restore)
+*   **Método:** `POST`
+*   **Ruta:** `/api/restauracion/bancos-plan/restore`
+*   **Payload:** Envía los items seleccionados para migrar sus preguntas al plan destino.
+    ```json
+    {
+      "items": [
+        {
+          "sede_id": 1,
+          "carrera_id": 3,
+          "docente_id": 12,
+          "grupo_teorico": "G1",
+          "parcial": "2do Parcial",
+          "asignatura_origen_id": 105,
+          "asignatura_destino_id": 204
+        }
+      ]
+    }
+    ```
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "ok": true,
+      "total_procesadas": 1,
+      "restauradas": 1,
+      "ya_correctas": 0,
+      "sin_consenso": 0,
+      "cambios": [
+        {
+          "item": "MED-201|12|G1",
+          "status": "restaurada",
+          "cantidad_preguntas_migradas": 25
+        }
+      ]
+    }
+    ```
+
+---
+
+## 3. Módulo de Sincronización Académica Externa
+
+El sistema se sincroniza periódicamente con una API de planificación centralizada (`http://181.188.185.211:9098/api/Grupos/listar/`) para actualizar sedes, carreras, asignaturas, paralelos (grupos), docentes y horarios convencionales.
+
+### 3.1 Captura de Snapshots y Generación de Diferencias (`generarDiff`)
+
+Para proteger la integridad de los datos locales (como planificaciones de clases y asistencias ya registradas), la sincronización opera mediante instantáneas pre y post ejecución:
+
+1.  **Instantánea Previa (`capturarSnapshot`):** Al iniciar, el backend captura un snapshot en memoria estructurado con el estado actual de la sede y carrera seleccionada (lista de grupos activos, docentes asociados y arreglos horarios).
+2.  **Llamada y Lotes (Chunking):** La API externa es consultada de forma asíncrona. Los registros remotos se procesan recursivamente y se actualizan en la base de datos local.
+3.  **Instantánea Posterior (`capturarSnapshot`):** Se genera un snapshot idéntico inmediatamente después de la sincronización.
+4.  **Generador de Diff (`generarDiff`):** El sistema compara analíticamente ambos objetos temporales para identificar y guardar en logs:
+    *   `grupos_nuevos` (Creados remotamente).
+    *   `grupos_eliminados` (Inactivados en API central).
+    *   `grupos_docente_cambio` (Reasignación de docente titular).
+    *   `grupos_horario_cambio` (Variación en bloque de horas o aulas).
+    *   `horarios_eliminados` (Reducción de carga teórica semanal).
+    *   `docentes_nuevos` y `asignaturas_nuevas`.
+
+### 3.2 Estrategia de Resolución de Conflictos Local vs API
+
+Cuando un Director de Carrera realiza una modificación manual en SISA (por ejemplo, asigna un docente interino en un paralelo), el registro local se marca con la bandera `modificado_localmente = true`.
+
+Al realizar una sincronización posterior, si el sistema detecta que la API central tiene un dato diferente para ese grupo, se genera un conflicto retenido. En `SincronizacionPage.vue` se listan estas discrepancias, permitiendo al administrador resolverlas mediante dos políticas de resolución:
+
+| Opción de Resolución | Endpoint payload (`accion`) | Efecto Técnico en el Backend |
+|---|---|---|
+| **Aceptar API** | `"aceptar_api"` | Sobrescribe los campos del paralelo local con los datos provistos por la API remota. Apaga la bandera marcando `modificado_localmente = false`. |
+| **Mantener Local** | `"mantener_local"` | Preserva el registro local con la bandera `modificado_localmente = true`. Los futuros ciclos de sincronización omitirán actualizar este registro automáticamente para resguardar la decisión manual. |
+
+```mermaid
+flowchart TD
+    S[Sincronización de Grupo] --> C{¿Tiene modificado_localmente = true?}
+    C -->|No| D[Aplicar datos de la API Remota]
+    C -->|Sí| E{¿Datos API son diferentes?}
+    E -->|No| F[Sin cambios]
+    E -->|Sí| G[Retener en panel de Conflictos]
+    
+    G --> H[Acción del Administrador]
+    H -->|Aceptar API| I[Sobrescribir datos locales + modificado_localmente = false]
+    H -->|Mantener Local| J[Mantener datos locales + modificado_localmente = true]
+```
+
+### 3.3 Endpoints del Engine de Sincronización (`sync`)
+
+Requiere rol `SUPER_ADMIN`.
+
+#### Iniciar Sincronización por Sede
+*   **Método:** `POST`
+*   **Ruta:** `/api/sync/sede`
+*   **Payload:** `{"sede_id": 1}`
+*   **Response (`200 OK`):** Retorna el resumen del diff generado.
+
+#### Resolver Conflicto de Datos
+*   **Método:** `POST`
+*   **Ruta:** `/api/sync/resolver-conflictos`
+*   **Payload:**
+    ```json
+    {
+      "grupo_id": 504,
+      "accion": "aceptar_api",
+      "docente_ci_api": "3498201"
+    }
+    ```
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "success": true,
+      "mensaje": "Conflicto resuelto: se aceptaron los datos de la API."
+    }
+    ```
+
+---
+
+## 4. Comparador de Patrones - Engine 1: Verificador Lexical de PDF
+
+El **Engine 1** es un motor de análisis léxico diseñado para auditar exámenes resueltos impresos/digitales en formato PDF y comprobar su concordancia exacta contra las variantes autorizadas (TIPO A, TIPO B, TIPO C, TIPO D) que se encuentran registradas en los bancos del sistema.
+
+### 4.1 Extracción de Texto y Algoritmo de Similitud Léxica
+
+1.  **Parseo de PDF:** El backend procesa el archivo subido extrayendo cadenas de texto plano estructurado mediante la biblioteca del parseador de PDF de PHP.
+2.  **Normalización de Texto (`normalizeComparableText`):**
+    *   Convierte todos los caracteres a mayúsculas (`UPPER`).
+    *   Elimina acentos y diacríticos (ej: `á` $\rightarrow$ `A`, `ñ` $\rightarrow$ `N`).
+    *   Suprime espacios en blanco múltiples, retornos de carro, tabulaciones y caracteres especiales no alfanuméricos.
+3.  **Comparación por `similar_text()`:**
+    El sistema recupera los reactivos vigentes asignados al docente, la materia y el parcial. Luego, ejecuta una comparación iterativa cruzada:
+    ```php
+    similar_text($pdfComparable, $statementComparable, $percent);
+    ```
+    *   **Heurística de Subcadenas:** Si el enunciado del banco se encuentra textualmente dentro del bloque extraído del PDF (o viceversa), se asigna de manera forzada un porcentaje mínimo de **92%** de similitud.
+    *   **Umbral Mínimo:** Solo los emparejamientos que reportan una similitud léxica superior o igual al **38%** son aceptados como coincidencias válidas de pregunta.
+
+### 4.2 Derivación de la Clave de Variante y Respuestas Esperadas
+
+Una vez que se localiza un reactivo coinciciente en el PDF, el motor decodifica la opción seleccionada por el estudiante:
+
+1.  **Identificación de Opciones Visibles:**
+    Aplica una expresión regular sobre el bloque de texto del PDF para extraer las letras y el contenido de las opciones múltiples:
+    ```regex
+    /\b([A-E])\)\s*(.*?)(?=\s+[A-E]\)\s*|$)/u
+    ```
+2.  **Resolución de Opción Correcta (`deriveExpectedAnswerFromPdfBlock`):**
+    *   Para preguntas de `SELECCION_SIMPLE` o `SUBPROBLEMA`, recupera la opción correcta registrada en la base de datos (`respuesta_correcta`).
+    *   Normaliza el texto de dicha opción correcta.
+    *   Compara el texto de la opción correcta contra cada una de las opciones extraídas del PDF (`A`, `B`, `C`, `D`, `E`) utilizando nuevamente `similar_text()`.
+    *   **Umbral de Opción:** Si encuentra una coincidencia de texto con una similitud superior o igual al **50%**, infiere que esa letra representa la respuesta correcta en la hoja impresa del estudiante.
+3.  **Generación de la Grilla de Patrón:**
+    Al concluir el escaneo, el sistema devuelve una matriz detallada que empareja el número físico de pregunta en el PDF, el ID de reactivo en la base de datos local y la letra correspondiente a la opción correcta del examen impreso.
+
+---
+
+## 5. Comparador de Base de Datos de Respaldo - Engine 2
+
+El **Engine 2** (`BackupComparisonController`) permite realizar auditorías profundas y restauraciones granulares contra un grupo de cinco bases de datos históricas de respaldo que el sistema mantiene rotativas de forma diaria:
+
+$$\text{academicolunes, academicomartes, academicomiercoles, academicojueves, academicoviernes}$$
+
+### 5.1 Criterios de Selección Dinámica y Filtros Temporales
+
+Al iniciar una comparación, el Director de Carrera o el Administrador selecciona una de las bases de datos de backup. El backend cuenta con mecanismos de clasificación automática del parcial basado en la fecha de creación de los registros:
+
+*   **Fecha de Corte (`CORTE_2DO_PARCIAL`):** Definida estáticamente el `2026-05-08`.
+*   **Regla Temporal:** Si los reactivos huérfanos o a auditar registran una fecha de creación (`created_at`) igual o posterior a esta fecha de corte, el sistema los categoriza y procesa automáticamente bajo las directivas del **2do Parcial** en lugar del 1er Parcial, simplificando la auditoría de registros transitorios.
+
+### 5.2 Estructura de Comparación Modular y Restauración Granular (`restoreSegment`)
+
+A través de `ComparadorBackupPage.vue`, el usuario visualiza una interfaz interactiva en paralelo (Diff Side-by-Side) que resalta las discrepancias en rojo y verde. La restauración no es de tipo "todo o nada"; se realiza de manera granular a nivel de registro a través del método `/api/backups/restore` (`restoreSegment`), permitiendo recuperar únicamente partes sanas:
+
+```mermaid
+graph TD
+    B[Base de Datos de Backup] --> C{Tipo de Segmento a Restaurar}
+    C -->|asignatura| D[Restaurar campos de interés: nombre, justificación, metodología, etc.]
+    C -->|tema| E[Restaurar contenidos temáticos procedimentales/actitudinales/conceptuales]
+    E --> F[Eliminación en cascada manual de logros antiguos]
+    F --> G[Copia profunda de Logros Esperados e Indicadores de Backup]
+    C -->|planificacion_personal| H[Restaurar cronogramas y firmas de avance de docente individual]
+```
+
+### 5.3 Tabla de Endpoints del Comparador de Respaldo
+
+Todos los endpoints están protegidos bajo middleware de autenticación y requieren privilegios administrativos.
+
+| Endpoint | Método | Parámetros Clave | Propósito Técnico |
+|---|---|---|---|
+| `/api/backups/list` | `GET` | Ninguno | Escanea la base de datos de MySQL buscando nombres con prefijo de base de datos de respaldo y devuelve la lista activa. |
+| `/api/backups/search` | `GET` | `backup_db`, `q` | Realiza búsquedas difusas (`LIKE`) de asignaturas registradas dentro de la base de datos de respaldo. |
+| `/api/backups/compare` | `POST` | `backup_db`, `codigo`, `current_id`, `backup_id` | Compara asignatura, unidades, temas (y sus logros) entre la base de datos en producción y el respaldo. Devuelve la matriz diff. |
+| `/api/backups/restore` | `POST` | `type`, `target_id`, `backup_id`, `backup_db`, `field` (opcional) | Ejecuta el método `restoreSegment` para sobreescribir un fragmento específico resguardando relaciones foráneas. |
+</script>
+
+  <script>
+    // 1. Mobile Menu Toggle Logic
+    const menuToggle = document.getElementById('menu-toggle');
+    const sidebar = document.getElementById('sidebar');
+    let isSidebarOpen = false;
+    
+    menuToggle.addEventListener('click', () => {
+      isSidebarOpen = !isSidebarOpen;
+      if (isSidebarOpen) {
+        sidebar.classList.remove('-translate-x-full');
+        document.getElementById('menu-icon').setAttribute('d', 'M6 18L18 6M6 6l12 12');
+      } else {
+        sidebar.classList.add('-translate-x-full');
+        document.getElementById('menu-icon').setAttribute('d', 'M4 6h16M4 12h16M4 18h16');
+      }
+    });
+
+    // 2. Parse Markdown
+    const rawMarkdown = document.getElementById('markdown-content').textContent;
+    let parsedHtml = marked.parse(rawMarkdown);
+    
+    // Rewrite Markdown links (.md -> .html)
+    // Links in docs folder are like 'docs/01_...' or '../docs/01_...' or '01_...'
+    parsedHtml = parsedHtml.replace(/href="([^"]+)\.md(#.*)?"/g, (match, path, hash) => {
+      const basename = path.split('/').pop();
+      const newPath = basename + '.html' + (hash || '');
+      return `href="${newPath}"`;
+    });
+    
+    // Also rewrite README.md links to README.html
+    parsedHtml = parsedHtml.replace(/href="README\.md"/g, 'href="README.html"');
+    
+    const contentEl = document.getElementById('content');
+    contentEl.innerHTML = parsedHtml;
+
+    // 3. Convert language-mermaid blocks to raw divs for Mermaid.js
+    document.querySelectorAll('pre code.language-mermaid').forEach((block) => {
+      const pre = block.parentElement;
+      const mermaidCode = block.textContent.trim();
+      const div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = mermaidCode;
+      pre.replaceWith(div);
+    });
+
+    // 4. Style Alert Callouts (GitHub style blockquotes)
+    document.querySelectorAll('blockquote').forEach((bq) => {
+      let html = bq.innerHTML;
+      const alerts = {
+        'NOTE': {
+          title: 'Nota',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>',
+          bg: 'bg-blue-950/40 border-blue-500 text-blue-200',
+          titleColor: 'text-blue-400'
+        },
+        'TIP': {
+          title: 'Consejo',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>',
+          bg: 'bg-emerald-950/40 border-emerald-500 text-emerald-200',
+          titleColor: 'text-emerald-400'
+        },
+        'IMPORTANT': {
+          title: 'Importante',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-violet-950/40 border-violet-500 text-violet-200',
+          titleColor: 'text-violet-400'
+        },
+        'WARNING': {
+          title: 'Advertencia',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-amber-950/40 border-amber-500 text-amber-200',
+          titleColor: 'text-amber-400'
+        },
+        'CAUTION': {
+          title: 'Precaución',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-rose-950/40 border-rose-500 text-rose-200',
+          titleColor: 'text-rose-400'
+        }
+      };
+      
+      for (const [key, val] of Object.entries(alerts)) {
+        const pattern = new RegExp(`\\[!\${key}\\]`, 'g');
+        if (pattern.test(html)) {
+          let cleaned = html.replace(pattern, '').replace(/^\s*<br\s*\/?>\s*/i, '');
+          const container = document.createElement('div');
+          container.className = `my-6 p-4 rounded-r-lg border-l-4 ${val.bg}`;
+          container.innerHTML = `
+            <div class="flex items-center gap-2 font-bold mb-2 ${val.titleColor}">
+              ${val.icon}
+              <span>${val.title}</span>
+            </div>
+            <div class="alert-content text-slate-300 font-normal">${cleaned}</div>
+          `;
+          bq.replaceWith(container);
+          break;
+        }
+      }
+    });
+
+    // 5. Initialize Mermaid
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      securityLevel: 'loose',
+      themeVariables: {
+        background: '#0f172a',
+        primaryColor: '#6366f1',
+        primaryTextColor: '#f8fafc',
+        lineColor: '#334155'
+      }
+    });
+  </script>
+</body>
+</html>

@@ -20,6 +20,8 @@ const navItems = [
   { file: '05_planificacion_semestral.html', label: '📅 05. Planificación Semestral', source: 'docs/05_planificacion_semestral.md' },
   { file: '06_control_clase_seguimiento.html', label: '📝 06. Control y Seguimiento', source: 'docs/06_control_clase_seguimiento.md' },
   { file: '07_banco_preguntas_evaluaciones.html', label: '🎯 07. Banco y Evaluaciones', source: 'docs/07_banco_preguntas_evaluaciones.md' },
+  { file: '08_gestion_evaluaciones_y_examenes.html', label: '⚙️ 08. Gestión de Evaluaciones', source: 'docs/08_gestion_evaluaciones_y_examenes.md' },
+  { file: '09_sincronizacion_y_patrones.html', label: '🔄 09. Sincronización y Motores', source: 'docs/09_sincronizacion_y_patrones.md' },
   { file: 'diagrama_er_completo.html', label: '🗄️ Diagrama ER Completo', source: 'docs/diagrama_er_completo.md' },
   { file: 'endpoints.html', label: '🔌 Endpoints de la API', source: 'docs/endpoints.md' }
 ];
