@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SISA - Endpoints de la API</title>
+  <!-- Tailwind CSS Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js for markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Mermaid.js for visual flows -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <!-- Google Fonts: Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #020617; }
+    /* Custom markdown classes */
+    .markdown-body h1 { font-size: 2rem; font-weight: 800; border-bottom: 1px solid #1e293b; padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.25rem; color: #f8fafc; }
+    .markdown-body h2 { font-size: 1.5rem; font-weight: 700; border-bottom: 1px solid #1e293b; padding-bottom: 0.35rem; margin-top: 1.75rem; margin-bottom: 1rem; color: #f1f5f9; }
+    .markdown-body h3 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #e2e8f0; }
+    .markdown-body h4 { font-size: 1.1rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #cbd5e1; }
+    .markdown-body p { margin-top: 0; margin-bottom: 1rem; line-height: 1.75; color: #cbd5e1; }
+    .markdown-body ul, .markdown-body ol { margin-top: 0; margin-bottom: 1rem; padding-left: 1.75rem; }
+    .markdown-body ul { list-style-type: disc; }
+    .markdown-body ol { list-style-type: decimal; }
+    .markdown-body li { margin-top: 0.25rem; margin-bottom: 0.25rem; line-height: 1.625; color: #cbd5e1; }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-top: 1.25rem; margin-bottom: 1.25rem; display: block; overflow-x: auto; }
+    .markdown-body th, .markdown-body td { border: 1px solid #334155; padding: 0.6rem 0.8rem; text-align: left; min-width: 120px; }
+    .markdown-body th { background-color: #1e293b; font-weight: 600; color: #f8fafc; }
+    .markdown-body td { color: #cbd5e1; }
+    .markdown-body tr:nth-child(even) td { background-color: rgba(30, 41, 59, 0.25); }
+    .markdown-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; background-color: rgba(30, 41, 59, 0.6); padding: 0.2rem 0.4rem; border-radius: 0.25rem; color: #fb7185; }
+    .markdown-body pre { background-color: #0f172a; border: 1px solid #1e293b; border-radius: 0.5rem; padding: 1rem; overflow-x: auto; margin-top: 1.25rem; margin-bottom: 1.25rem; }
+    .markdown-body pre code { background-color: transparent; padding: 0; border-radius: 0; color: #e2e8f0; font-size: 0.95em; }
+    .markdown-body hr { border: 0; border-top: 1px solid #1e293b; margin: 1.75rem 0; }
+    .markdown-body a { color: #818cf8; text-decoration: none; font-weight: 500; transition: color 0.2s; }
+    .markdown-body a:hover { color: #c084fc; text-decoration: underline; }
+    
+    /* Mermaid styling */
+    .mermaid {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+      border-radius: 0.5rem;
+      margin: 1.25rem 0;
+      display: flex;
+      justify-content: center;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 flex min-h-screen">
+
+  <!-- Mobile Toggle Button -->
+  <button id="menu-toggle" class="lg:hidden fixed bottom-5 right-5 z-50 bg-indigo-600 text-white p-3.5 rounded-full shadow-lg hover:bg-indigo-500 focus:outline-none transition">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path id="menu-icon" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+    </svg>
+  </button>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="w-80 bg-slate-900 border-r border-slate-800 flex flex-col fixed inset-y-0 left-0 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
+    <div class="p-6 border-b border-slate-800 bg-slate-950/80">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8.5 h-8.5 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-indigo-500/20">S</div>
+        <div>
+          <h1 class="text-base font-bold text-slate-100 leading-tight">SISA 2.0 Docs</h1>
+          <p class="text-[10px] text-slate-500">Documentación Técnica Local</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Sidebar Navigation -->
+    <nav class="flex-1 overflow-y-auto p-4 space-y-1">
+      <a href="README.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🚀 Portal Principal
+    </a>
+<a href="01_autenticacion_seguridad.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🔒 01. Autenticación y Seguridad
+    </a>
+<a href="02_estructura_academica.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🏫 02. Estructura Académica
+    </a>
+<a href="03_pac_y_bibliografia.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      📚 03. PAC y Bibliografía
+    </a>
+<a href="04_materias_comunes.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🔗 04. Materias Comunes
+    </a>
+<a href="05_planificacion_semestral.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      📅 05. Planificación Semestral
+    </a>
+<a href="06_control_clase_seguimiento.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      📝 06. Control y Seguimiento
+    </a>
+<a href="07_banco_preguntas_evaluaciones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🎯 07. Banco y Evaluaciones
+    </a>
+<a href="diagrama_er_completo.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🗄️ Diagrama ER Completo
+    </a>
+<a href="endpoints.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm bg-indigo-950/70 text-indigo-300 border-l-4 border-indigo-500 pl-3 font-semibold shadow-inner">
+      🔌 Endpoints de la API
+    </a>
+    </nav>
+    
+    <div class="p-4 border-t border-slate-800 text-center text-xs text-slate-500 bg-slate-950/40">
+      Desarrollado para UNITEPC
+    </div>
+  </aside>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 lg:pl-80 min-h-screen flex flex-col bg-slate-950">
+    <div class="flex-1 max-w-4xl w-full mx-auto px-6 py-12 lg:px-12">
+      <article id="content" class="markdown-body">
+        <!-- Rendered markdown goes here -->
+      </article>
+    </div>
+  </main>
+
+  <!-- Raw Markdown Content Injected Safely -->
+  <script type="text/markdown" id="markdown-content"># Documentación Técnica de Endpoints (Incremental)
+
+Este documento servirá como referencia viva y verificada de los endpoints del sistema. Se actualizará módulo por módulo conforme se verifique contra el Frontend desplegado.
+
+---
+
+## Módulo 1: Asignaturas y Planificación
+**Estado de Verificación:** ✅ COMPLETADO PARCIAL (Detalles + Temas)
+**Archivo Frontend Referencia:** `Academico/src/pages/documentacion/AsignaturaEditPage.vue`
+
+### 1.1 Detalles de Asignatura (Información General)
+Permite editar la información base, incluyendo campos extendidos que no vienen de la API.
+
+- **Método:** `PUT`
+- **URL:** `/api/asignaturas/{ID}`
+- **Controlador:** `AsignaturaController@update`
+
+#### Payload (JSON Request)
+El frontend envía estos campos. El backend los mapea internamente a las columnas correctas.
+
+```json
+{
+  "sigla": "SIS-301",
+  "descripcion": "Introducción a...",
+  "objetivo_general": "Desarrollar competencias...", // Se guarda en 'proposito_general'
+  "justificacion": "La ingeniería...",
+  "saberes_previos": "Programación I...",            // Se guarda en 'requisitos'
+  "contenido_minimo": "Ciclo de vida...",
+  "metodologia_ensenanza": "Clases magistrales...",  // Se guarda en 'metodologia_general'
+  "criterios_evaluacion": "Exámenes...",             // Se guarda en 'sistema_evaluacion'
+  "horas_teoricas": 40,
+  "horas_practicas": 20,
+  "horas_laboratorio": 20
+}
+```
+
+### 1.2 Editar Tema Completo (Unificado)
+Este endpoint permite guardar todos los datos del formulario de un tema: contenidos, estrategias, evaluaciones y bibliografía.
+
+- **Método:** `PUT`
+- **URL:** `/api/planificacion/temas/{ID}/contenido`
+- **Controlador:** `PlanificacionController@updateTema`
+
+#### Payload (JSON Request)
+Estructura exacta que envía el Frontend (`formTema`):
+
+```json
+{
+  "contenidos": {
+    "conceptual": ["Concepto 1", "Concepto 2"],    // Array de Strings
+    "procedimental": ["Procedimiento 1"],           // Array de Strings
+    "actitudinal": ["Actitud 1"]                    // Array de Strings
+  },
+  "estrategias": {
+    "metodologicas": "Explicación magistral...",    // Texto (TextArea)
+    "aprendizaje": "El estudiante resume...",       // Texto (TextArea)
+    "recursos": ["Proyector", "Pizarra"]            // Array de Strings
+  },
+  "evaluacion": {
+    "formativa": {
+      "actividades": ["Debate"],                    // Array (Select Multiple)
+      "instrumentos": ["Lista de Cotejo"],          // Array (Select Multiple)
+      "evidencias": ["Informe"]                     // Array (Select Multiple)
+    },
+    "sumativa": {
+      "actividades": ["Examen Final"],
+      "instrumentos": ["Rúbrica"],
+      "evidencias": ["Examen Escrito"]
+    }
+  },
+  "referencias_bibliograficas": [
+    {
+      "bibliografia_id": 15,                        // ID de la tabla `bibliografias`
+      "pagina_desde": 10,                           // Entero
+      "pagina_hasta": 25                            // Entero
+    }
+  ]
+}
+```
+
+#### Tablas en Base de Datos
+- **`temas`**:
+    - `contenido_conceptual` (JSON)
+    - `contenido_procedimental` (JSON)
+    - `contenido_actitudinal` (JSON)
+    - `estrategias_metodologicas` (TEXT)
+    - `estrategias_aprendizaje` (TEXT)
+    - `estrategias_recursos` (JSON)
+    - `evaluacion_formativa` (JSON)
+    - `evaluacion_sumativa` (JSON)
+- **`tema_bibliografia`** (Pivot):
+    - `tema_id`
+    - `bibliografia_id`
+    - `pagina_desde`
+    - `pagina_hasta`
+
+---
+
+### 1.2 Obtener Datos del Tema
+Recupera el objeto completo para poblar la vista.
+
+- **Método:** `GET`
+- **URL:** `/api/planificacion/temas/{ID}/full`
+- **Respuesta:** Mismo formato JSON que el Payload de envío, más IDs y timestamps.
+
+---
+
+### 1.3 Secuencia Didáctica
+Endpoints para gestionar los "momentos" de la clase (Inicio, Desarrollo, Cierre).
+
+- **Crear Momento:** `POST /api/planificacion/temas/{ID}/secuencias`
+    - Payload: `{ "momento": "INICIO", "actividad": "...", "duracion_minutos": 15 }`
+- **Eliminar Momento:** `DELETE /api/planificacion/secuencias/{ID}`
+- **Tabla:** `secuencias_temas`
+
+---
+
+### 1.4 Banco de Preguntas
+Endpoints para gestionar preguntas asociadas a Logros Esperados.
+
+- **Importar Excel:** `POST /api/banco-preguntas/import`
+    - Payload (Multipart): `file` (.xlsx), `logro_esperado_id`.
+- **Listar:** `GET /api/banco-preguntas?logro_id={ID}`
+- **Tabla:** `banco_preguntas`
+
+---
+
+## Módulo 2: Gestión de Carreras (Dashboard)
+**Estado de Verificación:** ✅ COMPLETADO
+**Archivo Frontend Referencia:** `Academico/src/pages/admin/CarrerasPage.vue`
+
+Este módulo funciona en modo **Sincronización Híbrida**. Al consultar la lista, el backend recupera datos frescos de la API University, actualiza la base de datos local y devuelve los registros locales enriquecidos con contadores y estados.
+
+### 2.1 Listar Carreras (Con Filtros y Estadísticas)
+Retorna la lista de carreras activas, incluyendo contadores de asignaturas y docentes.
+
+- **Método:** `GET`
+- **URL:** `/api/carreras`
+- **Parámetros (Query):**
+    - `sede_id` (Opcional): ID de la sede para filtrar (Ej: `1` para Cochabamba).
+- **Controlador:** `CarreraController@index`
+
+#### Respuesta (JSON)
+Formato exacto esperado por el Store `carreras.js`.
+
+```json
+[
+  {
+    "id": 1,
+    "nombre": "Ingeniería de Sistemas",
+    "codigo": "SIS",            // Usado en las tarjetas
+    "sede_id": 1,              // Mapeado a partir del branchCode (CBA -> 1)
+    "activo": true,
+    "asignaturas_count": 45,   // Contador real de base de datos local
+    "docentes_count": 12       // Contador real (basado en asignaturas vinculadas)
+  }
+]
+```
+
+---
+
+## Módulo 3: Planificación Semestral (Nuevo)
+**Estado de Verificación:** 🔄 EN PROGRESO (Backend Listo)
+**Archivo Frontend Referencia:** `Academico/src/pages/documentacion/PlanificacionPage.vue`
+
+Este módulo maneja la distribución de temas en el tiempo (Generador Automático).
+
+### 3.1 Obtener Estado Completo
+Recupera la configuración de calendario, los horarios semanales y la lista de sesiones generadas (si existen).
+
+- **Método:** `GET`
+- **URL:** `/api/planificacion-semestral/{asignaturaId}`
+- **Respuesta:**
+  ```json
+  {
+    "config": { "fecha_inicio_clases": "2026-02-09", "fecha_fin_clases": "2026-06-27", "gestion_academica": "2026-I" },
+    "horarios": [ { "dia": "Martes", "hora_inicio": "07:00", "hora_fin": "09:00", "aula": "301" } ],
+    "planificacion": [
+       { "numero_sesion": 1, "fecha": "2026-02-10", "tema": "Intro", "contenido_conceptual": "..." }
+    ]
+  }
+  ```
+
+### 3.2 Guardar Configuración y Horarios
+Guarda las fechas del semestre y los horarios de clase (Lunes, Martes...).
+
+- **Método:** `POST`
+- **URL:** `/api/planificacion-semestral/{asignaturaId}/config`
+- **Payload:**
+  ```json
+  {
+    "fecha_inicio_clases": "2026-02-09",
+    "fecha_fin_clases": "2026-06-27",
+    "gestion_academica": "2026-I",
+    "horarios": [ { "dia": "Martes", "hora_inicio": "07:00", "hora_fin": "09:00", "aula": "301" } ]
+  }
+  ```
+
+### 3.3 Guardar Planificación (Sesiones)
+Guarda (sobrescribe) el listado de sesiones generado o editado en el grid.
+
+- **Método:** `POST`
+- **URL:** `/api/planificacion-semestral/{asignaturaId}/sesiones`
+- **Payload:**
+  ```json
+  {
+    "sesiones": [
+      {
+        "numeroGlobal": 1,
+        "fecha": "10/02/26",
+        "semana": 1,
+        "periodoExamen": null,
+        "conceptual": "Texto editable...",
+        "procedimental": "Texto editable...",
+        "actitudinal": "Texto editable...",
+        "criteriosDesempeno": "...", 
+        "instrumentosEvaluacion": "..."
+
+
+### 3.4 Generar Planificación Automática
+Genera 20 semanas de sesiones basado en el calendario y horario de la asignatura.
+**Lógica de Negocio:**
+- Detecta automáticamente las semanas de examen: **Sem 7-8 (1er Parcial)**, **Sem 14-15 (2do Parcial)**, **Sem 18-19 (Final)**, **Sem 20 (2da Instancia)**.
+- En semanas de examen, no se crea contenido, solo se marca el periodo.
+
+- **Método:** `POST`
+- **URL:** `/api/planificacion-semestral/{asignaturaId}/generar`
+- **Respuesta:** `{ "message": "Planificación generada", "total": 45 }`
+
+### 3.5 Copiar Planificación (Unificación)
+Permite importar el **contenido** (temas, metodologías, evaluaciones) de otra asignatura (ej: Grupo 1 -> Grupo 2), manteniendo las fechas del grupo destino.
+
+- **Método:** `POST`
+- **URL:** `/api/planificacion-semestral/{asignaturaId}/copiar`
+- **Payload:**
+  ```json
+  {
+    "source_asignatura_id": 5  // ID de la asignatura "Master" o fuente
+  }
+  ```
+
+
+### 3.4 Generar Planificación Automática
+Genera 20 semanas de sesiones basado en el calendario y horario de la asignatura.
+**Lógica de Negocio:**
+- Detecta automáticamente las semanas de examen: **Sem 7-8 (1er Parcial)**, **Sem 14-15 (2do Parcial)**, **Sem 18-19 (Final)**, **Sem 20 (2da Instancia)**.
+- En semanas de examen, no se crea contenido, solo se marca el periodo.
+
+- **Método:** `POST`
+- **URL:** `/api/planificacion-semestral/{asignaturaId}/generar`
+- **Respuesta:** `{ "message": "Planificación generada", "total": 45 }`
+
+### 3.5 Copiar Planificación (Unificación)
+Permite importar el **contenido** (temas, metodologías, evaluaciones) de otra asignatura (ej: Grupo 1 -> Grupo 2), manteniendo las fechas del grupo destino.
+
+- **Método:** `POST`
+- **URL:** `/api/planificacion-semestral/{asignaturaId}/copiar`
+- **Payload:**
+  ```json
+  {
+    "source_asignatura_id": 5  // ID de la asignatura "Master" o fuente
+  }
+  ```
+
+---
+
+## Módulo 4: Gestión de Bibliografía
+**Estado de Verificación:** 🔄 COMPLETADO
+**Archivo Frontend Referencia:** `Academico/src/pages/documentacion/AsignaturaEditPage.vue` (Sección Bibliografía)
+
+Gestión maestra de libros y recursos de la asignatura.
+
+### 4.1 CRUD Bibliografía
+- **Listar:** `GET /api/bibliografias?asignatura_id={ID}`
+- **Crear:** `POST /api/bibliografias`
+- **Actualizar:** `PUT /api/bibliografias/{ID}`
+- **Eliminar:** `DELETE /api/bibliografias/{ID}`
+
+#### Payload (JSON)
+Campos soportados según la vista "Nueva Bibliografía":
+
+```json
+{
+  "asignatura_id": 1,
+  "titulo": "Ingeniería del Software",
+  "autor": "Roger Pressman",
+  "editorial": "McGraw Hill",
+  "edicion": "8va Edición",
+  "anio": "2015",
+  "tipo": "Basica",          // Select: Basica | Complementaria
+  "isbn": "978-1234567890",  // Opcional (Nullable en BD)
+  "paginas": "100-150"       // Opcional. Texto libre.
+}
+```
+
+> **Nota:** El campo `paginas` es referencial. El detalle exacto se gestiona en el Plan de Clase. El `isbn` también es opcional.
+
+---
+
+## Módulo 5: Unidades y Logros de Aprendizaje
+**Estado de Verificación:** 🔄 COMPLETADO
+**Archivo Frontend Referencia:** `Academico/src/pages/documentacion/AsignaturaEditPage.vue` (Sección Unidades)
+
+Gestión de la estructura curricular, logros esperados e indicadores.
+
+### 5.0 Gestión Detalles de Unidad
+Editar el "Elemento de Competencia" o descripción de la unidad.
+
+- **URL:** `PUT /api/planificacion/unidades/{ID}`
+- **Payload:** `{ "objetivo": "Analiza e interpreta los fundamentos..." }`
+
+### 5.1 Gestión de Logros Esperados
+Cada tema tiene múltiples logros. Ahora incluye el "Periodo" o parcial.
+
+- **Crear Logro:** `POST /api/planificacion/temas/{ID}/logros`
+- **Eliminar:** `DELETE /api/planificacion/logros/{ID}`
+
+#### Payload (JSON)
+```json
+{
+  "descripcion": "Define correctamente el concepto de ingeniería...",
+  "tipo_logro": "Saber",          // Saber | Hacer | Ser
+  "periodo": "1er Parcial"        // Nuevo Campo: Periodo de evaluación al que pertenece
+}
+```
+
+### 5.2 Gestión de Indicadores
+Cada logro tiene múltiples indicadores de evidencia.
+
+- **Crear Indicador:** `POST /api/planificacion/logros/{ID}/indicadores`
+- **Payload:** `{ "descripcion": "Explica con precisión..." }`
+- **Eliminar:** `DELETE /api/planificacion/indicadores/{ID}`
+
+---
+
+## Módulo 6: Banco de Preguntas
+**Estado de Verificación:** 🔄 COMPLETADO
+**Archivo Frontend Referencia:** `Academico/src/pages/documentacion/BancoPreguntasPage.vue`
+
+Gestión de preguntas vinculadas a un Logro Esperado específico. Soporta carga masiva.
+
+### 6.1 CRUD Preguntas
+- **Listar:** `GET /api/banco-preguntas?logro_id={ID}`
+- **Crear:** `POST /api/banco-preguntas`
+- **Eliminar:** `DELETE /api/banco-preguntas/{ID}`
+
+#### Payload (JSON)
+Coincide con el formulario "Nueva Pregunta".
+
+```json
+{
+  "logro_esperado_id": 15,
+  "enunciado": "¿Cuál es el objetivo principal...?",
+  "tipo": "SELECCION_UNICA",   // SELECCION_UNICA | SELECCION_MULTIPLE | FALSO_VERDADERO
+  "dificultad": "Media",       // Alta | Media | Baja
+  "peso": 10,                  // Entero (Puntaje)
+  "opciones": [
+    { "id": "A", "text": "Opción 1" },
+    { "id": "B", "text": "Opción 2" }
+  ],
+  "respuesta_correcta": "B"    // ID de la opción correcta (o Array ["A","B"] si es múltiple)
+  // "created_by": 1           // (Automático) Se guarda el ID del usuario autenticado.
+}
+```
+
+### 6.2 Importar desde Excel
+(Igual que antes)
+
+---
+
+## Módulo 7: Evaluaciones y Patrón
+**Estado de Verificación:** 🔄 EN PROCESO
+**Archivo Frontend Referencia:** `Academico/src/pages/documentacion/EvaluacionesPage.vue`
+
+Gestión de exámenes parciales, configuración, y generación de patrones de respuestas.
+
+### 7.1 Crear Evaluación (y Generar Patrón Automaticamente)
+Crea la configuración del examen y genera aleatoriamente una versión "Tipo A" seleccionando preguntas de los Logros del Parcial indicado.
+
+- **Método:** `POST`
+- **URL:** `/api/evaluaciones`
+- **Payload (JSON):**
+    ```json
+    {
+      "asignatura_id": 5,
+      "nombre": "Examen 1er Parcial - Anatomía I",
+      "parcial": "1er Parcial",      // Sirve para filtrar preguntas por Logro.
+      "fecha_examen": "2026-03-15",
+      "hora_inicio": "08:00",
+      "duracion_minutos": 45,
+      "mezclar_preguntas": true,
+      "mezclar_opciones": true, // Para el render en linea, no afecta patrón impreso salvo el orden.
+      
+      // Distribución de Dificultad (Suma DEBE ser <= total preguntas disponibles)
+      "distribucion_facil": 5,
+      "distribucion_medio": 10,
+      "distribucion_dificil": 5
+    }
+    ```
+- **Respuesta:** Objeto `Evaluacion` con array `examenes_generados`.
+
+### 7.2 Obtener Datos del Patrón (PDF)
+Devuelve la estructura JSON lista para renderizar la vista "Patrón de Respuestas" (Círculos A-E).
+
+- **Método:** `GET`
+- **URL:** `/api/examenes-generados/{id}/patron`
+- **Respuesta (Ejemplo):**
+    ```json
+    {
+      "institucion": "UNIVERSIDAD TÉCNICA PRIVADA COSMOS",
+      "asignatura": "Anatomía I",
+      "examen_titulo": "1er Parcial",
+      "tipo_examen": "TIPO A",
+      "fecha": "2026-03-15",
+      "preguntas": [
+        { "numero": 1, "respuesta_correcta": "B" },
+        { "numero": 2, "respuesta_correcta": "A" },
+        // ... hasta la 20
+      ]
+    }
+    ```
+Carga masiva de preguntas para un logro.
+
+- **Método:** `POST`
+- **URL:** `/api/banco-preguntas/import`
+- **Body (FormData):**
+    - `file`: Archivo `.xlsx`
+    - `logro_esperado_id`: ID del logro destino.
+
+#### Mapeo de Sedes (Backend)
+El sistema sincroniza automáticamente los códigos de la API con los IDs del Frontend:
+- `CBA`, `CBB` -> **1** (Cochabamba)
+- `LPZ` -> **2** (La Paz)
+- `SCZ` -> **3** (Santa Cruz)
+- (Resto de sedes mapeadas secuencialmente)
+</script>
+
+  <script>
+    // 1. Mobile Menu Toggle Logic
+    const menuToggle = document.getElementById('menu-toggle');
+    const sidebar = document.getElementById('sidebar');
+    let isSidebarOpen = false;
+    
+    menuToggle.addEventListener('click', () => {
+      isSidebarOpen = !isSidebarOpen;
+      if (isSidebarOpen) {
+        sidebar.classList.remove('-translate-x-full');
+        document.getElementById('menu-icon').setAttribute('d', 'M6 18L18 6M6 6l12 12');
+      } else {
+        sidebar.classList.add('-translate-x-full');
+        document.getElementById('menu-icon').setAttribute('d', 'M4 6h16M4 12h16M4 18h16');
+      }
+    });
+
+    // 2. Parse Markdown
+    const rawMarkdown = document.getElementById('markdown-content').textContent;
+    let parsedHtml = marked.parse(rawMarkdown);
+    
+    // Rewrite Markdown links (.md -> .html)
+    // Links in docs folder are like 'docs/01_...' or '../docs/01_...' or '01_...'
+    parsedHtml = parsedHtml.replace(/href="([^"]+)\.md(#.*)?"/g, (match, path, hash) => {
+      const basename = path.split('/').pop();
+      const newPath = basename + '.html' + (hash || '');
+      return `href="${newPath}"`;
+    });
+    
+    // Also rewrite README.md links to README.html
+    parsedHtml = parsedHtml.replace(/href="README\.md"/g, 'href="README.html"');
+    
+    const contentEl = document.getElementById('content');
+    contentEl.innerHTML = parsedHtml;
+
+    // 3. Convert language-mermaid blocks to raw divs for Mermaid.js
+    document.querySelectorAll('pre code.language-mermaid').forEach((block) => {
+      const pre = block.parentElement;
+      const mermaidCode = block.textContent.trim();
+      const div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = mermaidCode;
+      pre.replaceWith(div);
+    });
+
+    // 4. Style Alert Callouts (GitHub style blockquotes)
+    document.querySelectorAll('blockquote').forEach((bq) => {
+      let html = bq.innerHTML;
+      const alerts = {
+        'NOTE': {
+          title: 'Nota',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>',
+          bg: 'bg-blue-950/40 border-blue-500 text-blue-200',
+          titleColor: 'text-blue-400'
+        },
+        'TIP': {
+          title: 'Consejo',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>',
+          bg: 'bg-emerald-950/40 border-emerald-500 text-emerald-200',
+          titleColor: 'text-emerald-400'
+        },
+        'IMPORTANT': {
+          title: 'Importante',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-violet-950/40 border-violet-500 text-violet-200',
+          titleColor: 'text-violet-400'
+        },
+        'WARNING': {
+          title: 'Advertencia',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-amber-950/40 border-amber-500 text-amber-200',
+          titleColor: 'text-amber-400'
+        },
+        'CAUTION': {
+          title: 'Precaución',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-rose-950/40 border-rose-500 text-rose-200',
+          titleColor: 'text-rose-400'
+        }
+      };
+      
+      for (const [key, val] of Object.entries(alerts)) {
+        const pattern = new RegExp(`\\[!\${key}\\]`, 'g');
+        if (pattern.test(html)) {
+          let cleaned = html.replace(pattern, '').replace(/^\s*<br\s*\/?>\s*/i, '');
+          const container = document.createElement('div');
+          container.className = `my-6 p-4 rounded-r-lg border-l-4 ${val.bg}`;
+          container.innerHTML = `
+            <div class="flex items-center gap-2 font-bold mb-2 ${val.titleColor}">
+              ${val.icon}
+              <span>${val.title}</span>
+            </div>
+            <div class="alert-content text-slate-300 font-normal">${cleaned}</div>
+          `;
+          bq.replaceWith(container);
+          break;
+        }
+      }
+    });
+
+    // 5. Initialize Mermaid
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      securityLevel: 'loose',
+      themeVariables: {
+        background: '#0f172a',
+        primaryColor: '#6366f1',
+        primaryTextColor: '#f8fafc',
+        lineColor: '#334155'
+      }
+    });
+  </script>
+</body>
+</html>

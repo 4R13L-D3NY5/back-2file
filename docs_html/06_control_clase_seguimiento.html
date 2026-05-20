@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SISA - 06. Control y Seguimiento</title>
+  <!-- Tailwind CSS Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js for markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Mermaid.js for visual flows -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <!-- Google Fonts: Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #020617; }
+    /* Custom markdown classes */
+    .markdown-body h1 { font-size: 2rem; font-weight: 800; border-bottom: 1px solid #1e293b; padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.25rem; color: #f8fafc; }
+    .markdown-body h2 { font-size: 1.5rem; font-weight: 700; border-bottom: 1px solid #1e293b; padding-bottom: 0.35rem; margin-top: 1.75rem; margin-bottom: 1rem; color: #f1f5f9; }
+    .markdown-body h3 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #e2e8f0; }
+    .markdown-body h4 { font-size: 1.1rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #cbd5e1; }
+    .markdown-body p { margin-top: 0; margin-bottom: 1rem; line-height: 1.75; color: #cbd5e1; }
+    .markdown-body ul, .markdown-body ol { margin-top: 0; margin-bottom: 1rem; padding-left: 1.75rem; }
+    .markdown-body ul { list-style-type: disc; }
+    .markdown-body ol { list-style-type: decimal; }
+    .markdown-body li { margin-top: 0.25rem; margin-bottom: 0.25rem; line-height: 1.625; color: #cbd5e1; }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-top: 1.25rem; margin-bottom: 1.25rem; display: block; overflow-x: auto; }
+    .markdown-body th, .markdown-body td { border: 1px solid #334155; padding: 0.6rem 0.8rem; text-align: left; min-width: 120px; }
+    .markdown-body th { background-color: #1e293b; font-weight: 600; color: #f8fafc; }
+    .markdown-body td { color: #cbd5e1; }
+    .markdown-body tr:nth-child(even) td { background-color: rgba(30, 41, 59, 0.25); }
+    .markdown-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; background-color: rgba(30, 41, 59, 0.6); padding: 0.2rem 0.4rem; border-radius: 0.25rem; color: #fb7185; }
+    .markdown-body pre { background-color: #0f172a; border: 1px solid #1e293b; border-radius: 0.5rem; padding: 1rem; overflow-x: auto; margin-top: 1.25rem; margin-bottom: 1.25rem; }
+    .markdown-body pre code { background-color: transparent; padding: 0; border-radius: 0; color: #e2e8f0; font-size: 0.95em; }
+    .markdown-body hr { border: 0; border-top: 1px solid #1e293b; margin: 1.75rem 0; }
+    .markdown-body a { color: #818cf8; text-decoration: none; font-weight: 500; transition: color 0.2s; }
+    .markdown-body a:hover { color: #c084fc; text-decoration: underline; }
+    
+    /* Mermaid styling */
+    .mermaid {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+      border-radius: 0.5rem;
+      margin: 1.25rem 0;
+      display: flex;
+      justify-content: center;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 flex min-h-screen">
+
+  <!-- Mobile Toggle Button -->
+  <button id="menu-toggle" class="lg:hidden fixed bottom-5 right-5 z-50 bg-indigo-600 text-white p-3.5 rounded-full shadow-lg hover:bg-indigo-500 focus:outline-none transition">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path id="menu-icon" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+    </svg>
+  </button>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="w-80 bg-slate-900 border-r border-slate-800 flex flex-col fixed inset-y-0 left-0 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
+    <div class="p-6 border-b border-slate-800 bg-slate-950/80">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8.5 h-8.5 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-indigo-500/20">S</div>
+        <div>
+          <h1 class="text-base font-bold text-slate-100 leading-tight">SISA 2.0 Docs</h1>
+          <p class="text-[10px] text-slate-500">Documentación Técnica Local</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Sidebar Navigation -->
+    <nav class="flex-1 overflow-y-auto p-4 space-y-1">
+      <a href="README.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🚀 Portal Principal
+    </a>
+<a href="01_autenticacion_seguridad.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🔒 01. Autenticación y Seguridad
+    </a>
+<a href="02_estructura_academica.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🏫 02. Estructura Académica
+    </a>
+<a href="03_pac_y_bibliografia.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      📚 03. PAC y Bibliografía
+    </a>
+<a href="04_materias_comunes.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🔗 04. Materias Comunes
+    </a>
+<a href="05_planificacion_semestral.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      📅 05. Planificación Semestral
+    </a>
+<a href="06_control_clase_seguimiento.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm bg-indigo-950/70 text-indigo-300 border-l-4 border-indigo-500 pl-3 font-semibold shadow-inner">
+      📝 06. Control y Seguimiento
+    </a>
+<a href="07_banco_preguntas_evaluaciones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🎯 07. Banco y Evaluaciones
+    </a>
+<a href="diagrama_er_completo.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🗄️ Diagrama ER Completo
+    </a>
+<a href="endpoints.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      🔌 Endpoints de la API
+    </a>
+    </nav>
+    
+    <div class="p-4 border-t border-slate-800 text-center text-xs text-slate-500 bg-slate-950/40">
+      Desarrollado para UNITEPC
+    </div>
+  </aside>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 lg:pl-80 min-h-screen flex flex-col bg-slate-950">
+    <div class="flex-1 max-w-4xl w-full mx-auto px-6 py-12 lg:px-12">
+      <article id="content" class="markdown-body">
+        <!-- Rendered markdown goes here -->
+      </article>
+    </div>
+  </main>
+
+  <!-- Raw Markdown Content Injected Safely -->
+  <script type="text/markdown" id="markdown-content"># Módulo 6: Control de Clase y Seguimiento Offline-First (SISA 2.0)
+
+Este módulo gestiona el registro y la verificación en tiempo real del cumplimiento académico por sesión de clase. Para lidiar con zonas de baja cobertura celular o aulas subterráneas, incorpora un motor de sincronización híbrido **Offline-First** que permite a los docentes registrar firmas, avances de temas, asistencia, georreferenciación y capturar evidencias fotográficas sin internet, persistiendo los datos localmente y subiéndolos automáticamente una vez restablecida la red.
+
+---
+
+## 1. Ficha Técnica
+
+*   **Backend:** Laravel v12.x + PHP v8.2+ + Eloquent ORM + Carbon (Manejo de Tiempos).
+*   **Frontend UI:** Quasar Framework v2.x + Vue 3 (Composition API con `<script setup>`).
+*   **Gestión de Estado y Cola Local:** Pinia Stores (`sync.js` y `syncQueue.js`) con persistencia local habilitada por `pinia-plugin-persistedstate`.
+*   **Capacidades Nativas Mobile:** `@capacitor/network` (sensado de red), `@capacitor/filesystem` (almacenamiento binario local) y `@capacitor/camera` (evidencias fotográficas directas).
+*   **Controladores Backend:** `App\Http\Controllers\PlanificacionSemestralController`, `App\Http\Controllers\SeguimientoSemanalController`.
+*   **Propagación en Comunes:** `PlanificacionSemestralController::propagarSeguimientoAComunes()` con resolución basada en antigüedad de marcas de tiempo.
+
+---
+
+## 2. Arquitectura de Datos (ER)
+
+El registro de seguimiento enlaza directamente a cada sesión del cronograma individual de grupo y guarda el detalle de auditoría pedagógica, evidencias multimedia y coordenadas físicas.
+
+```mermaid
+erDiagram
+    CRONOGRAMAS {
+        bigint id PK
+        bigint asignatura_id FK
+        bigint grupo_id FK
+        bigint tema_id FK
+        integer numero_sesion
+        date fecha "Fecha programada"
+        integer semana_academica
+        boolean cumplido
+        string tipo_clase "Teórica / Práctica / Examen"
+        json contenido_items_seleccionados
+    }
+
+    SEGUIMIENTOS {
+        bigint id PK
+        bigint cronograma_id FK "1:1 con Cronograma"
+        bigint grupo_id FK
+        bigint user_id FK "Docente ejecutor"
+        date fecha "Fecha de ejecución real"
+        boolean cumplido
+        boolean tema_cumplido
+        string estado_cumplimiento "TOTAL / PARCIAL / NO"
+        text observaciones
+        json pedagogico "Detalle de secuencias y recursos"
+        boolean es_examen
+        string tipo_examen "1er Parcial / 2do Parcial / Final"
+        json georeferencia "Coordenadas lat/lng y geocerca"
+        json evidencias "Direcciones URL de fotos en S3/Storage"
+        json integracion_transversal "Investigación/Interacción"
+    }
+
+    ASISTENCIAS {
+        bigint id PK
+        bigint seguimiento_id FK
+        bigint estudiante_id FK
+        string estado "PRESENTE / FALTA / LICENCIA"
+        string observaciones
+    }
+
+    CRONOGRAMAS ||--o| SEGUIMIENTOS : ejecuta
+    SEGUIMIENTOS ||--o{ ASISTENCIAS : registra_asistencia
+```
+
+### Reglas de Negocio del Esquema:
+1.  **Enlace 1:1 Semántico:** Un `Seguimiento` pertenece a una única sesión del `Cronograma`. Si se realiza el seguimiento, el campo `cronograma.cumplido` se sincroniza con el estado de cumplimiento (`cumplido`).
+2.  **Estructura JSON Flexible:** 
+    *   `georeferencia`: Guarda `{ "latitude": double, "longitude": double, "accuracy": double, "en_rango": boolean }` para control de geocercas en sedes.
+    *   `pedagogico`: Estructura modular del avance de clase:
+        ```json
+        {
+          "aprendizaje_activo": { "desarrollado": true, "comentario": "..." },
+          "evaluacion_formativa": { "aplicado": true, "instrumento": "..." },
+          "secuencia_didactica": { "inicio": true, "desarrollo": true, "cierre": true }
+        }
+        ```
+    *   `evidencias`: Mapeo de almacenamiento en el storage de Laravel para imágenes asociadas a cada evidencia pedagógica o transversal.
+
+---
+
+## 3. Especificación de la API (Endpoints)
+
+El backend de Laravel expone endpoints REST robustos para el registro de clases de seguimiento y generación de reportes administrativos.
+
+### 3.1 Crear o Actualizar Seguimiento (Save)
+Permite enviar tanto objetos JSON tradicionales como archivos en formato `multipart/form-data` para las evidencias físicas en el mismo request.
+*   **Método:** `POST`
+*   **Ruta:** `/api/planificacion-semestral/seguimiento`
+*   **Headers:** `Content-Type: multipart/form-data`, `Authorization: Bearer <token>`
+*   **Parámetros del FormData:**
+    *   `cronograma_id`: (int) ID de la sesión planificada.
+    *   `grupo_id`: (int) ID del grupo.
+    *   `asignatura_id`: (int) ID de la asignatura base.
+    *   `fecha`: (date) "2026-05-19"
+    *   `estado_cumplimiento`: (string) `"TOTAL" | "PARCIAL" | "NO"`
+    *   `tema_cumplido`: (string) `"true" | "false"`
+    *   `observaciones`: (string) Comentarios adicionales de clase.
+    *   `pedagogico`: (json string) Metadatos pedagógicos.
+    *   `integracion_transversal`: (json string) Coordinaciones transversales.
+    *   `georeferencia`: (json string) Ubicación actual.
+    *   `evidencia_aprendizaje`: (file) Archivo binario de imagen (opcional).
+    *   `evidencia_evaluacion`: (file) Archivo binario de imagen (opcional).
+    *   `evidencia_secuencia`: (file) Archivo binario de imagen (opcional).
+*   **Response de Éxito (`200 OK`):**
+    ```json
+    {
+      "success": true,
+      "message": "Seguimiento guardado correctamente",
+      "data": {
+        "id": 482,
+        "cronograma_id": 901,
+        "estado_cumplimiento": "TOTAL",
+        "evidencias": {
+          "aprendizaje_activo": "/storage/evidencias/901_aprendizaje.jpg",
+          "evaluacion_formativa": "/storage/evidencias/901_evaluacion.jpg",
+          "secuencia_didactica": null
+        }
+      }
+    }
+    ```
+
+### 3.2 Eliminar Registro de Seguimiento
+*   **Método:** `DELETE`
+*   **Ruta:** `/api/planificacion-semestral/seguimiento/{id}`
+*   **Response de Éxito (`200 OK`):**
+    ```json
+    {
+      "success": true,
+      "message": "Seguimiento eliminado y cronograma restablecido"
+    }
+    ```
+
+---
+
+## 4. Arquitectura y Flujo de Sincronización Offline-First
+
+El corazón del sistema móvil y web de UNITEPC radica en la resiliencia ante cortes de conectividad. Para ello se ha estructurado una solución de capas combinando Pinia, Capacitor Filesystem y Axios.
+
+### 4.1 Diagrama de Flujo Offline-First
+
+```mermaid
+flowchart TD
+    A[Docente registra seguimiento en ClasePage] --> B{¿Hay conexión a Internet?\nCapacitor Network}
+    B -- Sí -- > C[Enviar FormData directo a API]
+    C --> D[Guardado exitoso en el Servidor]
+    
+    B -- No --> E[Guardar imagen en Disco Local\nCapacitor Filesystem]
+    E --> F[Crear Objeto Seguimiento local]
+    F --> G[Encolar en Pinia Store\npendingFollowups]
+    G --> H[Notificar al docente:\n'Guardado localmente']
+    
+    I[Se detecta reconexión de Red] --> J[Disparar syncAll en useSyncStore]
+    J --> K{¿Hay elementos en cola?}
+    K -- Sí --> L[Procesar registro secuencialmente]
+    L --> M[Filesystem.readFile\nLeer base64 local]
+    M --> N[Convertir base64 a Blob binario]
+    N --> O[Construir FormData dinámico]
+    O --> P[POST /api/.../seguimiento]
+    P --> Q[Filesystem.deleteFile\nLimpiar espacio local]
+    Q --> R[Eliminar de pendingFollowups]
+    R --> K
+    K -- No --> S[Fin de la Sincronización]
+```
+
+### 4.2 La Estructura del Store `sync.js` (Pinia)
+
+El store almacena de forma persistente la cola de registros de clase pendientes. A continuación se expone la lógica crítica de serialización a FormDatas y conversión asíncrona de Base64 a Blobs binarios para el canal multipart:
+
+```javascript
+// Archivo: src/stores/sync.js
+import { defineStore } from 'pinia'
+import planificacionSemestralService from 'src/services/planificacionSemestralService'
+import { Notify } from 'quasar'
+import { Filesystem, Directory } from '@capacitor/filesystem'
+
+export const useSyncStore = defineStore('sync', {
+  state: () => ({
+    pendingFollowups: [],
+    lastSyncAt: null,
+    isSyncing: false,
+  }),
+
+  actions: {
+    addPendingFollowup(followupData) {
+      const tempId = Date.now().toString()
+      this.pendingFollowups.push({
+        id: tempId,
+        data: followupData,
+        createdAt: new Date().toISOString(),
+      })
+
+      Notify.create({
+        type: 'info',
+        message: 'Seguimiento guardado localmente (Sin conexión)',
+        caption: 'Se sincronizará automáticamente al detectar internet',
+      })
+    },
+
+    removePendingFollowup(id) {
+      this.pendingFollowups = this.pendingFollowups.filter((f) => f.id !== id)
+    },
+
+    async syncAll() {
+      if (this.isSyncing || this.pendingFollowups.length === 0) return
+      this.isSyncing = true
+
+      const toSync = [...this.pendingFollowups]
+      let results = { success: 0, fail: 0 }
+
+      for (const item of toSync) {
+        try {
+          const formData = new FormData()
+          const isCumplido = item.data.estado_cumplimiento === 'TOTAL' || item.data.estado_cumplimiento === 'PARCIAL'
+          
+          formData.append('tema_cumplido', isCumplido ? 'true' : 'false')
+          formData.append('observaciones', item.data.observaciones || '')
+          formData.append('cronograma_id', item.data.cronograma_id || '')
+          formData.append('grupo_id', item.data.grupo_id || '')
+          formData.append('asignatura_id', item.data.asignatura_id || '')
+          formData.append('numero_sesion', item.data.numero_sesion || '')
+          formData.append('fecha', item.data.fecha || '')
+          formData.append('estado_cumplimiento', item.data.estado_cumplimiento || 'NO')
+          formData.append('pedagogico', JSON.stringify(item.data.pedagogico || {}))
+          formData.append('integracion_transversal', JSON.stringify(item.data.integracion_transversal || {}))
+          formData.append('evidencias', JSON.stringify({}))
+
+          // Helper crítico: Convierte una ruta nativa de archivo en un Blob para subida multipart
+          const getFileBlob = async (fileObj) => {
+            if (fileObj && fileObj.path) {
+              try {
+                // 1. Leer archivo desde disco nativo del dispositivo móvil
+                const result = await Filesystem.readFile({
+                  path: fileObj.path,
+                  directory: Directory.Data,
+                })
+                // 2. Crear dataURI y recuperar Blob usando fetch
+                const res = await fetch(`data:${fileObj.type};base64,${result.data}`)
+                return await res.blob()
+              } catch (e) {
+                console.error('Error reading offline file', e)
+              }
+            }
+            return null
+          }
+
+          // Inyectar evidencias fotográficas offline
+          if (item.data.evidencias_offline) {
+            const evtApr = await getFileBlob(item.data.evidencias_offline.aprendizaje_activo)
+            if (evtApr) {
+              formData.append('evidencia_aprendizaje', evtApr, item.data.evidencias_offline.aprendizaje_activo.name)
+            }
+            const evtEval = await getFileBlob(item.data.evidencias_offline.evaluacion_formativa)
+            if (evtEval) {
+              formData.append('evidencia_evaluacion', evtEval, item.data.evidencias_offline.evaluacion_formativa.name)
+            }
+            const evtSec = await getFileBlob(item.data.evidencias_offline.secuencia_didactica)
+            if (evtSec) {
+              formData.append('evidencia_secuencia', evtSec, item.data.evidencias_offline.secuencia_didactica.name)
+            }
+          }
+
+          // Subir al backend usando el servicio centralizado de Axios
+          await planificacionSemestralService.saveSeguimiento(formData)
+
+          // Limpieza física del almacenamiento en disco del teléfono para optimizar memoria
+          const deleteFile = async (fileObj) => {
+            if (fileObj && fileObj.path) {
+              try {
+                await Filesystem.deleteFile({ path: fileObj.path, directory: Directory.Data })
+              } catch (e) {
+                console.error('Error deleting local file', e)
+              }
+            }
+          }
+          
+          if (item.data.evidencias_offline) {
+            await deleteFile(item.data.evidencias_offline.aprendizaje_activo)
+            await deleteFile(item.data.evidencias_offline.evaluacion_formativa)
+            await deleteFile(item.data.evidencias_offline.secuencia_didactica)
+          }
+
+          this.removePendingFollowup(item.id)
+          results.success++
+        } catch (error) {
+          console.error('Failed to sync item:', item.id, error)
+          results.fail++
+        }
+      }
+
+      this.isSyncing = false
+      this.lastSyncAt = new Date().toISOString()
+
+      if (results.success > 0) {
+        Notify.create({
+          type: 'positive',
+          message: `Sincronización exitosa: ${results.success} registro(s) subidos`,
+          timeout: 2000,
+        })
+      }
+    },
+  },
+  persist: true, // Habilita persistencia total del store en localStorage / IndexedDB nativo
+})
+```
+
+---
+
+## 5. Implementación en Frontend (Quasar Interface)
+
+La interfaz del docente se ubica en `src/pages/docente/ClasePage.vue`. Incorpora un diseño premium responsivo y dinámicas inteligentes para simplificar el flujo diario de clase:
+
+### 5.1 Dropdown de Asignaturas Comunes Unificadas
+Si una asignatura es común (`comun_token` no nulo) y se dicta bajo el mismo paralelo/fusión, la lista de asignaturas del docente no muestra los registros duplicados, sino que **los unifica en una sola opción interactiva** con un elegante badge descriptor.
+
+```javascript
+// Computed que filtra y unifica materias comunes en el dropdown del docente
+const materiasDisponibles = computed(() => {
+  const result = []
+  const tokensSeen = new Set()
+
+  materias.forEach(m => {
+    if (m.comun_token) {
+      if (tokensSeen.has(m.comun_token)) return // Evitar duplicar la fila
+      tokensSeen.add(m.comun_token)
+      
+      const vinculadas = materias.filter(x => x.comun_token === m.comun_token)
+      if (vinculadas.length > 1) {
+        // Enlazar los metadatos de las materias del grupo de fusión
+        result.push({ 
+          ...m, 
+          _vinculadas: vinculadas, 
+          _esComun: true,
+          label_display: `[Común] ${vinculadas.map(v => v.codigo).join(' · ')}`
+        })
+        return
+      }
+    }
+    result.push(m)
+  })
+  return result
+})
+```
+
+### 5.2 Sensor Georeferencial y Control de Asistencia
+*   **Geolocalización Activa:** El componente captura la posición GPS antes de registrar el seguimiento. Si el docente está fuera del radio preconfigurado de la sede en la tabla `sedes.georeferencia` (geocerca), la API recibe el flag `en_rango = false`, alertando al panel de auditoría pero permitiendo guardar (para prevenir bloqueos injustificados del sistema nativo).
+*   **Registro de Asistencia Integrado:** Incorpora una tabla rápida de estudiantes matriculados para marcar faltas, licencias y observaciones individuales en la misma sesión, evitando transiciones complejas entre pantallas.
+
+---
+
+## 6. Sincronización Continua y Propagación en el Backend (Laravel)
+
+Cuando un docente realiza el seguimiento de un cronograma perteneciente a un grupo de materias fusionadas, **el backend propaga de manera transparente el cambio a los otros grupos equivalentes** mediante un servicio automático dentro de `PlanificacionSemestralController`.
+
+```php
+// app/Http/Controllers/PlanificacionSemestralController.php
+use App\Models\Grupo;
+use App\Models\Seguimiento;
+
+private function propagarSeguimientoAComunes(int $cronogramaId, int $grupoId, Seguimiento $seguimiento): void
+{
+    $grupoBase = Grupo::with('asignatura')->findOrFail($grupoId);
+    $asignaturaBase = $grupoBase->asignatura;
+
+    // Regla: Solo propagar si la asignatura pertenece a una fusión activa
+    if (!$asignaturaBase->comun_token || $asignaturaBase->comun_tipo !== 'fusionada') {
+        return;
+    }
+
+    // 1. Obtener todas las materias hermanas asociadas al token
+    $asignaturasComunesIds = Asignatura::where('comun_token', $asignaturaBase->comun_token)
+        ->where('id', '!=', $asignaturaBase->id)
+        ->pluck('id');
+
+    // 2. Buscar grupos de estas materias bajo el mismo docente
+    $gruposComunes = Grupo::whereIn('asignatura_id', $asignaturasComunesIds)
+        ->where('docente_id', $grupoBase->docente_id)
+        ->where('estado', 'ACTIVO')
+        ->get();
+
+    foreach ($gruposComunes as $grupoDestino) {
+        // Buscar el cronograma homólogo por el número de sesión (coordenada de match temporal)
+        $cronogramaDestino = Cronograma::where('asignatura_id', $grupoDestino->asignatura_id)
+            ->where('grupo_id', $grupoDestino->id)
+            ->where('numero_sesion', $seguimiento->cronograma->numero_sesion)
+            ->first();
+
+        if ($cronogramaDestino) {
+            // RESOLUCIÓN DE CONFLICTOS: Comparación de Timestamps
+            // Si en el destino ya existía un registro y es más reciente (updated_at) que el origen, se preserva y no se sobrescribe.
+            $seguimientoDestino = Seguimiento::where('cronograma_id', $cronogramaDestino->id)->first();
+            if ($seguimientoDestino && $seguimientoDestino->updated_at->gt($seguimiento->updated_at)) {
+                continue; // Preservar versión del destino por ser más nueva
+            }
+
+            // Clonar o actualizar el seguimiento
+            Seguimiento::updateOrCreate(
+                ['cronograma_id' => $cronogramaDestino->id],
+                [
+                    'grupo_id' => $grupoDestino->id,
+                    'user_id' => $seguimiento->user_id,
+                    'fecha' => $seguimiento->fecha,
+                    'cumplido' => $seguimiento->cumplido,
+                    'tema_cumplido' => $seguimiento->tema_cumplido,
+                    'estado_cumplimiento' => $seguimiento->estado_cumplimiento,
+                    'observaciones' => $seguimiento->observaciones . ' (Sincronizado de común: ' . $asignaturaBase->codigo . ')',
+                    'pedagogico' => $seguimiento->pedagogico,
+                    'es_examen' => $seguimiento->es_examen,
+                    'tipo_examen' => $seguimiento->tipo_examen,
+                    'georeferencia' => $seguimiento->georeferencia,
+                    'evidencias' => $seguimiento->evidencias,
+                    'integracion_transversal' => $seguimiento->integracion_transversal
+                ]
+            );
+
+            // Actualizar estado en la tabla del cronograma
+            $cronogramaDestino->update(['cumplido' => $seguimiento->cumplido]);
+        }
+    }
+}
+```
+
+---
+
+## 7. Reportes de Auditoría e Informes Semanales (`WeeklyReportForm.vue`)
+
+El control de clase culmina con las herramientas integradas para los directores y vicerrectores:
+
+*   **Matriz de Control Institucional (`MatrizControlInstitucional.vue`):** Mapea visualmente el avance real en porcentaje vs el avance programado sugerido para el semestre. El color del porcentaje cambia de acuerdo a alertas críticas:
+    *   <span style="color:#21BA45">**Verde (Progreso Normal):**</span> Desviación de avance < 10%.
+    *   <span style="color:#F2C037">**Amarillo (Desviación Moderada):**</span> Desviación entre 10% y 20%.
+    *   <span style="color:#C10015">**Rojo (Alerta Crítica / Retraso Grave):**</span> Desviación > 20%.
+*   **Informes Semanales del Director (`WeeklyReportForm.vue`):** El Director de Carrera revisa el compilado de seguimientos offline y online de la semana, valida ausencias y justifica atrasos enviando el informe digital a Vicerrectorado.
+</script>
+
+  <script>
+    // 1. Mobile Menu Toggle Logic
+    const menuToggle = document.getElementById('menu-toggle');
+    const sidebar = document.getElementById('sidebar');
+    let isSidebarOpen = false;
+    
+    menuToggle.addEventListener('click', () => {
+      isSidebarOpen = !isSidebarOpen;
+      if (isSidebarOpen) {
+        sidebar.classList.remove('-translate-x-full');
+        document.getElementById('menu-icon').setAttribute('d', 'M6 18L18 6M6 6l12 12');
+      } else {
+        sidebar.classList.add('-translate-x-full');
+        document.getElementById('menu-icon').setAttribute('d', 'M4 6h16M4 12h16M4 18h16');
+      }
+    });
+
+    // 2. Parse Markdown
+    const rawMarkdown = document.getElementById('markdown-content').textContent;
+    let parsedHtml = marked.parse(rawMarkdown);
+    
+    // Rewrite Markdown links (.md -> .html)
+    // Links in docs folder are like 'docs/01_...' or '../docs/01_...' or '01_...'
+    parsedHtml = parsedHtml.replace(/href="([^"]+)\.md(#.*)?"/g, (match, path, hash) => {
+      const basename = path.split('/').pop();
+      const newPath = basename + '.html' + (hash || '');
+      return `href="${newPath}"`;
+    });
+    
+    // Also rewrite README.md links to README.html
+    parsedHtml = parsedHtml.replace(/href="README\.md"/g, 'href="README.html"');
+    
+    const contentEl = document.getElementById('content');
+    contentEl.innerHTML = parsedHtml;
+
+    // 3. Convert language-mermaid blocks to raw divs for Mermaid.js
+    document.querySelectorAll('pre code.language-mermaid').forEach((block) => {
+      const pre = block.parentElement;
+      const mermaidCode = block.textContent.trim();
+      const div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = mermaidCode;
+      pre.replaceWith(div);
+    });
+
+    // 4. Style Alert Callouts (GitHub style blockquotes)
+    document.querySelectorAll('blockquote').forEach((bq) => {
+      let html = bq.innerHTML;
+      const alerts = {
+        'NOTE': {
+          title: 'Nota',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>',
+          bg: 'bg-blue-950/40 border-blue-500 text-blue-200',
+          titleColor: 'text-blue-400'
+        },
+        'TIP': {
+          title: 'Consejo',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>',
+          bg: 'bg-emerald-950/40 border-emerald-500 text-emerald-200',
+          titleColor: 'text-emerald-400'
+        },
+        'IMPORTANT': {
+          title: 'Importante',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-violet-950/40 border-violet-500 text-violet-200',
+          titleColor: 'text-violet-400'
+        },
+        'WARNING': {
+          title: 'Advertencia',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-amber-950/40 border-amber-500 text-amber-200',
+          titleColor: 'text-amber-400'
+        },
+        'CAUTION': {
+          title: 'Precaución',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-rose-950/40 border-rose-500 text-rose-200',
+          titleColor: 'text-rose-400'
+        }
+      };
+      
+      for (const [key, val] of Object.entries(alerts)) {
+        const pattern = new RegExp(`\\[!\${key}\\]`, 'g');
+        if (pattern.test(html)) {
+          let cleaned = html.replace(pattern, '').replace(/^\s*<br\s*\/?>\s*/i, '');
+          const container = document.createElement('div');
+          container.className = `my-6 p-4 rounded-r-lg border-l-4 ${val.bg}`;
+          container.innerHTML = `
+            <div class="flex items-center gap-2 font-bold mb-2 ${val.titleColor}">
+              ${val.icon}
+              <span>${val.title}</span>
+            </div>
+            <div class="alert-content text-slate-300 font-normal">${cleaned}</div>
+          `;
+          bq.replaceWith(container);
+          break;
+        }
+      }
+    });
+
+    // 5. Initialize Mermaid
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      securityLevel: 'loose',
+      themeVariables: {
+        background: '#0f172a',
+        primaryColor: '#6366f1',
+        primaryTextColor: '#f8fafc',
+        lineColor: '#334155'
+      }
+    });
+  </script>
+</body>
+</html>
