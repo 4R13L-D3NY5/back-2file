@@ -1,59 +1,86 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# 🚀 SISA - Sistema Integrado de Seguimiento Académico
+### ⚙️ Portal de la API Backend (Laravel 12 API REST)
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Bienvenido al repositorio oficial del **Backend** de **SISA** (Sistema Integrado de Seguimiento Académico). Esta API REST proporciona el motor lógico, la persistencia, la sincronización y la seguridad para toda la plataforma web y móvil.
 
-## About Laravel
+El backend está desarrollado utilizando **Laravel v12** (PHP 8.2+), siguiendo patrones de arquitectura robustos, controladores delgados (*Thin Controllers*), desacoplamiento mediante clases de *Servicios* y autenticación stateless por tokens mediante **Laravel Sanctum**.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+---
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## 📚 Índice de Documentación Técnica y Arquitectura
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Toda la documentación detallada del sistema y su comportamiento en base de datos está disponible en la carpeta `docs/`. Explora los módulos a continuación:
 
-## Learning Laravel
+```mermaid
+graph TD
+    A[SISA Backend API] --> B(01. Seguridad y Sanctum)
+    A --> C(Endpoints e Integración API)
+    A --> D(Diagrama de Base de Datos ER)
+    A --> E(Reglas de Negocio y Sincronización)
+```
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+### 📖 Recursos Críticos de la API:
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+*   **[🔌 Catálogo Completo de Endpoints (endpoints.md)](docs/endpoints.md):** Especificación técnica detallada de todas las rutas de la API, parámetros del Request, payload del Response y códigos de estado HTTP.
+*   **[🗄️ Esquema y Diagrama de Base de Datos (diagrama_er_completo.md)](docs/diagrama_er_completo.md):** Definición detallada de tablas, llaves primarias y foráneas, e índices de rendimiento de la base de datos de SISA.
 
-## Laravel Sponsors
+### 📘 Capítulos Generales de Documentación:
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+1.  **[🔒 Autenticación y Roles](docs/01_autenticacion_seguridad.md):** Laravel Sanctum, roles de usuario (`SUPER_ADMIN`, `DIRECTOR_CARRERA`, `DOCENTE`), y control de acceso jerárquico.
+2.  **[🏫 Gestión de Infraestructura Académica](docs/02_estructura_academica.md):** Modelos y relaciones para Sedes, Carreras, Campus, Bloques, Aulas e importación de mallas.
+3.  **[📚 PAC (Plan Académico de Asignatura)](docs/03_pac_y_bibliografia.md):** CRUD y lógica de carga jerárquica para unidades, temas y bibliografías.
+4.  **[🔗 Algoritmo de Materias Comunes](docs/04_materias_comunes.md):** Lógica del backend para merge inteligente, resolución de conflictos y asignación multipropósito.
+5.  **[📅 Planificación Semestral](docs/05_planificacion_semestral.md):** Generador de secuencias didácticas automáticas basadas en el calendario académico.
+6.  **[📝 Control de Asistencia y Clases](docs/06_control_clase_seguimiento.md):** API de sincronización activa de clases firmadas, recepción y almacenamiento de imágenes en servidor.
+7.  **[🎯 Banco de Evaluaciones](docs/07_banco_preguntas_evaluaciones.md):** Motor de selección aleatoria de reactivos según parámetros y generación masiva de PDF de exámenes.
 
-### Premium Partners
+---
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+## 🛠️ Guía de Arranque Rápido para Desarrolladores
 
-## Contributing
+### Requisitos del Entorno
+*   **PHP** >= 8.2 (con extensiones `pdo_mysql`, `mbstring`, `openssl`, etc.)
+*   **Composer** >= 2.x
+*   **MySQL / MariaDB**
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+### 1. Instalación de Dependencias
+```bash
+composer install
+```
 
-## Code of Conduct
+### 2. Configuración del Entorno
+Duplica el archivo `.env.example` y renómbralo a `.env`:
+```bash
+cp .env.example .env
+```
+*Configura las credenciales de tu base de datos en las variables `DB_DATABASE`, `DB_USERNAME` y `DB_PASSWORD`.*
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+### 3. Generar la Llave de Aplicación y Enlace de Storage
+```bash
+php artisan key:generate
+php artisan storage:link
+```
 
-## Security Vulnerabilities
+### 4. Ejecución de Migraciones y Semillas (Seeders)
+Crea la base de datos y llénala con datos de prueba oficiales:
+```bash
+php artisan migrate:fresh --seed
+```
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### 5. Iniciar Servidor de Desarrollo
+```bash
+php artisan serve
+```
+*La API estará disponible en `http://localhost:8000`.*
 
-## License
+---
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## 🛡️ Estándares y Convenciones
+
+*   **Thin Controllers:** Los controladores se encargan estrictamente de HTTP.
+*   **Service Pattern:** La lógica de negocio pesada reside en `app/Services/`.
+*   **API Resources:** Transformación estandarizada de modelos a JSON en `app/Http/Resources/`.
+*   **Seguridad:** Middlewares estrictos de control de accesos basados en roles.
+
+---
+Desarrollado con ❤️ para garantizar robustez y escalabilidad en SISA.
