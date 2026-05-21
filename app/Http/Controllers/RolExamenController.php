@@ -241,6 +241,7 @@ class RolExamenController extends Controller
             $examen->banco_por_tipo = $statsBanco['por_tipo'];
             $examen->banco_por_grupo_tipo = $statsBanco['por_grupo_tipo'];
             $examen->banco_stats = $statsBanco;
+            $examen->puede_restaurar_generacion = $this->canRestoreGeneratedPackage($examen);
 
             return $examen;
         });
@@ -907,36 +908,89 @@ class RolExamenController extends Controller
 
         $data = $request->all();
         if (isset($data['estado']) && $data['estado'] === 'programados') {
-            // 1. Limpiar Archivos Físicos del Storage
-            if (! empty($examen->variantes)) {
-                foreach ($examen->variantes as $v) {
-                    if (is_array($v)) {
-                        $this->deleteManagedFile($v['path'] ?? null, $v['archivo'] ?? null, 'examenes');
-                    } else {
-                        $this->deleteManagedFile(null, $v, 'examenes');
-                    }
-                }
-            }
-            if (! empty($examen->patrones)) {
-                foreach ($examen->patrones as $p) {
-                    if (is_array($p)) {
-                        $this->deleteManagedFile($p['pdf_path'] ?? null, $p['pdf'] ?? null, 'patrones');
-                        $this->deleteManagedFile($p['xlsx_path'] ?? null, $p['xlsx'] ?? null, 'patrones');
-                    } else {
-                        $this->deleteManagedFile(null, $p, 'patrones');
-                    }
-                }
+
+            if ($response = $this->authorizeAdminRestore($examen)) {
+                return $response;
             }
 
-            // 2. Limpiar Campos en DB
+            $config = $examen->config_generacion ?? [];
+            $resetBackup = $this->buildGenerationResetBackup($examen);
+
+            if ($resetBackup) {
+                $config['reset_backup'] = $resetBackup;
+                $config['job_status'] = 'reset';
+                $config['job_error'] = null;
+                $config['reset_at'] = now()->toISOString();
+                $config['reset_by'] = auth()->id();
+                unset($config['pattern_audit']);
+
+                $data['config_generacion'] = $config;
+            } else {
+                $data['config_generacion'] = null;
+            }
+
             $data['variantes'] = [];
             $data['patrones'] = [];
-            $data['config_generacion'] = null;
         }
 
         $examen->update($data);
 
         return response()->json($examen);
+    }
+
+    public function restoreGeneratedPackage($id)
+    {
+        $examen = RolExamen::findOrFail($id);
+
+        if ($response = $this->authorizeAdminRestore($examen)) {
+            return $response;
+        }
+
+        if ($examen->estado !== 'programados') {
+            return response()->json([
+                'message' => 'Solo se puede restablecer un examen que fue retornado a PROGRAMADO.',
+            ], 422);
+        }
+
+        $config = $examen->config_generacion ?? [];
+        $backup = $config['reset_backup'] ?? $this->discoverGeneratedPackageForResetExam($examen);
+
+        if (! $this->backupHasGeneratedFiles($backup)) {
+            return response()->json([
+                'message' => 'No se encontro una generacion previa disponible para restablecer.',
+            ], 422);
+        }
+
+        $previousConfig = is_array($backup['config_generacion'] ?? null)
+            ? $backup['config_generacion']
+            : [];
+        $timestamps = $examen->timestamps_proceso ?? [];
+        $restoredAt = now()->toISOString();
+        $estadoRestaurado = $backup['estado'] ?? 'generados';
+
+        $previousConfig['job_status'] = 'completed';
+        $previousConfig['job_error'] = null;
+        $previousConfig['restored_from_reset_at'] = $restoredAt;
+        $previousConfig['restored_from_reset_by'] = auth()->id();
+
+        $timestamps['generacion_restaurada'] = $restoredAt;
+        if (empty($timestamps[$estadoRestaurado])) {
+            $timestamps[$estadoRestaurado] = $restoredAt;
+        }
+
+        $examen->update([
+            'estado' => $estadoRestaurado,
+            'variantes' => $backup['variantes'] ?? [],
+            'patrones' => $backup['patrones'] ?? [],
+            'config_generacion' => $previousConfig,
+            'timestamps_proceso' => $timestamps,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Generacion restablecida correctamente.',
+            'examen' => $examen->fresh(),
+        ]);
     }
 
     public function generatePackage(Request $request, $id)
@@ -1458,6 +1512,186 @@ class RolExamenController extends Controller
         }
 
         return null;
+    }
+
+    private function authorizeAdminRestore(RolExamen $examen)
+    {
+        $user = auth()->user();
+
+        if (! $user) {
+            return response()->json(['message' => 'No autenticado'], 401);
+        }
+
+        $role = $user->rol?->codigo;
+        if (! in_array($role, ['ADMIN', 'SUPER_ADMIN'], true)) {
+            return response()->json(['message' => 'Solo administradores pueden restablecer una generacion.'], 403);
+        }
+
+        return null;
+    }
+
+    private function buildGenerationResetBackup(RolExamen $examen): ?array
+    {
+        $variantes = array_values(array_filter($examen->variantes ?? [], 'is_array'));
+        $patrones = array_values(array_filter($examen->patrones ?? [], 'is_array'));
+        $config = $examen->config_generacion ?? [];
+
+        if (empty($variantes) && empty($patrones)) {
+            return null;
+        }
+
+        return [
+            'estado' => $examen->estado ?: 'generados',
+            'variantes' => $variantes,
+            'patrones' => $patrones,
+            'config_generacion' => $config,
+            'timestamps_proceso' => $examen->timestamps_proceso ?? [],
+            'reset_at' => now()->toISOString(),
+            'reset_by' => auth()->id(),
+        ];
+    }
+
+    private function canRestoreGeneratedPackage(RolExamen $examen): bool
+    {
+        if ($examen->estado !== 'programados') {
+            return false;
+        }
+
+        $backup = ($examen->config_generacion ?? [])['reset_backup'] ?? null;
+
+        return $this->backupHasGeneratedFiles($backup)
+            || $this->backupHasGeneratedFiles($this->discoverGeneratedPackageForResetExam($examen));
+    }
+
+    private function discoverGeneratedPackageForResetExam(RolExamen $examen): ?array
+    {
+        $timestamps = $examen->timestamps_proceso ?? [];
+        if (
+            $examen->estado !== 'programados'
+            || (empty($timestamps['generados']) && empty($timestamps['generacion_completada']))
+        ) {
+            return null;
+        }
+
+        $sede = DB::table('sedes')->where('id', $examen->sede_id)->value('nombre') ?: '';
+        $prefix = implode('_', [
+            $this->filenameToken($examen->materia_codigo ?: 'EXAM'),
+            $this->filenameToken($sede),
+            'G'.$this->filenameToken($examen->grupo ?: '1'),
+            $this->filenameToken($examen->tipo_examen ?: ''),
+        ]);
+
+        $exam = $this->findGeneratedFileCandidate('examenes', $prefix, '_Examen.pdf');
+        $patternPdf = $this->findGeneratedFileCandidate('patrones', $prefix, '_Patron.pdf');
+        $patternXlsx = $this->findGeneratedFileCandidate('patrones', $prefix, '_Remark.xlsx');
+        $referenceName = $exam['archivo'] ?? $patternPdf['archivo'] ?? $patternXlsx['archivo'] ?? null;
+
+        if (! $referenceName) {
+            return null;
+        }
+
+        $letters = $this->extractVariantLetters($referenceName);
+        if (empty($letters)) {
+            $letters = ['A'];
+        }
+
+        $variants = $exam
+            ? collect($letters)->map(fn ($letter) => [
+                'letra' => $letter,
+                'archivo' => $exam['archivo'],
+                'path' => $exam['path'],
+            ])->values()->all()
+            : [];
+
+        $patterns = collect($letters)->map(fn ($letter) => [
+            'letra' => $letter,
+            'pdf' => $patternPdf['archivo'] ?? null,
+            'pdf_path' => $patternPdf['path'] ?? null,
+            'xlsx' => $patternXlsx['archivo'] ?? null,
+            'xlsx_path' => $patternXlsx['path'] ?? null,
+        ])->values()->all();
+
+        return [
+            'estado' => 'generados',
+            'variantes' => $variants,
+            'patrones' => $patterns,
+            'config_generacion' => $examen->config_generacion ?? [],
+            'timestamps_proceso' => $examen->timestamps_proceso ?? [],
+            'reset_at' => now()->toISOString(),
+            'reset_by' => auth()->id(),
+            'source' => 'storage_scan',
+        ];
+    }
+
+    private function filenameToken(?string $value): string
+    {
+        return preg_replace('/\s+/', '', trim((string) $value));
+    }
+
+    private function findGeneratedFileCandidate(string $publicDir, string $prefix, string $suffix): ?array
+    {
+        $locations = [
+            ['base' => storage_path('app/tmp/'.$publicDir), 'managed_prefix' => 'tmp/'.$publicDir.'/'],
+            ['base' => storage_path('app/public/'.$publicDir), 'managed_prefix' => null],
+        ];
+
+        foreach ($locations as $location) {
+            $pattern = rtrim($location['base'], DIRECTORY_SEPARATOR).DIRECTORY_SEPARATOR.$prefix.'_Var*'.$suffix;
+            $matches = glob($pattern) ?: [];
+            rsort($matches);
+
+            foreach ($matches as $absolutePath) {
+                if (! is_file($absolutePath)) {
+                    continue;
+                }
+
+                $filename = basename($absolutePath);
+
+                return [
+                    'archivo' => $filename,
+                    'path' => $location['managed_prefix'] ? $location['managed_prefix'].$filename : null,
+                ];
+            }
+        }
+
+        return null;
+    }
+
+    private function extractVariantLetters(string $filename): array
+    {
+        if (! preg_match('/_Var([A-Z]+)/i', $filename, $matches)) {
+            return [];
+        }
+
+        return str_split(strtoupper($matches[1]));
+    }
+
+    private function backupHasGeneratedFiles($backup): bool
+    {
+        if (! is_array($backup)) {
+            return false;
+        }
+
+        $variants = collect($backup['variantes'] ?? [])->filter(function ($item) {
+            return is_array($item)
+                && ! empty($item['archivo'])
+                && $this->resolveManagedAbsolutePath($item['path'] ?? null, $item['archivo'], 'examenes');
+        });
+
+        $patterns = collect($backup['patrones'] ?? [])->filter(function ($item) {
+            if (! is_array($item)) {
+                return false;
+            }
+
+            $hasPdf = ! empty($item['pdf'])
+                && $this->resolveManagedAbsolutePath($item['pdf_path'] ?? null, $item['pdf'], 'patrones');
+            $hasXlsx = ! empty($item['xlsx'])
+                && $this->resolveManagedAbsolutePath($item['xlsx_path'] ?? null, $item['xlsx'], 'patrones');
+
+            return $hasPdf || $hasXlsx;
+        });
+
+        return $variants->isNotEmpty() || $patterns->isNotEmpty();
     }
 
     private function deleteManagedFile(?string $managedPath, ?string $filename, string $publicDir): void
