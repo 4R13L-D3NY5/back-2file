@@ -166,6 +166,46 @@ class AsignaturaController extends Controller
                 $sedeNombre = $sedesMap[$actualSedeId] ?? 'N/A';
             }
 
+            $gruposTeoricosData = $a->grupos
+                ->filter(fn($g) => $this->esGrupoTeorico($g))
+                ->sortBy(fn($g) => strtoupper(($g->docente->nombre_completo ?? 'ZZZ SIN DOCENTE') . ' ' . ($g->nombre ?? '')))
+                ->map(function ($g) use ($a, $progreso) {
+                    $docente = $g->docente;
+                    $userId = $docente?->user_id;
+                    $indicadoresDocente = $userId
+                        ? $a->getIndicadoresDocumentacionPorDocente($userId)
+                        : $a->indicadores_documentacion;
+                    $progresoDocente = $userId ? $a->getProgresoPorDocente($userId) : $progreso;
+                    $preguntas1P = $docente
+                        ? $this->buscarPreguntasBancoPorGrupo(
+                            $a->id,
+                            $docente->id,
+                            $g->sede_id,
+                            $g->nombre,
+                            '1er Parcial'
+                        )
+                        : collect();
+
+                    return [
+                        'id' => $docente?->id,
+                        'docente_id' => $docente?->id,
+                        'grupo_id' => $g->id,
+                        'user_id' => $userId,
+                        'nombre' => $docente?->nombre_completo,
+                        'descripcion_grupos' => ($g->nombre ?? 'S/N') . ' (' . ($g->tipo ?? 'TEO') . ')',
+                        'carrera_id' => $g->carrera_id,
+                        'sede_id' => $g->sede_id,
+                        'tiene_grupo_teorico' => true,
+                        'grupo_teorico_nombre' => $g->nombre,
+                        'grupo_nombre' => $g->nombre,
+                        'grupo_tipo' => $g->tipo,
+                        'progreso_documentacion' => $progresoDocente,
+                        'indicadores_documentacion' => $indicadoresDocente,
+                        'preguntas_1p_stats' => $this->resumirPreguntasBanco($preguntas1P, $g->nombre),
+                    ];
+                })
+                ->values();
+
             return [
                 'id' => $a->id,
                 'codigo' => $a->codigo,
@@ -186,6 +226,7 @@ class AsignaturaController extends Controller
                 'grupos_count' => $a->grupos->count(),
                 'progreso_documentacion' => $progreso,
                 'indicadores_documentacion' => $a->indicadores_documentacion,
+                'grupos_teoricos_data' => $gruposTeoricosData,
                 'docentes_data' => $docentes->map(function ($d) use ($a, $progreso) { // Para el diálogo de selección y lista individual
                     // Calcular descripción de grupos para este docente
                     $gruposDocente = $a->grupos->where('docente_id', $d->id);
@@ -326,6 +367,60 @@ class AsignaturaController extends Controller
                 })()
             ];
         })); // END MAP
+    }
+
+    private function esGrupoTeorico($grupo): bool
+    {
+        $tipo = strtoupper(trim((string) ($grupo->tipo ?? '')));
+
+        return in_array($tipo, ['TEORICO', 'TEO'], true);
+    }
+
+    private function buscarPreguntasBancoPorGrupo(
+        int $asignaturaId,
+        ?int $docenteId,
+        ?int $sedeId,
+        ?string $grupoTeorico,
+        string $parcial
+    ) {
+        if (!$docenteId || !$grupoTeorico) {
+            return collect();
+        }
+
+        $query = \App\Models\BancoPregunta::where('asignatura_id', $asignaturaId)
+            ->where('docente_id', $docenteId)
+            ->where('grupoTeorico', $grupoTeorico);
+
+        if ($sedeId) {
+            $query->where('sede_id', $sedeId);
+        }
+
+        if ($parcial === '1er Parcial') {
+            $query->where(function ($q) {
+                $q->where('parcial', '1er Parcial')
+                    ->orWhere('parcial', '1')
+                    ->orWhere('parcial', 1);
+            });
+        } else {
+            $query->where(function ($q) {
+                $q->where('parcial', '2do Parcial')
+                    ->orWhere('parcial', '2')
+                    ->orWhere('parcial', 2);
+            });
+        }
+
+        return $query->get();
+    }
+
+    private function resumirPreguntasBanco($preguntas, ?string $grupoTeorico = null): array
+    {
+        return [
+            'faciles' => $preguntas->filter(fn($p) => in_array($p->dificultad, ['FACIL', '1', 1], true))->count(),
+            'medias' => $preguntas->filter(fn($p) => in_array($p->dificultad, ['MEDIA', 'MEDIO', '2', 2], true))->count(),
+            'dificiles' => $preguntas->filter(fn($p) => in_array($p->dificultad, ['DIFICIL', '3', 3], true))->count(),
+            'total' => $preguntas->count(),
+            'grupo_teorico' => $grupoTeorico,
+        ];
     }
 
     /**
