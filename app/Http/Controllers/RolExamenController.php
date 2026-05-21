@@ -898,17 +898,18 @@ class RolExamenController extends Controller
             return response()->json(['message' => 'Datos inválidos', 'errors' => $validator->errors()], 422);
         }
 
-        $user = auth()->user();
-        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-            $sedeId = $user->director?->sede_id ?? $user->sede_id;
-            if ($sedeId && $examen->sede_id != $sedeId) {
-                return response()->json(['message' => 'No tiene permiso para editar este examen de otra sede'], 403);
-            }
+        if ($response = $this->authorizeRolExamenAccess($examen)) {
+            return $response;
         }
 
         $data = $request->all();
-        if (isset($data['estado']) && $data['estado'] === 'programados') {
+        $currentEstado = strtolower(trim((string) ($examen->estado ?: 'programados')));
+        $targetEstado = strtolower(trim((string) ($data['estado'] ?? '')));
+        $isResettingGeneratedExam = isset($data['estado'])
+            && $targetEstado === 'programados'
+            && $currentEstado !== 'programados';
 
+        if ($isResettingGeneratedExam) {
             if ($response = $this->authorizeAdminRestore($examen)) {
                 return $response;
             }
@@ -1481,37 +1482,60 @@ class RolExamenController extends Controller
         }
 
         if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-            $sedeId = $user->director?->sede_id ?? $user->sede_id;
-            if ($sedeId && (int) $examen->sede_id !== (int) $sedeId) {
+            $allowedSedeIds = $this->directorAllowedSedeIds($user);
+            if (! empty($allowedSedeIds) && ! in_array((int) $examen->sede_id, $allowedSedeIds, true)) {
                 return response()->json(['message' => 'No tiene permiso para acceder a este examen'], 403);
             }
 
-            $allowedCareerIds = [];
-            if ($user->director) {
-                if ($user->director->carrera_id) {
-                    $allowedCareerIds[] = (int) $user->director->carrera_id;
-                }
-
-                if ($user->director->carreras) {
-                    $allowedCareerIds = array_merge(
-                        $allowedCareerIds,
-                        $user->director->carreras->pluck('id')->map(fn ($id) => (int) $id)->all()
-                    );
-                }
-
-                $allowedCareerIds = array_merge(
-                    $allowedCareerIds,
-                    $user->director->carreras()->pluck('carrera_id')->map(fn ($id) => (int) $id)->all()
-                );
-            }
-
-            $allowedCareerIds = array_values(array_unique(array_filter($allowedCareerIds)));
+            $allowedCareerIds = $this->directorAllowedCareerIds($user);
             if (! empty($allowedCareerIds) && ! in_array((int) $examen->carrera_id, $allowedCareerIds, true)) {
                 return response()->json(['message' => 'No tiene permiso para acceder a este examen'], 403);
             }
         }
 
         return null;
+    }
+
+    private function directorAllowedSedeIds($user): array
+    {
+        $sedeIds = collect([
+            $user->director?->sede_id,
+            $user->docente?->sede_id,
+            $user->sede_id,
+        ]);
+
+        if ($user->campus_id && Schema::hasTable('campus')) {
+            $sedeIds->push(DB::table('campus')->where('id', $user->campus_id)->value('sede_id'));
+        }
+
+        if (Schema::hasTable('campus_user')) {
+            $campusIds = DB::table('campus_user')
+                ->where('user_id', $user->id)
+                ->pluck('campus_id')
+                ->filter();
+
+            if ($campusIds->isNotEmpty() && Schema::hasTable('campus')) {
+                $sedeIds = $sedeIds->merge(
+                    DB::table('campus')->whereIn('id', $campusIds)->pluck('sede_id')
+                );
+            }
+        }
+
+        return $sedeIds->map(fn ($id) => (int) $id)->filter()->unique()->values()->all();
+    }
+
+    private function directorAllowedCareerIds($user): array
+    {
+        $careerIds = collect();
+
+        if ($user->director) {
+            $careerIds->push($user->director->carrera_id);
+            $careerIds = $careerIds->merge(
+                $user->director->carreras()->pluck('carrera_id')
+            );
+        }
+
+        return $careerIds->map(fn ($id) => (int) $id)->filter()->unique()->values()->all();
     }
 
     private function authorizeAdminRestore(RolExamen $examen)
