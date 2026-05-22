@@ -282,16 +282,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/sedes', [\App\Http\Controllers\SedeController::class, 'store'])->middleware('role:SUPER_ADMIN');
     Route::put('/sedes/{id}', [\App\Http\Controllers\SedeController::class, 'update'])->middleware('role:SUPER_ADMIN');
     Route::delete('/sedes/{id}', [\App\Http\Controllers\SedeController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
-    Route::apiResource('campus', \App\Http\Controllers\CampusController::class);
-    Route::get('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'obtenerCarreras']);
-    Route::post('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'asignarCarreras']);
-    Route::delete('/campus/{id}/carreras/{carreraId}', [\App\Http\Controllers\CampusController::class, 'deasignarCarrera']);
+    Route::apiResource('campus', \App\Http\Controllers\CampusController::class)->middleware('national.admin');
+    Route::get('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'obtenerCarreras'])->middleware('national.admin');
+    Route::post('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'asignarCarreras'])->middleware('national.admin');
+    Route::delete('/campus/{id}/carreras/{carreraId}', [\App\Http\Controllers\CampusController::class, 'deasignarCarrera'])->middleware('national.admin');
     
     // Evaluadores
-    Route::get('/evaluadores', [\App\Http\Controllers\CampusController::class, 'obtenerEvaluadores']);
-    Route::get('/evaluadores/disponibles', [\App\Http\Controllers\CampusController::class, 'evaluadoresDisponibles']);
-    Route::post('/campus/{id}/evaluadores', [\App\Http\Controllers\CampusController::class, 'asignarEvaluador']);
-    Route::delete('/campus/{id}/evaluadores/{userId}', [\App\Http\Controllers\CampusController::class, 'removerEvaluador']);
+    Route::get('/evaluadores', [\App\Http\Controllers\CampusController::class, 'obtenerEvaluadores'])->middleware('national.admin');
+    Route::get('/evaluadores/disponibles', [\App\Http\Controllers\CampusController::class, 'evaluadoresDisponibles'])->middleware('national.admin');
+    Route::post('/campus/{id}/evaluadores', [\App\Http\Controllers\CampusController::class, 'asignarEvaluador'])->middleware('national.admin');
+    Route::delete('/campus/{id}/evaluadores/{userId}', [\App\Http\Controllers\CampusController::class, 'removerEvaluador'])->middleware('national.admin');
     Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
     Route::get('/my-subjects', [\App\Http\Controllers\DocenteController::class, 'mySubjects']);
 

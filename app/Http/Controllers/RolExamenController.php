@@ -892,6 +892,7 @@ class RolExamenController extends Controller
             'fecha' => 'sometimes|date',
             'hora_inicio' => 'sometimes',
             'hora_fin' => 'sometimes',
+            'grupo' => 'sometimes|string|max:50',
         ]);
 
         if ($validator->fails()) {
@@ -905,9 +906,25 @@ class RolExamenController extends Controller
         $data = $request->all();
         $currentEstado = strtolower(trim((string) ($examen->estado ?: 'programados')));
         $targetEstado = strtolower(trim((string) ($data['estado'] ?? '')));
+        $currentIsProgramado = in_array($currentEstado, ['programado', 'programados'], true);
+        $isEditingExamDetails = collect([
+            'tipo_examen',
+            'semana',
+            'fecha',
+            'hora_inicio',
+            'hora_fin',
+            'grupo',
+        ])->contains(fn ($field) => $request->has($field));
+
+        if ($isEditingExamDetails && ! $currentIsProgramado) {
+            return response()->json([
+                'message' => 'Solo se pueden editar examenes que esten en estado PROGRAMADO.',
+            ], 422);
+        }
+
         $isResettingGeneratedExam = isset($data['estado'])
-            && $targetEstado === 'programados'
-            && $currentEstado !== 'programados';
+            && in_array($targetEstado, ['programado', 'programados'], true)
+            && ! $currentIsProgramado;
 
         if ($isResettingGeneratedExam) {
             if ($response = $this->authorizeAdminRestore($examen)) {
