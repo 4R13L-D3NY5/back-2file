@@ -347,6 +347,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/avance-general', [\App\Http\Controllers\ReporteController::class, 'avanceGeneral']);
     Route::get('/reportes/matriz-control', [\App\Http\Controllers\ReporteController::class, 'getMatrizControl']);
     Route::get('/reportes/auditoria-25', [\App\Http\Controllers\ReporteController::class, 'getAuditoria25']);
+    Route::get('/reportes/evaluaciones', [\App\Http\Controllers\ReporteEvaluacionController::class, 'index'])
+        ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
     
     Route::get('/reportes/semanal/draft', [\App\Http\Controllers\ReporteController::class, 'getWeeklyReportDraft']);
     Route::post('/reportes/semanal', [\App\Http\Controllers\ReporteController::class, 'storeWeeklyReport']);
