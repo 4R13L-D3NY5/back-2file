@@ -106,6 +106,24 @@ class ReporteEvaluacionController extends Controller
                 DB::raw('carreras.nombre as carrera'),
                 'rol_examenes.materia_codigo',
                 'rol_examenes.materia_nombre',
+                DB::raw("(
+                    SELECT docentes.nombre_completo
+                    FROM grupos
+                    INNER JOIN asignaturas ON asignaturas.id = grupos.asignatura_id
+                    INNER JOIN docentes ON docentes.id = grupos.docente_id
+                    WHERE grupos.sede_id = rol_examenes.sede_id
+                        AND grupos.carrera_id = rol_examenes.carrera_id
+                        AND asignaturas.codigo = rol_examenes.materia_codigo
+                        AND grupos.estado = 'ACTIVO'
+                        AND grupos.deleted_at IS NULL
+                        AND (
+                            grupos.nombre = rol_examenes.grupo
+                            OR REPLACE(REPLACE(REPLACE(UPPER(grupos.nombre), 'GRUPO ', ''), 'G-', ''), 'G', '') =
+                               REPLACE(REPLACE(REPLACE(UPPER(rol_examenes.grupo), 'GRUPO ', ''), 'G-', ''), 'G', '')
+                        )
+                    ORDER BY docentes.nombre_completo
+                    LIMIT 1
+                ) as docente"),
                 'rol_examenes.tipo_examen',
                 'rol_examenes.grupo',
                 'rol_examenes.fecha',
@@ -129,6 +147,7 @@ class ReporteEvaluacionController extends Controller
                 'carrera' => $row->carrera ?: 'Sin carrera',
                 'materia_codigo' => $row->materia_codigo,
                 'materia_nombre' => $row->materia_nombre,
+                'docente' => $row->docente ?: 'Por asignar',
                 'parcial' => $row->tipo_examen,
                 'grupo' => $row->grupo,
                 'fecha' => $this->formatearFecha($row->fecha),
