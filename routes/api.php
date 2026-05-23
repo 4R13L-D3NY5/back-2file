@@ -319,7 +319,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
           Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update'])
-              ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+              ->middleware('role:DIRECTOR_CARRERA,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
           Route::post('/{id}/restore-generated-package', [\App\Http\Controllers\RolExamenController::class, 'restoreGeneratedPackage'])
               ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
           Route::post('/{id}/generate-package', [\App\Http\Controllers\RolExamenController::class, 'generatePackage'])
@@ -331,7 +331,7 @@ Route::middleware('auth:sanctum')->group(function () {
           Route::get('/{id}/download-examen', [\App\Http\Controllers\RolExamenController::class, 'downloadExamen']);
           Route::get('/{id}/download-patron', [\App\Http\Controllers\RolExamenController::class, 'downloadPatron']);
           Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy'])
-              ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+              ->middleware('role:DIRECTOR_CARRERA,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
         Route::post('/{id}/upload-examen', [\App\Http\Controllers\RolExamenController::class, 'uploadExamen'])
             ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
         Route::post('/{id}/upload-patron', [\App\Http\Controllers\RolExamenController::class, 'uploadPatron'])

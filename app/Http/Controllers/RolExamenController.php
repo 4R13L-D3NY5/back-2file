@@ -1226,12 +1226,8 @@ class RolExamenController extends Controller
     {
         $examen = RolExamen::findOrFail($id);
 
-        $user = auth()->user();
-        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-            $sedeId = $user->director?->sede_id ?? $user->sede_id;
-            if ($sedeId && $examen->sede_id != $sedeId) {
-                return response()->json(['message' => 'No tiene permiso para eliminar este examen de otra sede'], 403);
-            }
+        if ($response = $this->authorizeRolExamenAccess($examen)) {
+            return $response;
         }
 
         $examen->delete();
