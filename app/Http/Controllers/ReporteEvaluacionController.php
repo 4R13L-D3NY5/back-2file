@@ -246,6 +246,8 @@ class ReporteEvaluacionController extends Controller
                 $query->whereIn('rol_examenes.estado', $rolEstados);
             }
         }
+
+        $this->aplicarAlcanceUsuario($query, 'rol_examenes', $filtros);
     }
 
     private function aplicarFiltrosComunesManual($query, array $filtros): void
@@ -276,6 +278,136 @@ class ReporteEvaluacionController extends Controller
         if (! empty($filtros['estados'])) {
             $query->whereIn('generaciones_manuales.estado', $filtros['estados']);
         }
+
+        $this->aplicarAlcanceUsuario($query, 'generaciones_manuales', $filtros);
+    }
+
+    private function aplicarAlcanceUsuario($query, string $tabla, array $filtros): void
+    {
+        $scope = $this->obtenerAlcanceUsuario();
+
+        if ($scope['global']) {
+            return;
+        }
+
+        if ($scope['sede_ids'] !== null) {
+            $sedeIds = collect($scope['sede_ids'])->map(fn ($id) => (int) $id)->filter()->values();
+
+            if ($sedeIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+                return;
+            }
+
+            if ($filtros['sede_id'] && ! $sedeIds->contains((int) $filtros['sede_id'])) {
+                $query->whereRaw('1 = 0');
+                return;
+            }
+
+            $query->whereIn("{$tabla}.sede_id", $sedeIds->all());
+        }
+
+        if ($scope['carrera_ids'] !== null) {
+            $carreraIds = collect($scope['carrera_ids'])->map(fn ($id) => (int) $id)->filter()->values();
+
+            if ($carreraIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+                return;
+            }
+
+            if ($filtros['carrera_id'] && ! $carreraIds->contains((int) $filtros['carrera_id'])) {
+                $query->whereRaw('1 = 0');
+                return;
+            }
+
+            $query->whereIn("{$tabla}.carrera_id", $carreraIds->all());
+        }
+    }
+
+    private function obtenerAlcanceUsuario(): array
+    {
+        $user = request()->user();
+
+        if (! $user) {
+            return ['global' => false, 'sede_ids' => [], 'carrera_ids' => []];
+        }
+
+        $user->loadMissing(['rol', 'director.carreras', 'docente', 'campus', 'campusAsignados.sede']);
+        $rol = $this->normalizarRol($user->rol?->codigo);
+
+        if (in_array($rol, ['SUPER_ADMIN', 'ADMIN', 'RESPONSABLE_EVALUACIONES', 'VICERRECTOR_NACIONAL'], true)) {
+            return ['global' => true, 'sede_ids' => null, 'carrera_ids' => null];
+        }
+
+        if ($rol === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->docente?->sede_id ?? $user->sede_id;
+            $carreraIds = collect([
+                $user->director?->carrera_id,
+                $user->carrera_id ?? null,
+            ])->merge($user->director?->carreras?->pluck('id') ?? collect())
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            return [
+                'global' => false,
+                'sede_ids' => $sedeId ? [(int) $sedeId] : [],
+                'carrera_ids' => $carreraIds,
+            ];
+        }
+
+        if (in_array($rol, ['VICERRECTOR_SEDE', 'DIRECCION_ACADEMICA'], true)) {
+            $sedeId = $user->director?->sede_id ?? $user->docente?->sede_id ?? $user->sede_id;
+
+            return [
+                'global' => false,
+                'sede_ids' => $sedeId ? [(int) $sedeId] : [],
+                'carrera_ids' => null,
+            ];
+        }
+
+        if ($rol === 'EVALUACIONES') {
+            $campusIds = collect([$user->campus_id])
+                ->merge($user->campusAsignados->pluck('id'))
+                ->filter()
+                ->unique()
+                ->values();
+
+            $sedeIds = collect([$user->sede_id])
+                ->merge($user->campusAsignados->pluck('sede_id'))
+                ->merge($user->campusAsignados->pluck('sede.id'))
+                ->merge($user->campus?->sede_id ? [$user->campus->sede_id] : [])
+                ->filter()
+                ->unique()
+                ->values();
+
+            $carreraIds = $campusIds->isNotEmpty()
+                ? DB::table('campus_carrera')
+                    ->whereIn('campus_id', $campusIds->all())
+                    ->pluck('carrera_id')
+                    ->unique()
+                    ->values()
+                    ->all()
+                : null;
+
+            return [
+                'global' => false,
+                'sede_ids' => $sedeIds->all(),
+                'carrera_ids' => $carreraIds,
+            ];
+        }
+
+        return ['global' => false, 'sede_ids' => [], 'carrera_ids' => []];
+    }
+
+    private function normalizarRol(?string $rol): string
+    {
+        return [
+            'VICERRECTORADO_NACIONAL' => 'VICERRECTOR_NACIONAL',
+            'VICERRECTORADO' => 'VICERRECTOR_SEDE',
+            'DIRECCIÃ“N ACADÃ‰MICA' => 'DIRECCION_ACADEMICA',
+            'DIRECCIÓN ACADÉMICA' => 'DIRECCION_ACADEMICA',
+        ][trim((string) $rol)] ?? trim((string) $rol);
     }
 
     private function construirResumen(Collection $rol, Collection $manuales): array

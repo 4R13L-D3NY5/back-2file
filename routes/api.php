@@ -226,14 +226,19 @@ Route::middleware('auth:sanctum')->group(function () {
     // Generaciones Manuales (Registro de Auditoría)
     Route::prefix('generaciones-manuales')->group(function () {
         Route::get('/', [GeneracionManualController::class, 'index']);
-        Route::post('/', [GeneracionManualController::class, 'store']);
-        Route::post('/{id}/generate-package', [GeneracionManualController::class, 'generatePackage']);
-        Route::put('/{id}/estado', [GeneracionManualController::class, 'updateEstado']);
-        Route::post('/{id}/upload-archivos', [GeneracionManualController::class, 'uploadArchivos']);
+        Route::post('/', [GeneracionManualController::class, 'store'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{id}/generate-package', [GeneracionManualController::class, 'generatePackage'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::put('/{id}/estado', [GeneracionManualController::class, 'updateEstado'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{id}/upload-archivos', [GeneracionManualController::class, 'uploadArchivos'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
         Route::get('/{id}/download-examen', [GeneracionManualController::class, 'downloadExamen']);
         Route::get('/{id}/download-patron-pdf', [GeneracionManualController::class, 'downloadPatronPdf']);
         Route::get('/{id}/download-patron-xlsx', [GeneracionManualController::class, 'downloadPatronXlsx']);
-        Route::delete('/{id}', [GeneracionManualController::class, 'destroy']);
+        Route::delete('/{id}', [GeneracionManualController::class, 'destroy'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
     });
 
     // Planificación Semestral (Nuevo Módulo)
@@ -313,17 +318,24 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/bulk-delete', [\App\Http\Controllers\RolExamenController::class, 'destroyAll']);
         Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
-          Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
-          Route::post('/{id}/restore-generated-package', [\App\Http\Controllers\RolExamenController::class, 'restoreGeneratedPackage']);
-          Route::post('/{id}/generate-package', [\App\Http\Controllers\RolExamenController::class, 'generatePackage']);
-          Route::post('/{id}/pattern-verifier', [\App\Http\Controllers\RolExamenController::class, 'patternVerifier']);
+          Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update'])
+              ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+          Route::post('/{id}/restore-generated-package', [\App\Http\Controllers\RolExamenController::class, 'restoreGeneratedPackage'])
+              ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+          Route::post('/{id}/generate-package', [\App\Http\Controllers\RolExamenController::class, 'generatePackage'])
+              ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+          Route::post('/{id}/pattern-verifier', [\App\Http\Controllers\RolExamenController::class, 'patternVerifier'])
+              ->middleware('role:ADMIN,SUPER_ADMIN');
           Route::get('/{id}/download-examen-url', [\App\Http\Controllers\RolExamenController::class, 'signedExamenUrl']);
           Route::get('/{id}/download-patron-url', [\App\Http\Controllers\RolExamenController::class, 'signedPatronUrl']);
           Route::get('/{id}/download-examen', [\App\Http\Controllers\RolExamenController::class, 'downloadExamen']);
           Route::get('/{id}/download-patron', [\App\Http\Controllers\RolExamenController::class, 'downloadPatron']);
-          Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
-        Route::post('/{id}/upload-examen', [\App\Http\Controllers\RolExamenController::class, 'uploadExamen']);
-        Route::post('/{id}/upload-patron', [\App\Http\Controllers\RolExamenController::class, 'uploadPatron']);
+          Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy'])
+              ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{id}/upload-examen', [\App\Http\Controllers\RolExamenController::class, 'uploadExamen'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{id}/upload-patron', [\App\Http\Controllers\RolExamenController::class, 'uploadPatron'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
     });
 
     // Materias Comunes
@@ -348,7 +360,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/matriz-control', [\App\Http\Controllers\ReporteController::class, 'getMatrizControl']);
     Route::get('/reportes/auditoria-25', [\App\Http\Controllers\ReporteController::class, 'getAuditoria25']);
     Route::get('/reportes/evaluaciones', [\App\Http\Controllers\ReporteEvaluacionController::class, 'index'])
-        ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+        ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
     
     Route::get('/reportes/semanal/draft', [\App\Http\Controllers\ReporteController::class, 'getWeeklyReportDraft']);
     Route::post('/reportes/semanal', [\App\Http\Controllers\ReporteController::class, 'storeWeeklyReport']);

@@ -74,7 +74,102 @@ class GeneracionManualController extends Controller
             $query->whereDate('fecha_examen', $request->fecha);
         }
 
+        $this->aplicarAlcanceUsuario($query, $request);
+
         return response()->json($query->orderBy('created_at', 'desc')->get());
+    }
+
+    private function aplicarAlcanceUsuario($query, Request $request): void
+    {
+        $user = $request->user();
+
+        if (! $user) {
+            $query->whereRaw('1 = 0');
+            return;
+        }
+
+        $user->loadMissing(['rol', 'director.carreras', 'docente', 'campus', 'campusAsignados.sede']);
+        $rol = $this->normalizarRol($user->rol?->codigo);
+
+        if (in_array($rol, ['SUPER_ADMIN', 'ADMIN', 'RESPONSABLE_EVALUACIONES', 'VICERRECTOR_NACIONAL'], true)) {
+            return;
+        }
+
+        if ($rol === 'DIRECTOR_CARRERA') {
+            $sedeId = $user->director?->sede_id ?? $user->docente?->sede_id ?? $user->sede_id;
+            $carreraIds = collect([
+                $user->director?->carrera_id,
+                $user->carrera_id ?? null,
+            ])->merge($user->director?->carreras?->pluck('id') ?? collect())
+                ->filter()
+                ->unique()
+                ->values();
+
+            if (! $sedeId || $carreraIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+                return;
+            }
+
+            $query->where('sede_id', $sedeId)->whereIn('carrera_id', $carreraIds->all());
+            return;
+        }
+
+        if (in_array($rol, ['VICERRECTOR_SEDE', 'DIRECCION_ACADEMICA'], true)) {
+            $sedeId = $user->director?->sede_id ?? $user->docente?->sede_id ?? $user->sede_id;
+
+            $sedeId ? $query->where('sede_id', $sedeId) : $query->whereRaw('1 = 0');
+            return;
+        }
+
+        if ($rol === 'EVALUACIONES') {
+            $campusIds = collect([$user->campus_id])
+                ->merge($user->campusAsignados->pluck('id'))
+                ->filter()
+                ->unique()
+                ->values();
+
+            $sedeIds = collect([$user->sede_id])
+                ->merge($user->campusAsignados->pluck('sede_id'))
+                ->merge($user->campusAsignados->pluck('sede.id'))
+                ->merge($user->campus?->sede_id ? [$user->campus->sede_id] : [])
+                ->filter()
+                ->unique()
+                ->values();
+
+            $carreraIds = $campusIds->isNotEmpty()
+                ? DB::table('campus_carrera')
+                    ->whereIn('campus_id', $campusIds->all())
+                    ->pluck('carrera_id')
+                    ->unique()
+                    ->values()
+                : collect();
+
+            if ($sedeIds->isEmpty() && $carreraIds->isEmpty()) {
+                $query->whereRaw('1 = 0');
+                return;
+            }
+
+            if ($sedeIds->isNotEmpty()) {
+                $query->whereIn('sede_id', $sedeIds->all());
+            }
+
+            if ($carreraIds->isNotEmpty()) {
+                $query->whereIn('carrera_id', $carreraIds->all());
+            }
+            return;
+        }
+
+        $query->whereRaw('1 = 0');
+    }
+
+    private function normalizarRol(?string $rol): string
+    {
+        return [
+            'VICERRECTORADO_NACIONAL' => 'VICERRECTOR_NACIONAL',
+            'VICERRECTORADO' => 'VICERRECTOR_SEDE',
+            'DIRECCIÃ“N ACADÃ‰MICA' => 'DIRECCION_ACADEMICA',
+            'DIRECCIÓN ACADÉMICA' => 'DIRECCION_ACADEMICA',
+        ][trim((string) $rol)] ?? trim((string) $rol);
     }
 
     public function store(Request $request)

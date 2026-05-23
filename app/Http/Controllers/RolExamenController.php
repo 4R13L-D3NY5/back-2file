@@ -127,6 +127,16 @@ class RolExamenController extends Controller
                 $query->where('rol_examenes.sede_id', $sedeId);
                 Log::info("Filtrando RolExamen por sede de Autoridad ({$user->rol->codigo}): {$sedeId}");
             }
+
+            if ($user->rol->codigo === 'DIRECTOR_CARRERA') {
+                $carreraIds = $this->carreraIdsDirector($user);
+
+                if (empty($carreraIds)) {
+                    $query->whereRaw('1 = 0');
+                } else {
+                    $query->whereIn('rol_examenes.carrera_id', $carreraIds);
+                }
+            }
         } elseif ($user && $user->load('rol') && $user->rol->codigo === 'EVALUACIONES') {
             $campusIds = collect([$user->campus_id])->filter();
 
@@ -253,6 +263,24 @@ class RolExamenController extends Controller
                 'gestion' => $request->gestion,
             ],
         ]);
+    }
+
+    private function carreraIdsDirector($user): array
+    {
+        if (! $user?->director) {
+            return [];
+        }
+
+        $user->loadMissing('director.carreras');
+
+        return collect([
+            $user->director->carrera_id,
+            $user->carrera_id ?? null,
+        ])->merge($user->director->carreras?->pluck('id') ?? collect())
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /**

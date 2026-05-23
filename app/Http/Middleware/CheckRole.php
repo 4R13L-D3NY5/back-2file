@@ -44,6 +44,10 @@ class CheckRole
     {
         $code = trim((string) $role);
 
+        if (str_contains($code, 'DIRECCI') && str_contains($code, 'ACAD')) {
+            return 'DIRECCION_ACADEMICA';
+        }
+
         return [
             'VICERRECTORADO_NACIONAL' => 'VICERRECTOR_NACIONAL',
             'VICERRECTORADO' => 'VICERRECTOR_SEDE',
