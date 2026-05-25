@@ -361,6 +361,138 @@ class RolExamenController extends Controller
         return $stats;
     }
 
+    private function calcularStatsBancoRolExamenParaGeneracion(RolExamen $examen): array
+    {
+        $grupoNormalizado = $this->normalizarGrupoBanco($examen->grupo);
+        $partial = $this->normalizarTipoExamen($examen->tipo_examen);
+        $asignaturaIds = DB::table('asignaturas')
+            ->join('asignatura_carrera', 'asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
+            ->where('asignaturas.codigo', $examen->materia_codigo)
+            ->where('asignatura_carrera.carrera_id', $examen->carrera_id)
+            ->where('asignatura_carrera.sede_id', $examen->sede_id)
+            ->where('asignaturas.estado', '!=', 'cancelado')
+            ->pluck('asignaturas.id')
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values();
+
+        if ($asignaturaIds->isEmpty()) {
+            return $this->statsBancoVacios();
+        }
+
+        $rows = DB::table('banco_preguntas')
+            ->select('asignatura_id', 'docente_id', DB::raw('COUNT(*) as total'))
+            ->whereIn('asignatura_id', $asignaturaIds->all())
+            ->where('sede_id', $examen->sede_id)
+            ->where('parcial', $partial)
+            ->where(function ($query) use ($grupoNormalizado) {
+                $query->whereRaw(
+                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                    [$grupoNormalizado]
+                )->orWhere(function ($legacy) use ($grupoNormalizado) {
+                    $legacy->where(function ($emptyGrupoTeorico) {
+                        $emptyGrupoTeorico->whereNull('grupoTeorico')
+                            ->orWhere('grupoTeorico', '');
+                    })->whereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    );
+                });
+            })
+            ->groupBy('asignatura_id', 'docente_id')
+            ->orderByDesc('total')
+            ->get();
+
+        if ($rows->isEmpty()) {
+            return $this->statsBancoVacios();
+        }
+
+        $row = $rows->first();
+
+        return $this->calcularStatsBancoPorContexto(
+            (int) $row->asignatura_id,
+            $row->docente_id ? (int) $row->docente_id : null,
+            (int) $examen->sede_id,
+            $grupoNormalizado,
+            $partial
+        );
+    }
+
+    private function calcularStatsBancoPorContexto(
+        int $asignaturaId,
+        ?int $docenteId,
+        int $sedeId,
+        string $grupoNormalizado,
+        string $partial
+    ): array {
+        $query = DB::table('banco_preguntas')
+            ->where('asignatura_id', $asignaturaId)
+            ->where('sede_id', $sedeId)
+            ->where('parcial', $partial)
+            ->when($docenteId, function ($query) use ($docenteId) {
+                $query->where('docente_id', $docenteId);
+            })
+            ->where(function ($query) use ($grupoNormalizado) {
+                $query->whereRaw(
+                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                    [$grupoNormalizado]
+                )->orWhere(function ($legacy) use ($grupoNormalizado) {
+                    $legacy->where(function ($emptyGrupoTeorico) {
+                        $emptyGrupoTeorico->whereNull('grupoTeorico')
+                            ->orWhere('grupoTeorico', '');
+                    })->whereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    );
+                });
+            });
+
+        return $this->calcularStatsDesdePreguntas($query->get(['tipo', 'dificultad']));
+    }
+
+    private function statsBancoVacios(): array
+    {
+        return [
+            'total' => 0,
+            'facil' => 0,
+            'medio' => 0,
+            'dificil' => 0,
+            'g1' => 0,
+            'g2' => 0,
+            'g3' => 0,
+            'por_tipo' => [],
+            'por_grupo_tipo' => ['g1' => 0, 'g2' => 0, 'g3' => 0],
+        ];
+    }
+
+    private function calcularStatsDesdePreguntas($preguntas): array
+    {
+        $stats = $this->statsBancoVacios();
+
+        foreach ($preguntas as $pregunta) {
+            $stats['total']++;
+
+            $dificultad = $this->normalizarDificultadBanco($pregunta->dificultad);
+            if (in_array($dificultad, ['FACIL', '1'], true)) {
+                $stats['facil']++;
+            } elseif (in_array($dificultad, ['MEDIA', 'MEDIO', '2'], true)) {
+                $stats['medio']++;
+            } elseif (in_array($dificultad, ['DIFICIL', '3'], true)) {
+                $stats['dificil']++;
+            }
+
+            $tipoNormalizado = $this->normalizarTipoBanco($pregunta->tipo);
+            $grupoTipo = $this->resolverGrupoTipoBanco($tipoNormalizado);
+            if ($grupoTipo) {
+                $stats[$grupoTipo]++;
+                $stats['por_grupo_tipo'][$grupoTipo]++;
+                $stats['por_tipo'][$tipoNormalizado] = ($stats['por_tipo'][$tipoNormalizado] ?? 0) + 1;
+            }
+        }
+
+        return $stats;
+    }
+
     private function normalizarDificultadBanco($valor): string
     {
         $texto = $this->normalizarTextoBanco($valor);
@@ -1049,10 +1181,35 @@ class RolExamenController extends Controller
             ], 422);
         }
 
-        if ($examen->tipo_examen !== '2do Parcial') {
+        if (! in_array($examen->tipo_examen, ['2do Parcial', 'Final'], true)) {
             return response()->json([
-                'message' => 'La generación asincrónica consolidada está habilitada solo para 2do Parcial.',
+                'message' => 'La generación asincrónica consolidada está habilitada solo para 2do Parcial y Examen Final.',
             ], 422);
+        }
+
+        if ($examen->tipo_examen === 'Final') {
+            $statsBanco = $this->calcularStatsBancoRolExamenParaGeneracion($examen);
+            if ((int) ($statsBanco['total'] ?? 0) < 120) {
+                return response()->json([
+                    'message' => 'El Examen Final requiere un minimo de 120 preguntas en el banco antes de generar.',
+                    'total_detectado' => (int) ($statsBanco['total'] ?? 0),
+                ], 422);
+            }
+
+            if (
+                (int) ($statsBanco['facil'] ?? 0) < 30 ||
+                (int) ($statsBanco['medio'] ?? 0) < 60 ||
+                (int) ($statsBanco['dificil'] ?? 0) < 30
+            ) {
+                return response()->json([
+                    'message' => 'El Examen Final requiere 30 faciles, 60 medias y 30 dificiles antes de generar.',
+                    'stats_detectadas' => [
+                        'facil' => (int) ($statsBanco['facil'] ?? 0),
+                        'medio' => (int) ($statsBanco['medio'] ?? 0),
+                        'dificil' => (int) ($statsBanco['dificil'] ?? 0),
+                    ],
+                ], 422);
+            }
         }
 
         $request->validate([

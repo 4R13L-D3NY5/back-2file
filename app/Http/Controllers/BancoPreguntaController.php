@@ -484,6 +484,7 @@ class BancoPreguntaController extends Controller
             $evaluables = 0;
             $auxiliares = 0;
             $omitidas = 0;
+            $omitidasSeleccionMultiplePrimerParcial = 0;
             $existingDuplicateKeys = [];
             $batchDuplicateKeys = [];
 
@@ -625,6 +626,13 @@ class BancoPreguntaController extends Controller
                     $parcial = $parcialSolicitadoNormalizado;
                 }
 
+                if ($parcial === '1er Parcial' && $tipo === 'RESPUESTA_COMPUESTA') {
+                    $omitidas++;
+                    $omitidasSeleccionMultiplePrimerParcial++;
+
+                    continue;
+                }
+
                 $duplicateKey = $this->construirClaveDuplicadoBanco([
                     'enunciado' => $enunciado,
                     'grupo' => $grupo,
@@ -671,6 +679,11 @@ class BancoPreguntaController extends Controller
                 }
             }
 
+            $advertencias = [];
+            if ($omitidasSeleccionMultiplePrimerParcial > 0) {
+                $advertencias[] = "Se omitieron {$omitidasSeleccionMultiplePrimerParcial} pregunta(s) de seleccion multiple / Respuesta A-B-Ambas-Ninguna porque 1er Parcial no permite importarlas.";
+            }
+
             return response()->json([
                 'success' => true,
                 'message' => "Se han importado {$evaluables} preguntas nuevas correctamente.",
@@ -678,6 +691,7 @@ class BancoPreguntaController extends Controller
                 'evaluables' => $evaluables,
                 'auxiliares' => $auxiliares,
                 'omitidas' => $omitidas,
+                'advertencias' => $advertencias,
             ]);
 
         } catch (\Exception $e) {
