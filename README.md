@@ -1,5 +1,5 @@
-# 🚀 SISA - Sistema Integrado de Seguimiento Académico
-### ⚙️ Portal de la API Backend (Laravel 12 API REST)
+# SISA - Sistema Integrado de Seguimiento Academico
+### Portal de la API Backend (Laravel 12 API REST)
 
 Bienvenido al repositorio oficial del **Backend** de **SISA** (Sistema Integrado de Seguimiento Académico). Esta API REST proporciona el motor lógico, la persistencia, la sincronización y la seguridad para toda la plataforma web y móvil.
 
@@ -7,7 +7,7 @@ El backend está desarrollado utilizando **Laravel v12** (PHP 8.2+), siguiendo p
 
 ---
 
-## 📚 Índice de Documentación Técnica y Arquitectura
+## Indice de Documentacion Tecnica y Arquitectura
 
 Toda la documentación detallada del sistema y su comportamiento en base de datos está disponible en la carpeta `docs/`. Explora los módulos a continuación:
 
@@ -17,28 +17,30 @@ graph TD
     A --> C(Endpoints e Integración API)
     A --> D(Diagrama de Base de Datos ER)
     A --> E(Reglas de Negocio y Sincronización)
+    A --> F(10. CodeGraph - Herramientas Dev)
 ```
 
-### 📖 Recursos Críticos de la API:
+### Recursos Criticos de la API:
 
-*   **[🔌 Catálogo Completo de Endpoints (endpoints.md)](docs/endpoints.md):** Especificación técnica detallada de todas las rutas de la API, parámetros del Request, payload del Response y códigos de estado HTTP.
-*   **[🗄️ Esquema y Diagrama de Base de Datos (diagrama_er_completo.md)](docs/diagrama_er_completo.md):** Definición detallada de tablas, llaves primarias y foráneas, e índices de rendimiento de la base de datos de SISA.
+*   **[Catalogo Completo de Endpoints (endpoints.md)](docs/endpoints.md):** Especificacion tecnica detallada de todas las rutas de la API, parametros del Request, payload del Response y codigos de estado HTTP.
+*   **[Esquema y Diagrama de Base de Datos (diagrama_er_completo.md)](docs/diagrama_er_completo.md):** Definicion detallada de tablas, llaves primarias y foraneas, e indices de rendimiento de la base de datos de SISA.
 
-### 📘 Capítulos Generales de Documentación:
+### Capitulos Generales de Documentacion:
 
-1.  **[🔒 Autenticación y Roles](docs/01_autenticacion_seguridad.md):** Laravel Sanctum, roles de usuario (`SUPER_ADMIN`, `DIRECTOR_CARRERA`, `DOCENTE`), y control de acceso jerárquico.
-2.  **[🏫 Gestión de Infraestructura Académica](docs/02_estructura_academica.md):** Modelos y relaciones para Sedes, Carreras, Campus, Bloques, Aulas e importación de mallas.
-3.  **[📚 PAC (Plan Académico de Asignatura)](docs/03_pac_y_bibliografia.md):** CRUD y lógica de carga jerárquica para unidades, temas y bibliografías.
-4.  **[🔗 Algoritmo de Materias Comunes](docs/04_materias_comunes.md):** Lógica del backend para merge inteligente, resolución de conflictos y asignación multipropósito.
-5.  **[📅 Planificación Semestral](docs/05_planificacion_semestral.md):** Generador de secuencias didácticas automáticas basadas en el calendario académico.
-6.  **[📝 Control de Asistencia y Clases](docs/06_control_clase_seguimiento.md):** API de sincronización activa de clases firmadas, recepción y almacenamiento de imágenes en servidor.
-7.  **[🎯 Banco de Evaluaciones](docs/07_banco_preguntas_evaluaciones.md):** Motor de selección aleatoria de reactivos según parámetros y generación masiva de PDF de exámenes.
-8.  **[⚙️ Gestión de Evaluaciones y Rol de Exámenes](docs/08_gestion_evaluaciones_y_examenes.md):** Directivas de exámenes y calendario del Rol de Exámenes con validaciones de colisión en tiempo real.
-9.  **[🔄 Sincronización y Motores de Comparación](docs/09_sincronizacion_y_patrones.md):** Sincronización centralizada, comparadores analíticos pre/post sync, verificador lexical PDF y restaurador granular de backups.
+1.  **[Autenticacion y Roles](docs/01_autenticacion_seguridad.md):** Laravel Sanctum, roles de usuario (`SUPER_ADMIN`, `DIRECTOR_CARRERA`, `DOCENTE`), y control de acceso jerarquico.
+2.  **[Gestion de Infraestructura Academica](docs/02_estructura_academica.md):** Modelos y relaciones para Sedes, Carreras, Campus, Bloques, Aulas e importacion de mallas.
+3.  **[PAC (Plan Academico de Asignatura)](docs/03_pac_y_bibliografia.md):** CRUD y logica de carga jerarquica para unidades, temas y bibliografias.
+4.  **[Algoritmo de Materias Comunes](docs/04_materias_comunes.md):** Logica del backend para merge inteligente, resolucion de conflictos y asignacion multiproposito.
+5.  **[Planificacion Semestral](docs/05_planificacion_semestral.md):** Generador de secuencias didacticas automaticas basadas en el calendario academico.
+6.  **[Control de Asistencia y Clases](docs/06_control_clase_seguimiento.md):** API de sincronizacion activa de clases firmadas, recepcion y almacenamiento de imagenes en servidor.
+7.  **[Banco de Evaluaciones](docs/07_banco_preguntas_evaluaciones.md):** Motor de seleccion aleatoria de reactivos segun parametros y generacion masiva de PDF de examenes.
+8.  **[Gestion de Evaluaciones y Rol de Examenes](docs/08_gestion_evaluaciones_y_examenes.md):** Directivas de examenes y calendario del Rol de Examenes con validaciones de colision en tiempo real.
+9.  **[Sincronizacion y Motores de Comparacion](docs/09_sincronizacion_y_patrones.md):** Sincronizacion centralizada, comparadores analiticos pre/post sync, verificador lexical PDF y restaurador granular de backups.
+10. **[CodeGraph - Herramientas de Desarrollo](docs/10_codegraph_dev_tools.md):** Grafo de conocimiento AST con tree-sitter para navegacion inteligente del codigo, busqueda estructural, trazado de flujos y analisis de impacto.
 
 ---
 
-## 🛠️ Guía de Arranque Rápido para Desarrolladores
+## Guia de Arranque Rapido para Desarrolladores
 
 ### Requisitos del Entorno
 *   **PHP** >= 8.2 (con extensiones `pdo_mysql`, `mbstring`, `openssl`, etc.)
@@ -77,7 +79,7 @@ php artisan serve
 
 ---
 
-## 🛡️ Estándares y Convenciones
+## Estandares y Convenciones
 
 *   **Thin Controllers:** Los controladores se encargan estrictamente de HTTP.
 *   **Service Pattern:** La lógica de negocio pesada reside en `app/Services/`.
@@ -85,4 +87,4 @@ php artisan serve
 *   **Seguridad:** Middlewares estrictos de control de accesos basados en roles.
 
 ---
-Desarrollado con ❤️ para garantizar robustez y escalabilidad en SISA.
+Desarrollado para garantizar robustez y escalabilidad en SISA.

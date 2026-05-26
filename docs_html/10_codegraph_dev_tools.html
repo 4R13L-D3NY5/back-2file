@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SISA -  Autenticacion y Seguridad</title>
+  <title>SISA -  CodeGraph - Herramientas Dev</title>
   <!-- Tailwind CSS Play CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Marked.js for markdown rendering -->
@@ -75,7 +75,7 @@
       <a href="README.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
       Portal Principal
     </a>
-<a href="01_autenticacion_seguridad.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm bg-indigo-950/70 text-indigo-300 border-l-4 border-indigo-500 pl-3 font-semibold shadow-inner">
+<a href="01_autenticacion_seguridad.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
       01. Autenticacion y Seguridad
     </a>
 <a href="02_estructura_academica.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
@@ -102,7 +102,7 @@
 <a href="09_sincronizacion_y_patrones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
       09. Sincronizacion y Motores
     </a>
-<a href="10_codegraph_dev_tools.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+<a href="10_codegraph_dev_tools.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm bg-indigo-950/70 text-indigo-300 border-l-4 border-indigo-500 pl-3 font-semibold shadow-inner">
       10. CodeGraph - Herramientas Dev
     </a>
 <a href="diagrama_er_completo.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
@@ -128,232 +128,126 @@
   </main>
 
   <!-- Raw Markdown Content Injected Safely -->
-  <script type="text/markdown" id="markdown-content"># Módulo 1: Autenticación, Seguridad y Perfiles (SISA 2.0)
+  <script type="text/markdown" id="markdown-content"># 10. CodeGraph — Herramientas de Desarrollo Inteligentes
 
-Este módulo gestiona el ciclo de vida de la autenticación de usuarios, la asignación jerárquica de roles, permisos, control de accesos en el frontend y backend, y la actualización del perfil docente/administrativo.
-
----
-
-## 1. Ficha Técnica
-
-*   **Backend:** Laravel v12.x (API REST) + PHP v8.2+ + Laravel Sanctum.
-*   **Frontend:** Quasar Framework v2.16.x + Vue 3.5.20 (Composition API con `<script setup>`).
-*   **Persistencia Local:** Pinia Store persistido con `pinia-plugin-persistedstate`.
-*   **Control de Accesos:** Middleware de Laravel y Guards en Vue Router.
+> Última actualización: 2026-05-26
 
 ---
 
-## 2. Arquitectura de Datos (ER)
+## 10.1 ¿Qué es CodeGraph?
 
-El siguiente diagrama detalla las tablas de la base de datos involucradas en la autenticación, roles, permisos y dependencias organizacionales del usuario.
+**CodeGraph** es un grafo de conocimiento del código fuente generado mediante **tree-sitter**, que indexa cada símbolo, arista y archivo del proyecto. Proporciona consultas sub-milisegundo sobre la estructura del código — algo que `grep` no puede hacer.
 
-```mermaid
-erDiagram
-    USERS {
-        bigint id PK
-        string username "Unique (ej. CI)"
-        string email "Nullable"
-        string password "Hashed"
-        bigint rol_id FK
-        bigint sede_id FK "Sede Principal"
-        integer estado "1: ACTIVO, 0: INACTIVO"
-        timestamp email_verified_at
-        string remember_token
-        boolean password_change_required "Default: true"
-    }
+El proyecto SISA tiene CodeGraph completamente inicializado (`.codegraph/`) y configurado como servidor MCP en `opencode.jsonc`, permitiendo a los asistentes de IA (como OpenCode) navegar y entender el código con precisión estructural.
 
-    ROLES {
-        bigint id PK
-        string nombre "Nombre visual"
-        string codigo "SUPER_ADMIN, DOCENTE, etc."
-        string descripcion "Nullable"
-    }
+## 10.2 Stack de Herramientas Dev
 
-    DOCENTES {
-        bigint id PK
-        bigint user_id FK
-        string nombre_completo
-        string ci "Cédula de Identidad"
-        string celular
-        string email
-        string especialidad
-        string grado_academico
-        bigint sede_id FK
-    }
+| Herramienta | Propósito | Ubicación |
+|---|---|---|
+| **CodeGraph** | Grafo de conocimiento AST del código | `.codegraph/` (raíz del proyecto) |
+| **OpenCode** | Asistente de IA para desarrollo | Configurado en `opencode.jsonc` |
+| **ESLint** | Linting de código frontend | `Academico/eslint.config.js` |
+| **Prettier** | Formateo de código | `Academico/.prettierrc` |
+| **Vitest** | Pruebas unitarias frontend | `Academico/tests/unit/` |
+| **Playwright** | Pruebas E2E y API | `Academico/tests/e2e/`, `Academico/tests/api/` |
+| **PHPUnit** | Pruebas backend | `back-2file/tests/` |
 
-    DIRECTORS {
-        bigint id PK
-        bigint user_id FK
-        bigint carrera_id FK
-        bigint sede_id FK
-    }
+## 10.3 Herramientas de CodeGraph Disponibles
 
-    SEDES {
-        bigint id PK
-        string nombre
-        string ciudad
-    }
+CodeGraph expone las siguientes herramientas MCP que pueden ser invocadas por asistentes de IA:
 
-    USERS }o--|| ROLES : tiene_un
-    USERS }o--|| SEDES : pertenece_a
-    DOCENTES ||--o| USERS : se_asocia_con
-    DIRECTORS ||--o| USERS : se_asocia_con
+| Herramienta | Propósito | Ejemplo de uso |
+|---|---|---|
+| `codegraph_search` | Buscar símbolos por nombre | "¿Dónde está definido `MateriasComunesSyncService`?" |
+| `codegraph_callers` | Ver quién llama a una función | "¿Qué llama a `syncUnidad()`?" |
+| `codegraph_callees` | Ver qué llama una función | "¿Qué métodos invoca `mergeAndSyncOnLink`?" |
+| `codegraph_trace` | Trazar ruta entre dos símbolos | "¿Cómo llega `guardarSeguimiento` a `propagarSeguimientoAComunes`?" |
+| `codegraph_impact` | Analizar impacto de un cambio | "¿Qué rompería si modifico `comun_token`?" |
+| `codegraph_node` | Ver detalle de un símbolo | Firma, docstring, ubicación de una función |
+| `codegraph_context` | Contexto completo para una tarea | "¿Cómo funciona el módulo de materias comunes?" |
+| `codegraph_explore` | Ver fuente de varios símbolos | Código agrupado por archivo de múltiples símbolos |
+| `codegraph_files` | Explorar estructura de archivos | "¿Qué archivos hay en `src/pages/admin/`?" |
+| `codegraph_status` | Estado del índice | Archivos pendientes de sincronizar |
+
+## 10.4 Reglas de Uso para Desarrollo con IA
+
+### Cuándo usar CodeGraph vs búsqueda tradicional
+
+| Tipo de pregunta | Usar |
+|---|---|
+| "¿Dónde se define X?" / "Buscar símbolo X" | `codegraph_search` |
+| "¿Qué función llama a Y?" | `codegraph_callers` |
+| "¿Qué llama Y?" | `codegraph_callees` |
+| "¿Cómo llega X a Y?" / "Trazar flujo de X a Y" | `codegraph_trace` (una sola llamada = ruta completa) |
+| "¿Qué rompería si cambio Z?" | `codegraph_impact` |
+| "Muéstrame firma/fuente de Y" | `codegraph_node` |
+| "Dame contexto para tarea/área" | `codegraph_context` |
+| "Ver fuente de varios símbolos" | `codegraph_explore` |
+| "¿Qué archivos hay en ruta/?" | `codegraph_files` |
+| Búsqueda literal de texto (strings, comentarios, logs) | `grep` / búsqueda nativa |
+
+### Mejores prácticas
+
+1. **Responder directo — no delegar exploración.** Para preguntas de arquitectura, usar `codegraph_context` primero, luego UN solo `codegraph_explore`. Para flujos específicos, iniciar con `codegraph_trace` desde→hasta.
+
+2. **Confiar en resultados de CodeGraph.** Provienen de un parseo AST completo. NO re-verificar con grep — es más lento, menos preciso y consume más contexto.
+
+3. **No hacer grep primero** al buscar símbolos por nombre. `codegraph_search` es más rápido.
+
+4. **No encadenar `codegraph_search` + `codegraph_node`** cuando solo necesitas contexto — `codegraph_context` lo hace en una llamada.
+
+5. **No iterar `codegraph_node` sobre muchos símbolos** — un solo `codegraph_explore` devuelve la fuente de varios símbolos agrupada.
+
+6. **Verificar el banner de staleness.** Si la respuesta de codegraph comienza con "[!WARNING] Some files referenced below were edited since the last index sync...", esos archivos estan pendientes de re-indexacion. Leer esos archivos especificos. `codegraph_status` tambien lista archivos pendientes.
+
+## 10.5 Inicialización y Mantenimiento
+
+El índice de CodeGraph se encuentra en `.codegraph/` en la raíz del proyecto. Si alguna vez necesitas reconstruirlo:
+
+```bash
+codegraph init -i
 ```
 
----
+Esto re-indexa todos los archivos del proyecto usando tree-sitter, creando el grafo de conocimiento completo.
 
-## 3. Especificación de la API (Endpoints)
+### Estado actual del índice
 
-### 3.1 Inicio de Sesión (Login)
-*   **Método:** `POST`
-*   **Ruta:** `/api/login`
-*   **Throttle Limit:** 6 peticiones por minuto.
-*   **Request (JSON):**
-    ```json
-    {
-      "username": "7654321",
-      "password": "mi_password_segura"
-    }
-    ```
-*   **Response de Éxito (`200 OK`):**
-    ```json
-    {
-      "success": true,
-      "token": "3|sanctum_token_string_here...",
-      "password_change_required": false,
-      "user": {
-        "id": 15,
-        "username": "7654321",
-        "nombre": "Juan",
-        "apellido": "Perez",
-        "email": "juan.perez@unitepc.edu.bo",
-        "ci": "7654321",
-        "estado": 1,
-        "rol": {
-          "id": 6,
-          "codigo": "DOCENTE",
-          "nombre": "Docente"
-        },
-        "docente": {
-          "id": 8,
-          "nombre_completo": "Juan Perez",
-          "celular": "78945612",
-          "sede_id": 1,
-          "sede": {
-            "id": 1,
-            "nombre": "Cochabamba - Central"
-          },
-          "grupos": []
-        }
-      }
-    }
-    ```
-*   **Response de Error (`422 Unprocessable Entity` o `401 Unauthorized`):**
-    ```json
-    {
-      "message": "Las credenciales proporcionadas son incorrectas.",
-      "errors": {
-        "username": ["Estas credenciales no coinciden con nuestros registros."]
-      }
-    }
-    ```
-
-### 3.2 Obtener Usuario Autenticado (Me)
-*   **Método:** `GET`
-*   **Ruta:** `/api/me`
-*   **Headers:** `Authorization: Bearer <token>`
-*   **Response de Éxito (`200 OK`):** Retorna la estructura detallada del objeto `user` con relaciones normalizadas (Roles, Docente, Grupos, Director, etc.).
-
-### 3.3 Cambio de Contraseña Obligatorio / Voluntario
-*   **Método:** `POST`
-*   **Ruta:** `/api/change-password`
-*   **Request (JSON):**
-    ```json
-    {
-      "new_password": "nueva_password_segura_123",
-      "new_password_confirmation": "nueva_password_segura_123"
-    }
-    ```
-*   **Response de Éxito (`200 OK`):**
-    ```json
-    {
-      "success": true,
-      "message": "Contraseña actualizada exitosamente."
-    }
-    ```
-
-### 3.4 Actualizar Perfil de Usuario
-*   **Método:** `POST`
-*   **Ruta:** `/api/update-profile`
-*   **Request (JSON):**
-    ```json
-    {
-      "email": "nuevo.correo@unitepc.edu.bo",
-      "telefono": "70712345",
-      "formacion": "Magíster en Educación Superior"
-    }
-    ```
-*   **Response de Éxito (`200 OK`):**
-    ```json
-    {
-      "success": true,
-      "message": "Perfil actualizado correctamente.",
-      "user": { ... }
-    }
-    ```
+El proyecto SISA cuenta con **568 archivos indexados** en CodeGraph, cubriendo tanto el frontend (Vue/Quasar) como el backend (Laravel/PHP), incluyendo todos los controladores, modelos, servicios, stores, páginas y componentes.
 
 ---
 
-## 4. Componentes y Capa de Frontend (Quasar)
+## 10.6 Scripts de Documentación
 
-### 4.1 Almacenamiento Global (Pinia Store)
-*   **Ubicación:** `src/stores/auth.js`
-*   **Persistencia:** Configurado con `persist: true` para retener la sesión local (`auth_token` y `auth_user` en el LocalStorage).
-*   **Roles Jerárquicos Normalizados:** El store define niveles y alcances de permisos para controlar la UI de forma dinámica:
-    *   `SUPER_ADMIN` (Nivel 100): Control global del sistema.
-    *   `ADMIN` (Nivel 90): Visualización total + analíticas.
-    *   `VICERRECTOR_NACIONAL` (Nivel 80): Edición total a nivel nacional.
-    *   `VICERRECTOR_SEDE` (Nivel 70): Supervisión regional.
-    *   `DIRECCION_ACADEMICA` (Nivel 60): Control académico de sede.
-    *   `DIRECTOR_CARRERA` (Nivel 50): Gestión de planes de sus carreras.
-    *   `DOCENTE` (Nivel 30): Registro de clases de sus materias.
+El proyecto incluye scripts de generación de documentación HTML:
 
-### 4.2 Axios Boot & Interceptores
-*   **Ubicación:** `src/boot/axios.js`
-*   **Comportamiento:** Inyecta automáticamente el token de Sanctum en los headers:
-    ```javascript
-    const token = localStorage.getItem('auth_token')
-    if (token) {
-      api.defaults.headers.common['Authorization'] = `Bearer ${token}`
-    }
-    ```
-    Si la API devuelve un código `401 Unauthorized` (Token vencido o revocado), el interceptor borra el store local y redirige al `/login`.
+```bash
+# Desde Academico/
+node generate_local_docs.cjs
 
-### 4.3 Vistas Involucradas
-*   `src/pages/dashboards/`: Contiene los 6 Dashboards específicos mapeados dinámicamente según el rol.
-*   `src/pages/perfil/PerfilPage.vue`: Interfaz para que el docente actualice su especialidad, grado de formación, email y celular, interactuando con `/api/update-profile`.
-*   `src/components/RolSwitcher.vue`: Dropdown interactivo en la barra superior para cambiar entre roles activos en tiempo real si el usuario tiene múltiples roles asignados.
-
----
-
-## 5. Arquitectura de Sincronización y Offline-First
-
-Debido a que la seguridad del sistema requiere de validaciones y firmas criptográficas en el servidor, el flujo de autenticación aplica reglas específicas cuando no hay cobertura de red:
-
-```mermaid
-flowchart TD
-    A[Inicio de Sesión o Cambio de Perfil] --> B{¿Hay Conexión a Internet?}
-    B -- Sí --x C[Enviar Petición a Laravel API]
-    C --> D[Obtener Token Sanctum + Persistir LocalState]
-    B -- No --x E{¿Tiene Token Persistido en Caché?}
-    E -- Sí --x F[Permitir Acceso en Modo Lectura Local]
-    E -- No --x G[Bloquear Operación y Mostrar Alerta Offline]
+# Desde back-2file/
+node generate_local_docs.cjs
 ```
 
-### Comportamiento del Módulo sin Conexión:
-1.  **Validación de Sesión Existente:** Si el usuario ya había iniciado sesión con anterioridad, Pinia recupera el token y los datos del perfil desde el almacenamiento local persistente (`localStorage`). Se permite el ingreso completo al sistema móvil en modo **Solo Lectura (Offline cached)**.
-2.  **Caché de Materias Asignadas:** Las materias y grupos cargados en la sesión del docente (`usuarioActual.materias_asignadas`) quedan cacheados, lo cual permite registrar avances locales y seguimientos de clase sin cobertura celular.
-3.  **Bloqueo de Cambio de Credenciales:** Las operaciones de cambio de contraseña o cambio de perfil están bloqueadas en la UI si el flag del Capacitor Network reporta `connected === false`, previniendo inconsistencias de hashes de credenciales locales.
+Estos scripts convierten todos los archivos `.md` de la carpeta `docs/` en páginas HTML interactivas con:
+- Sidebar de navegación
+- Renderizado Markdown con Marked.js
+- Diagramas Mermaid
+- Estilos Tailwind CSS dark theme
+- Diseño responsive con menú móvil
+
+---
+
+## 10.7 Convenciones del Proyecto
+
+| Convención | Descripción |
+|---|---|
+| `comun_token` | UUID para agrupar materias comunes |
+| Anti-recursión | `static bool $isSyncing` en `MateriasComunesSyncService` |
+| Matching de temas | Siempre por `unidad.numero + tema.orden` |
+| Composición API | Vue 3 `<script setup>` en todo el frontend |
+| Stores | Pinia con `pinia-plugin-persistedstate` |
+| Rutas API | Prefijo `/api`, protegidas con `auth:sanctum` |
+| Offline-First | Capacitor Filesystem + Network para modo sin conexión |
 </script>
 
   <script>
