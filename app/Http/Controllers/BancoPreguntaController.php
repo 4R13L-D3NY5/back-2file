@@ -485,6 +485,7 @@ class BancoPreguntaController extends Controller
             $auxiliares = 0;
             $omitidas = 0;
             $omitidasSeleccionMultiplePrimerParcial = 0;
+            $parcialExcelIgnorado = 0;
             $existingDuplicateKeys = [];
             $batchDuplicateKeys = [];
 
@@ -617,13 +618,19 @@ class BancoPreguntaController extends Controller
                     $dificultad = $dificultad ?: 'MEDIA';
                 }
 
-                $parcial = isset($cols['PARCIAL'])
+                $parcialExcel = isset($cols['PARCIAL'])
                     ? $this->sanitizePreguntaText(trim((string) ($row[$cols['PARCIAL']] ?? '')))
                     : null;
-                if ($parcial) {
-                    $parcial = $this->normalizarTipoExamen($parcial);
-                } elseif ($parcialSolicitadoNormalizado) {
+
+                if ($parcialSolicitadoNormalizado) {
                     $parcial = $parcialSolicitadoNormalizado;
+                    if ($parcialExcel && $this->normalizarTipoExamen($parcialExcel) !== $parcial) {
+                        $parcialExcelIgnorado++;
+                    }
+                } elseif ($parcialExcel) {
+                    $parcial = $this->normalizarTipoExamen($parcialExcel);
+                } else {
+                    $parcial = null;
                 }
 
                 if ($parcial === '1er Parcial' && $tipo === 'RESPUESTA_COMPUESTA') {
@@ -682,6 +689,9 @@ class BancoPreguntaController extends Controller
             $advertencias = [];
             if ($omitidasSeleccionMultiplePrimerParcial > 0) {
                 $advertencias[] = "Se omitieron {$omitidasSeleccionMultiplePrimerParcial} pregunta(s) de seleccion multiple / Respuesta A-B-Ambas-Ninguna porque 1er Parcial no permite importarlas.";
+            }
+            if ($parcialExcelIgnorado > 0) {
+                $advertencias[] = "Se uso el parcial activo seleccionado en pantalla y se ignoro la columna PARCIAL del Excel en {$parcialExcelIgnorado} fila(s).";
             }
 
             return response()->json([
