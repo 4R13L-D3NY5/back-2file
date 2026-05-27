@@ -12,18 +12,19 @@ if (!fs.existsSync(outputDir)) {
 
 // 2. Navigation items
 const navItems = [
-  { file: 'README.html', label: '🚀 Portal Principal', source: 'README.md' },
-  { file: '01_autenticacion_seguridad.html', label: '🔒 01. Autenticación y Seguridad', source: 'docs/01_autenticacion_seguridad.md' },
-  { file: '02_estructura_academica.html', label: '🏫 02. Estructura Académica', source: 'docs/02_estructura_academica.md' },
-  { file: '03_pac_y_bibliografia.html', label: '📚 03. PAC y Bibliografía', source: 'docs/03_pac_y_bibliografia.md' },
-  { file: '04_materias_comunes.html', label: '🔗 04. Materias Comunes', source: 'docs/04_materias_comunes.md' },
-  { file: '05_planificacion_semestral.html', label: '📅 05. Planificación Semestral', source: 'docs/05_planificacion_semestral.md' },
-  { file: '06_control_clase_seguimiento.html', label: '📝 06. Control y Seguimiento', source: 'docs/06_control_clase_seguimiento.md' },
-  { file: '07_banco_preguntas_evaluaciones.html', label: '🎯 07. Banco y Evaluaciones', source: 'docs/07_banco_preguntas_evaluaciones.md' },
-  { file: '08_gestion_evaluaciones_y_examenes.html', label: '⚙️ 08. Gestión de Evaluaciones', source: 'docs/08_gestion_evaluaciones_y_examenes.md' },
-  { file: '09_sincronizacion_y_patrones.html', label: '🔄 09. Sincronización y Motores', source: 'docs/09_sincronizacion_y_patrones.md' },
-  { file: 'diagrama_er_completo.html', label: '🗄️ Diagrama ER Completo', source: 'docs/diagrama_er_completo.md' },
-  { file: 'endpoints.html', label: '🔌 Endpoints de la API', source: 'docs/endpoints.md' }
+  { file: 'README.html', label: 'Portal Principal', source: 'README.md' },
+  { file: '01_autenticacion_seguridad.html', label: '01. Autenticacion y Seguridad', source: 'docs/01_autenticacion_seguridad.md' },
+  { file: '02_estructura_academica.html', label: '02. Estructura Academica', source: 'docs/02_estructura_academica.md' },
+  { file: '03_pac_y_bibliografia.html', label: '03. PAC y Bibliografia', source: 'docs/03_pac_y_bibliografia.md' },
+  { file: '04_materias_comunes.html', label: '04. Materias Comunes', source: 'docs/04_materias_comunes.md' },
+  { file: '05_planificacion_semestral.html', label: '05. Planificacion Semestral', source: 'docs/05_planificacion_semestral.md' },
+  { file: '06_control_clase_seguimiento.html', label: '06. Control y Seguimiento', source: 'docs/06_control_clase_seguimiento.md' },
+  { file: '07_banco_preguntas_evaluaciones.html', label: '07. Banco y Evaluaciones', source: 'docs/07_banco_preguntas_evaluaciones.md' },
+  { file: '08_gestion_evaluaciones_y_examenes.html', label: '08. Gestion de Evaluaciones', source: 'docs/08_gestion_evaluaciones_y_examenes.md' },
+  { file: '09_sincronizacion_y_patrones.html', label: '09. Sincronizacion y Motores', source: 'docs/09_sincronizacion_y_patrones.md' },
+  { file: '10_codegraph_dev_tools.html', label: '10. CodeGraph - Herramientas Dev', source: 'docs/10_codegraph_dev_tools.md' },
+  { file: 'diagrama_er_completo.html', label: 'Diagrama ER Completo', source: 'docs/diagrama_er_completo.md' },
+  { file: 'endpoints.html', label: 'Endpoints de la API', source: 'docs/endpoints.md' }
 ];
 
 console.log('Iniciando compilación de documentación HTML local...');
