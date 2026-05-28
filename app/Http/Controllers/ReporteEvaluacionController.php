@@ -41,6 +41,13 @@ class ReporteEvaluacionController extends Controller
         'SUBIDO',
     ];
 
+    private const PARCIALES_COBERTURA_BANCO = [
+        'primer' => '1er Parcial',
+        'segundo' => '2do Parcial',
+        'final' => 'Final',
+        'instancia' => '2da Instancia',
+    ];
+
     public function index(Request $request)
     {
         $validated = $request->validate([
@@ -90,6 +97,317 @@ class ReporteEvaluacionController extends Controller
                 'estados' => self::ESTADOS_OPERATIVOS,
             ],
         ]);
+    }
+
+    public function coberturaBanco(Request $request)
+    {
+        $validated = $request->validate([
+            'gestion' => 'nullable|string|max:20',
+            'sede_id' => 'nullable|integer|exists:sedes,id',
+            'carrera_id' => 'nullable|integer|exists:carreras,id',
+            'fecha_inicio' => 'nullable|date',
+            'fecha_fin' => 'nullable|date',
+        ]);
+
+        [$fechaInicio, $fechaFin] = $this->normalizarRangoFechas(
+            $validated['fecha_inicio'] ?? null,
+            $validated['fecha_fin'] ?? null
+        );
+
+        $filtros = [
+            'gestion' => $validated['gestion'] ?? date('Y').'-I',
+            'sede_id' => $validated['sede_id'] ?? null,
+            'carrera_id' => $validated['carrera_id'] ?? null,
+            'fecha_inicio' => $fechaInicio,
+            'fecha_fin' => $fechaFin,
+        ];
+
+        $grupos = $this->obtenerGruposCoberturaBanco($filtros);
+        $conteos = $this->obtenerConteosBancoPorGrupo($grupos);
+        $examenes = $this->obtenerFechasExamenesPorGrupo($grupos, $filtros);
+
+        $detalle = $grupos->map(function ($grupo) use ($conteos, $examenes) {
+            $parciales = [];
+
+            foreach (self::PARCIALES_COBERTURA_BANCO as $key => $label) {
+                $countKey = $this->buildCoverageBancoKey(
+                    $grupo->asignatura_id,
+                    $grupo->sede_id,
+                    $grupo->docente_id,
+                    $grupo->grupo
+                ).'|'.$label;
+                $examKey = $this->buildCoverageExamKey(
+                    $grupo->sede_id,
+                    $grupo->carrera_id,
+                    $grupo->codigo,
+                    $grupo->grupo
+                ).'|'.$label;
+                $exam = $examenes[$examKey] ?? null;
+
+                $parciales[$key] = [
+                    'label' => $label,
+                    'preguntas' => (int) ($conteos[$countKey] ?? 0),
+                    'fecha' => $exam['fecha'] ?? null,
+                    'hora' => $exam['hora'] ?? null,
+                    'estado' => $exam['estado'] ?? null,
+                    'estado_label' => $exam['estado_label'] ?? null,
+                ];
+            }
+
+            return [
+                'sede_id' => (int) $grupo->sede_id,
+                'sede' => $grupo->sede ?: 'Sin sede',
+                'carrera_id' => (int) $grupo->carrera_id,
+                'carrera' => $grupo->carrera ?: 'Sin carrera',
+                'asignatura_id' => (int) $grupo->asignatura_id,
+                'codigo' => $grupo->codigo,
+                'asignatura' => $grupo->asignatura,
+                'semestre' => $grupo->semestre,
+                'grupo_id' => (int) $grupo->grupo_id,
+                'grupo' => $grupo->grupo,
+                'docente_id' => $grupo->docente_id ? (int) $grupo->docente_id : null,
+                'docente' => $grupo->docente ?: 'Por asignar',
+                'parciales' => $parciales,
+                'total_preguntas' => collect($parciales)->sum('preguntas'),
+            ];
+        })->values();
+
+        return response()->json([
+            'filtros' => $filtros,
+            'resumen' => $this->construirResumenCoberturaBanco($detalle),
+            'detalle' => $detalle,
+            'meta' => [
+                'generado_en' => now()->toISOString(),
+                'parciales' => self::PARCIALES_COBERTURA_BANCO,
+            ],
+        ]);
+    }
+
+    private function obtenerGruposCoberturaBanco(array $filtros): Collection
+    {
+        $query = DB::table('grupos')
+            ->join('sedes', 'grupos.sede_id', '=', 'sedes.id')
+            ->join('carreras', 'grupos.carrera_id', '=', 'carreras.id')
+            ->join('asignaturas', 'grupos.asignatura_id', '=', 'asignaturas.id')
+            ->leftJoin('asignatura_carrera', function ($join) {
+                $join->on('asignatura_carrera.asignatura_id', '=', 'asignaturas.id')
+                    ->on('asignatura_carrera.carrera_id', '=', 'grupos.carrera_id')
+                    ->on('asignatura_carrera.sede_id', '=', 'grupos.sede_id');
+            })
+            ->leftJoin('docentes', 'grupos.docente_id', '=', 'docentes.id')
+            ->where('grupos.estado', 'ACTIVO')
+            ->whereNull('grupos.deleted_at')
+            ->whereRaw("TRIM(grupos.nombre) REGEXP '^[0-9]+$'")
+            ->where(function ($query) {
+                $query->whereNull('asignaturas.estado')
+                    ->orWhere('asignaturas.estado', '!=', 'cancelado');
+            })
+            ->select([
+                'sedes.id as sede_id',
+                'sedes.nombre as sede',
+                'carreras.id as carrera_id',
+                'carreras.nombre as carrera',
+                'asignaturas.id as asignatura_id',
+                'asignaturas.codigo',
+                'asignaturas.nombre as asignatura',
+                DB::raw('asignatura_carrera.semestre as semestre'),
+                'grupos.id as grupo_id',
+                'grupos.nombre as grupo',
+                'docentes.id as docente_id',
+                'docentes.nombre_completo as docente',
+            ]);
+
+        if ($filtros['sede_id']) {
+            $query->where('grupos.sede_id', $filtros['sede_id']);
+        }
+
+        if ($filtros['carrera_id']) {
+            $query->where('grupos.carrera_id', $filtros['carrera_id']);
+        }
+
+        $this->aplicarAlcanceUsuario($query, 'grupos', [
+            'sede_id' => $filtros['sede_id'] ?? null,
+            'carrera_id' => $filtros['carrera_id'] ?? null,
+        ]);
+
+        return $query
+            ->orderBy('sedes.nombre')
+            ->orderBy('carreras.nombre')
+            ->orderBy('asignatura_carrera.semestre')
+            ->orderBy('asignaturas.nombre')
+            ->orderBy('docentes.nombre_completo')
+            ->orderBy('grupos.nombre')
+            ->get();
+    }
+
+    private function obtenerConteosBancoPorGrupo(Collection $grupos): array
+    {
+        if ($grupos->isEmpty()) {
+            return [];
+        }
+
+        $rows = DB::table('banco_preguntas')
+            ->whereIn('asignatura_id', $grupos->pluck('asignatura_id')->unique()->values())
+            ->whereIn('sede_id', $grupos->pluck('sede_id')->unique()->values())
+            ->select([
+                'asignatura_id',
+                'sede_id',
+                'docente_id',
+                'grupoTeorico',
+                'parcial',
+                DB::raw('COUNT(*) as total'),
+            ])
+            ->groupBy('asignatura_id', 'sede_id', 'docente_id', 'grupoTeorico', 'parcial')
+            ->get();
+
+        $conteos = [];
+        foreach ($rows as $row) {
+            $parcial = $this->normalizarTipoExamenCobertura($row->parcial);
+            if (! in_array($parcial, array_values(self::PARCIALES_COBERTURA_BANCO), true)) {
+                continue;
+            }
+
+            $key = $this->buildCoverageBancoKey(
+                $row->asignatura_id,
+                $row->sede_id,
+                $row->docente_id,
+                $row->grupoTeorico
+            ).'|'.$parcial;
+            $conteos[$key] = ($conteos[$key] ?? 0) + (int) $row->total;
+        }
+
+        return $conteos;
+    }
+
+    private function obtenerFechasExamenesPorGrupo(Collection $grupos, array $filtros): array
+    {
+        if ($grupos->isEmpty()) {
+            return [];
+        }
+
+        $query = DB::table('rol_examenes')
+            ->where('gestion', $filtros['gestion'])
+            ->whereIn('sede_id', $grupos->pluck('sede_id')->unique()->values())
+            ->whereIn('carrera_id', $grupos->pluck('carrera_id')->unique()->values())
+            ->whereIn('materia_codigo', $grupos->pluck('codigo')->unique()->values())
+            ->select([
+                'sede_id',
+                'carrera_id',
+                'materia_codigo',
+                'grupo',
+                'tipo_examen',
+                'fecha',
+                'hora_inicio',
+                'hora_fin',
+                'estado',
+            ]);
+
+        $examenes = [];
+        foreach ($query->orderBy('fecha')->get() as $row) {
+            $estado = $this->normalizarEstadoRol($row->estado);
+            $tipoExamen = $this->normalizarTipoExamenCobertura($row->tipo_examen);
+            if (! in_array($tipoExamen, array_values(self::PARCIALES_COBERTURA_BANCO), true)) {
+                continue;
+            }
+
+            $key = $this->buildCoverageExamKey(
+                $row->sede_id,
+                $row->carrera_id,
+                $row->materia_codigo,
+                $row->grupo
+            ).'|'.$tipoExamen;
+
+            $examenes[$key] = [
+                'fecha' => $this->formatearFechaCorta($row->fecha),
+                'hora' => trim(($row->hora_inicio ?? '').' - '.($row->hora_fin ?? '')),
+                'estado' => $estado,
+                'estado_label' => self::ESTADOS_OPERATIVOS[$estado] ?? $estado,
+            ];
+        }
+
+        return $examenes;
+    }
+
+    private function construirResumenCoberturaBanco(Collection $detalle): array
+    {
+        $totalGrupos = $detalle->count();
+        $totalMaterias = $detalle->pluck('asignatura_id')->unique()->count();
+        $parciales = collect(self::PARCIALES_COBERTURA_BANCO)->map(function ($label, $key) use ($detalle, $totalGrupos, $totalMaterias) {
+            $conBanco = $detalle->filter(fn ($row) => (int) ($row['parciales'][$key]['preguntas'] ?? 0) > 0);
+            $gruposConBanco = $conBanco->count();
+            $materiasConBanco = $conBanco->pluck('asignatura_id')->unique()->count();
+
+            return [
+                'key' => $key,
+                'label' => $label,
+                'materias' => $materiasConBanco,
+                'materias_porcentaje' => $totalMaterias > 0 ? round(($materiasConBanco / $totalMaterias) * 100, 2) : 0,
+                'grupos' => $gruposConBanco,
+                'grupos_porcentaje' => $totalGrupos > 0 ? round(($gruposConBanco / $totalGrupos) * 100, 2) : 0,
+                'preguntas' => $conBanco->sum(fn ($row) => (int) ($row['parciales'][$key]['preguntas'] ?? 0)),
+            ];
+        })->values()->all();
+
+        return [
+            'total_materias' => $totalMaterias,
+            'total_grupos' => $totalGrupos,
+            'total_preguntas' => $detalle->sum('total_preguntas'),
+            'parciales' => $parciales,
+        ];
+    }
+
+    private function buildCoverageBancoKey($asignaturaId, $sedeId, $docenteId, $grupo): string
+    {
+        return implode('|', [
+            (int) $asignaturaId,
+            (int) $sedeId,
+            (int) ($docenteId ?: 0),
+            $this->normalizarGrupoCobertura($grupo),
+        ]);
+    }
+
+    private function buildCoverageExamKey($sedeId, $carreraId, $codigo, $grupo): string
+    {
+        return implode('|', [
+            (int) $sedeId,
+            (int) $carreraId,
+            mb_strtoupper(trim((string) $codigo)),
+            $this->normalizarGrupoCobertura($grupo),
+        ]);
+    }
+
+    private function normalizarGrupoCobertura($grupo): string
+    {
+        $value = mb_strtoupper(trim((string) $grupo));
+        $value = str_replace(['GRUPO', 'G.', 'G-'], '', $value);
+        $value = preg_replace('/\s+/', '', $value);
+
+        return $value ?: 'GENERAL';
+    }
+
+    private function normalizarTipoExamenCobertura($parcial): string
+    {
+        $value = mb_strtolower(trim((string) $parcial));
+        $value = str_replace(['º', '°', 'Â°'], '', $value);
+        $value = preg_replace('/\s+/', ' ', $value);
+        $map = [
+            '1p' => '1er Parcial',
+            '1er parcial' => '1er Parcial',
+            'primer parcial' => '1er Parcial',
+            '1 parcial' => '1er Parcial',
+            '2p' => '2do Parcial',
+            '2do parcial' => '2do Parcial',
+            'segundo parcial' => '2do Parcial',
+            'ef' => 'Final',
+            'final' => 'Final',
+            'examen final' => 'Final',
+            '2i' => '2da Instancia',
+            '2da instancia' => '2da Instancia',
+            'segunda instancia' => '2da Instancia',
+            'segunda' => '2da Instancia',
+        ];
+
+        return $map[$value] ?? (string) $parcial;
     }
 
     private function obtenerProgramacionRol(array $filtros): Collection
@@ -563,5 +881,14 @@ class ReporteEvaluacionController extends Controller
         }
 
         return Carbon::parse($fecha)->format('Y-m-d');
+    }
+
+    private function formatearFechaCorta($fecha): ?string
+    {
+        if (! $fecha) {
+            return null;
+        }
+
+        return Carbon::parse($fecha)->format('d/m/y');
     }
 }

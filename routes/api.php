@@ -361,6 +361,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/auditoria-25', [\App\Http\Controllers\ReporteController::class, 'getAuditoria25']);
     Route::get('/reportes/evaluaciones', [\App\Http\Controllers\ReporteEvaluacionController::class, 'index'])
         ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::get('/reportes/evaluaciones/cobertura-banco', [\App\Http\Controllers\ReporteEvaluacionController::class, 'coberturaBanco'])
+        ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
     
     Route::get('/reportes/semanal/draft', [\App\Http\Controllers\ReporteController::class, 'getWeeklyReportDraft']);
     Route::post('/reportes/semanal', [\App\Http\Controllers\ReporteController::class, 'storeWeeklyReport']);
