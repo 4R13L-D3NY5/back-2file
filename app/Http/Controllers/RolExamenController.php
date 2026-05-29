@@ -137,6 +137,33 @@ class RolExamenController extends Controller
                     $query->whereIn('rol_examenes.carrera_id', $carreraIds);
                 }
             }
+        } elseif ($user && $user->load('rol') && $user->rol->codigo === 'PLATAFORMA') {
+            $sedeIds = collect([$user->sede_id])->filter();
+
+            if (Schema::hasTable('campus_user')) {
+                $campusIds = DB::table('campus_user')
+                    ->where('user_id', $user->id)
+                    ->pluck('campus_id');
+
+                $sedeIds = $sedeIds->merge(
+                    DB::table('campus')
+                        ->whereIn('id', $campusIds)
+                        ->pluck('sede_id')
+                );
+            }
+
+            $sedeIds = $sedeIds->map(fn ($id) => (int) $id)->filter()->unique()->values();
+            $requestedSedeId = $request->filled('sede_id') ? (int) $request->sede_id : null;
+
+            if ($requestedSedeId && ! $sedeIds->contains($requestedSedeId)) {
+                $query->whereRaw('1 = 0');
+            } elseif ($requestedSedeId) {
+                $query->where('rol_examenes.sede_id', $requestedSedeId);
+            } elseif ($sedeIds->isNotEmpty()) {
+                $query->whereIn('rol_examenes.sede_id', $sedeIds);
+            } else {
+                $query->whereRaw('1 = 0');
+            }
         } elseif ($user && $user->load('rol') && $user->rol->codigo === 'EVALUACIONES') {
             $campusIds = collect([$user->campus_id])->filter();
 
@@ -223,6 +250,10 @@ class RolExamenController extends Controller
 
         if ($request->has('materia_codigo')) {
             $query->where('rol_examenes.materia_codigo', $request->materia_codigo);
+        }
+
+        if ($request->filled('modalidad')) {
+            $query->where('rol_examenes.modalidad', $request->modalidad);
         }
 
         if ($request->has('estado')) {
@@ -1053,6 +1084,7 @@ class RolExamenController extends Controller
             'hora_inicio' => 'sometimes',
             'hora_fin' => 'sometimes',
             'grupo' => 'sometimes|string|max:50',
+            'modalidad' => 'sometimes|in:PRESENCIAL_CON_CARTILLA,PRESENCIAL_SIN_CARTILLA,VIRTUAL',
         ]);
 
         if ($validator->fails()) {
@@ -1222,6 +1254,7 @@ class RolExamenController extends Controller
             'fontSize' => 'nullable|numeric|min:8|max:20',
             'lineSpacing' => 'nullable|numeric|min:0.7|max:1.5',
             'aleatorizarSecciones' => 'nullable|boolean',
+            'modalidad' => 'nullable|in:PRESENCIAL_CON_CARTILLA,PRESENCIAL_SIN_CARTILLA,VIRTUAL',
         ]);
 
         $config = array_merge($examen->config_generacion ?? [], $request->only([
@@ -1234,6 +1267,7 @@ class RolExamenController extends Controller
             'fontSize',
             'lineSpacing',
             'aleatorizarSecciones',
+            'modalidad',
         ]));
 
         $config['job_status'] = 'queued';
@@ -1245,6 +1279,7 @@ class RolExamenController extends Controller
         $examen->update([
             'config_generacion' => $config,
             'timestamps_proceso' => $timestamps,
+            'modalidad' => $request->input('modalidad', $examen->modalidad ?? 'PRESENCIAL_CON_CARTILLA'),
         ]);
 
         GenerateRolExamenPackageJob::dispatch($examen->id, $config, auth()->id());

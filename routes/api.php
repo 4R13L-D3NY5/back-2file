@@ -32,6 +32,13 @@ Route::get('/rol-examenes/{id}/archivo-patron/{tipo}/{filename}', [\App\Http\Con
     ->middleware('signed')
     ->name('rol-examenes.preview-patron');
 
+Route::prefix('examen-virtual')->group(function () {
+    Route::post('/access', [\App\Http\Controllers\VirtualExamController::class, 'access'])->middleware('throttle:30,1');
+    Route::post('/answers', [\App\Http\Controllers\VirtualExamController::class, 'saveAnswers'])->middleware('throttle:120,1');
+    Route::post('/finish', [\App\Http\Controllers\VirtualExamController::class, 'finish'])->middleware('throttle:30,1');
+    Route::get('/patron/{downloadToken}', [\App\Http\Controllers\VirtualExamController::class, 'downloadStudentPattern'])->middleware('throttle:30,1');
+});
+
 // Debug endpoint for checking API data (temporary)
 Route::get('/debug/plan-n-data', function (Illuminate\Http\Request $request) {
     $gestion = $request->input('gestion', '1-2026');
@@ -336,6 +343,29 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
         Route::post('/{id}/upload-patron', [\App\Http\Controllers\RolExamenController::class, 'uploadPatron'])
             ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+    });
+
+    Route::prefix('virtual-exams')->group(function () {
+        Route::get('/', [\App\Http\Controllers\VirtualExamController::class, 'index'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::get('/{session}', [\App\Http\Controllers\VirtualExamController::class, 'show'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/rol-examenes/{rolExamen}/generate', [\App\Http\Controllers\VirtualExamController::class, 'generate'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/roster', [\App\Http\Controllers\VirtualExamController::class, 'uploadRoster'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/roster/{roster}/status', [\App\Http\Controllers\VirtualExamController::class, 'updateRosterStatus'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/start', [\App\Http\Controllers\VirtualExamController::class, 'start'])
+            ->middleware('role:DOCENTE,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/close', [\App\Http\Controllers\VirtualExamController::class, 'close'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::get('/{session}/export-remark', [\App\Http\Controllers\VirtualExamController::class, 'exportRemark'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/mark-uploaded', [\App\Http\Controllers\VirtualExamController::class, 'markUploaded'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/reset', [\App\Http\Controllers\VirtualExamController::class, 'reset'])
+            ->middleware('role:ADMIN,SUPER_ADMIN');
     });
 
     // Materias Comunes

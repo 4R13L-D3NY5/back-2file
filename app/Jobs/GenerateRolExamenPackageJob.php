@@ -94,7 +94,12 @@ class GenerateRolExamenPackageJob implements ShouldQueue
             file_put_contents($payloadPath, json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 
             $scriptPath = $workspaceBase.DIRECTORY_SEPARATOR.'Academico'.DIRECTORY_SEPARATOR.'scripts'.DIRECTORY_SEPARATOR.'generate-exam-package.mjs';
-            $process = new Process(['node', $scriptPath, $payloadPath], $workspaceBase.DIRECTORY_SEPARATOR.'Academico');
+            $nodeBinary = env('NODE_BINARY', 'node');
+            $process = new Process(
+                [$nodeBinary, $scriptPath, $payloadPath],
+                $workspaceBase.DIRECTORY_SEPARATOR.'Academico',
+                $this->nodeProcessEnvironment()
+            );
             $process->setTimeout(900);
             $process->mustRun();
 
@@ -225,6 +230,26 @@ class GenerateRolExamenPackageJob implements ShouldQueue
                     'imagePath' => $imagePath && file_exists($imagePath) ? $imagePath : null,
                 ];
             });
+    }
+
+    private function nodeProcessEnvironment(): array
+    {
+        $path = getenv('PATH') ?: getenv('Path') ?: '';
+
+        $env = [
+            'SystemRoot' => getenv('SystemRoot') ?: getenv('SYSTEMROOT') ?: 'C:\\Windows',
+            'WINDIR' => getenv('WINDIR') ?: getenv('windir') ?: 'C:\\Windows',
+            'ComSpec' => getenv('ComSpec') ?: 'C:\\Windows\\System32\\cmd.exe',
+            'TEMP' => getenv('TEMP') ?: sys_get_temp_dir(),
+            'TMP' => getenv('TMP') ?: sys_get_temp_dir(),
+        ];
+
+        if ($path !== '') {
+            $env['PATH'] = $path;
+            $env['Path'] = $path;
+        }
+
+        return $env;
     }
 
     private function assertQuestionsMatchExamContext(

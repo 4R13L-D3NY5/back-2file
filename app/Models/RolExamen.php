@@ -22,6 +22,7 @@ class RolExamen extends Model
         'semana',
         'fecha',
         'estado',
+        'modalidad',
         'config_generacion',
         'timestamps_proceso',
         'variantes',

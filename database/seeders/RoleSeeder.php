@@ -133,6 +133,19 @@ class RoleSeeder extends Seeder
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
+            [
+                'id' => 10,
+                'nombre' => 'PLATAFORMA',
+                'codigo' => 'PLATAFORMA',
+                'descripcion' => 'Acceso operativo al plan de estudios y exportacion de patrones',
+                'color' => '#0f766e',
+                'icono' => 'layers',
+                'activo' => true,
+                'permisos' => json_encode(['plan_estudios', 'exportar_patron']),
+                'orden' => 10,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
         ];
 
         DB::table('roles')->insert($roles);

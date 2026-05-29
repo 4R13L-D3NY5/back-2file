@@ -96,7 +96,11 @@ class GenerateManualExamPackageJob implements ShouldQueue
 
             $scriptPath = $workspaceBase . DIRECTORY_SEPARATOR . 'Academico' . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'generate-exam-package.mjs';
             $nodeBinary = env('NODE_BINARY', 'node');
-            $process = new Process([$nodeBinary, $scriptPath, $payloadPath], $workspaceBase . DIRECTORY_SEPARATOR . 'Academico');
+            $process = new Process(
+                [$nodeBinary, $scriptPath, $payloadPath],
+                $workspaceBase . DIRECTORY_SEPARATOR . 'Academico',
+                $this->nodeProcessEnvironment()
+            );
             $process->setTimeout(900);
             $process->mustRun();
 
@@ -186,6 +190,26 @@ class GenerateManualExamPackageJob implements ShouldQueue
         throw new \RuntimeException(
             'Se detectaron preguntas fuera del contexto de la generacion manual: ' . $sample
         );
+    }
+
+    private function nodeProcessEnvironment(): array
+    {
+        $path = getenv('PATH') ?: getenv('Path') ?: '';
+
+        $env = [
+            'SystemRoot' => getenv('SystemRoot') ?: getenv('SYSTEMROOT') ?: 'C:\\Windows',
+            'WINDIR' => getenv('WINDIR') ?: getenv('windir') ?: 'C:\\Windows',
+            'ComSpec' => getenv('ComSpec') ?: 'C:\\Windows\\System32\\cmd.exe',
+            'TEMP' => getenv('TEMP') ?: sys_get_temp_dir(),
+            'TMP' => getenv('TMP') ?: sys_get_temp_dir(),
+        ];
+
+        if ($path !== '') {
+            $env['PATH'] = $path;
+            $env['Path'] = $path;
+        }
+
+        return $env;
     }
 
     private function normalizeGroup(?string $value): string

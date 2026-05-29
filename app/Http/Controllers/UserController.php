@@ -91,8 +91,12 @@ class UserController extends Controller
             'rol_id' => 'required|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
             'sede_id' => 'nullable|exists:sedes,id',
+            'sede_ids' => 'nullable|array',
+            'sede_ids.*' => 'integer|exists:sedes,id',
             'estado' => 'sometimes'
         ]);
+        $sedeIdsAsignadas = $validated['sede_ids'] ?? [];
+        unset($validated['sede_ids']);
         
         // Convertir estado a booleano
         if (isset($validated['estado'])) {
@@ -159,6 +163,10 @@ class UserController extends Controller
                 }
             }
 
+            if ($user->rol && $user->rol->codigo === 'PLATAFORMA') {
+                $this->sincronizarCampusPorSedes($user, $sedeIdsAsignadas);
+            }
+
             DB::commit();
             
             $user->load([
@@ -210,9 +218,13 @@ class UserController extends Controller
             'rol_id' => 'sometimes|exists:roles,id',
             'carrera' => 'nullable|string|max:255',
             'sede_id' => 'nullable|exists:sedes,id',
+            'sede_ids' => 'nullable|array',
+            'sede_ids.*' => 'integer|exists:sedes,id',
             'estado' => 'sometimes',
             'password' => 'nullable|string|min:6'
         ]);
+        $sedeIdsAsignadas = $validated['sede_ids'] ?? null;
+        unset($validated['sede_ids']);
 
         // Convertir estado a booleano si está presente
         if (isset($validated['estado'])) {
@@ -233,7 +245,7 @@ class UserController extends Controller
             unset($validated['password']);
         }
 
-        DB::transaction(function () use ($user, $validated) {
+        DB::transaction(function () use ($user, $validated, $sedeIdsAsignadas) {
             $user->update($validated);
             $user->load('rol');
 
@@ -287,6 +299,10 @@ class UserController extends Controller
                     }
                 }
             }
+
+            if ($user->rol && $user->rol->codigo === 'PLATAFORMA' && is_array($sedeIdsAsignadas)) {
+                $this->sincronizarCampusPorSedes($user, $sedeIdsAsignadas);
+            }
         });
 
         $user->load([
@@ -325,6 +341,48 @@ class UserController extends Controller
             $count++;
         }
         return $username;
+    }
+
+    private function sincronizarCampusPorSedes(User $user, array $sedeIds): void
+    {
+        $sedeIds = collect($sedeIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($sedeIds->isEmpty()) {
+            $user->campus_id = null;
+            $user->sede_id = null;
+            $user->save();
+            $user->campusAsignados()->sync([]);
+            return;
+        }
+
+        $campusPorSede = \App\Models\Campus::whereIn('sede_id', $sedeIds->all())
+            ->orderBy('id')
+            ->get()
+            ->groupBy('sede_id')
+            ->map(fn ($campus) => $campus->first());
+
+        $campusIds = $sedeIds->map(function ($sedeId) use ($campusPorSede) {
+            $campus = $campusPorSede->get($sedeId);
+
+            if (! $campus) {
+                $campus = \App\Models\Campus::create([
+                    'nombre' => 'Principal',
+                    'sede_id' => $sedeId,
+                    'activo' => true,
+                ]);
+            }
+
+            return $campus->id;
+        })->values();
+
+        $user->sede_id = $sedeIds->first();
+        $user->campus_id = $campusIds->first();
+        $user->save();
+        $user->campusAsignados()->sync($campusIds->all());
     }
 
     private function anexarAmbitoUsuario(User $user)

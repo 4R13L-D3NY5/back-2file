@@ -54,6 +54,30 @@ class AsignaturaController extends Controller
         $sedeId = $request->input('sede_id');
         $carreraId = $request->input('carrera_id');
 
+        $user = auth()->user();
+        if ($user) {
+            $user->loadMissing(['rol', 'campus.sede', 'campusAsignados.sede']);
+        }
+
+        if ($user && $user->rol && $user->rol->codigo === 'PLATAFORMA') {
+            $sedeIdsPermitidas = $user->campusAsignados
+                ->pluck('sede_id')
+                ->merge([$user->campus?->sede_id, $user->sede_id])
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+
+            if ($sedeIdsPermitidas->isEmpty()) {
+                $query->whereRaw('1 = 0');
+            } elseif ($sedeId && ! $sedeIdsPermitidas->contains((int) $sedeId)) {
+                $query->whereRaw('1 = 0');
+            } elseif (! $sedeId) {
+                $sedeId = $sedeIdsPermitidas->first();
+                $request->merge(['sede_id' => $sedeId]);
+            }
+        }
+
         $query->with(['grupos' => function ($q) use ($sedeId, $carreraId) {
             if ($sedeId) {
                 $q->where('sede_id', $sedeId);
