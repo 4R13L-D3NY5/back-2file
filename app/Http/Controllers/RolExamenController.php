@@ -17,6 +17,11 @@ use Smalot\PdfParser\Parser as PdfParser;
 
 class RolExamenController extends Controller
 {
+    private const VISUALIZADOR_EVALUACIONES_ROLES = [
+        'VISUALIZADOR_EVALUACIONES_GLOBAL',
+        'VISUALIZADOR_EVALUACIONES_SEDE',
+    ];
+
     /**
      * Listar exámenes por gestión y carrera
      */
@@ -116,7 +121,15 @@ class RolExamenController extends Controller
 
         // Restricción de Sede para Directores y Campus para Evaluaciones
         $user = auth()->user();
-        if ($user && $user->rol && $user->rol->codigo === 'RESPONSABLE_EVALUACIONES') {
+        $rolCodigo = $user?->rol?->codigo;
+
+        if ($user && $rolCodigo === 'VISUALIZADOR_EVALUACIONES_GLOBAL') {
+            if ($request->has('sede_id')) {
+                $query->where('rol_examenes.sede_id', $request->sede_id);
+            }
+        } elseif ($user && $rolCodigo === 'VISUALIZADOR_EVALUACIONES_SEDE') {
+            $this->aplicarAlcanceSedesAsignadas($query, $user, $request, 'Visualizador evaluaciones');
+        } elseif ($user && $user->rol && $user->rol->codigo === 'RESPONSABLE_EVALUACIONES') {
             // Acceso Global: No aplicar filtros de sede/campus automáticos
             if ($request->has('sede_id')) {
                 $query->where('rol_examenes.sede_id', $request->sede_id);
@@ -1431,6 +1444,10 @@ class RolExamenController extends Controller
 
     public function downloadExamen($id, Request $request)
     {
+        if ($blocked = $this->denyVisualizadorDocumentAccess()) {
+            return $blocked;
+        }
+
         $examen = RolExamen::findOrFail($id);
         $filename = $request->query('file');
 
@@ -1451,6 +1468,10 @@ class RolExamenController extends Controller
 
     public function signedExamenUrl($id, Request $request)
     {
+        if ($blocked = $this->denyVisualizadorDocumentAccess()) {
+            return $blocked;
+        }
+
         $examen = RolExamen::findOrFail($id);
         $filename = $request->query('file');
 
@@ -1475,6 +1496,10 @@ class RolExamenController extends Controller
 
     public function previewExamen($id, string $filename)
     {
+        if ($blocked = $this->denyVisualizadorDocumentAccess()) {
+            return $blocked;
+        }
+
         $examen = RolExamen::findOrFail($id);
         $variant = $this->findRegisteredVariant($examen, $filename);
 
@@ -1492,6 +1517,10 @@ class RolExamenController extends Controller
 
     public function downloadPatron($id, Request $request)
     {
+        if ($blocked = $this->denyVisualizadorDocumentAccess()) {
+            return $blocked;
+        }
+
         $examen = RolExamen::findOrFail($id);
         $filename = $request->query('file');
         $tipo = $request->query('tipo');
@@ -1517,6 +1546,10 @@ class RolExamenController extends Controller
 
     public function signedPatronUrl($id, Request $request)
     {
+        if ($blocked = $this->denyVisualizadorDocumentAccess()) {
+            return $blocked;
+        }
+
         $examen = RolExamen::findOrFail($id);
         $filename = $request->query('file');
         $tipo = $request->query('tipo');
@@ -1542,6 +1575,10 @@ class RolExamenController extends Controller
 
     public function previewPatron($id, string $tipo, string $filename)
     {
+        if ($blocked = $this->denyVisualizadorDocumentAccess()) {
+            return $blocked;
+        }
+
         $examen = RolExamen::findOrFail($id);
 
         if (! in_array($tipo, ['pdf', 'xlsx'], true)) {
@@ -1706,6 +1743,67 @@ class RolExamenController extends Controller
         return collect($examen->patrones ?? [])->first(function ($item) use ($filename, $tipo) {
             return is_array($item) && ($item[$tipo] ?? null) === $filename;
         });
+    }
+
+    private function aplicarAlcanceSedesAsignadas($query, $user, Request $request, string $contexto): void
+    {
+        $sedeIds = $this->sedeIdsAsignadasUsuario($user);
+        $requestedSedeId = $request->filled('sede_id') ? (int) $request->sede_id : null;
+
+        if ($requestedSedeId && ! $sedeIds->contains($requestedSedeId)) {
+            $query->whereRaw('1 = 0');
+            Log::info(
+                "{$contexto} intento filtrar una sede no asignada",
+                ['user_id' => $user->id, 'sede_id' => $requestedSedeId]
+            );
+            return;
+        }
+
+        if ($requestedSedeId) {
+            $query->where('rol_examenes.sede_id', $requestedSedeId);
+            return;
+        }
+
+        if ($sedeIds->isNotEmpty()) {
+            $query->whereIn('rol_examenes.sede_id', $sedeIds->all());
+            return;
+        }
+
+        $query->whereRaw('1 = 0');
+    }
+
+    private function sedeIdsAsignadasUsuario($user)
+    {
+        $sedeIds = collect([$user->sede_id])->filter();
+
+        if (Schema::hasTable('campus_user')) {
+            $campusIds = DB::table('campus_user')
+                ->where('user_id', $user->id)
+                ->pluck('campus_id');
+
+            if ($campusIds->isNotEmpty() && Schema::hasTable('campus')) {
+                $sedeIds = $sedeIds->merge(
+                    DB::table('campus')
+                        ->whereIn('id', $campusIds)
+                        ->pluck('sede_id')
+                );
+            }
+        }
+
+        return $sedeIds->map(fn ($id) => (int) $id)->filter()->unique()->values();
+    }
+
+    private function denyVisualizadorDocumentAccess()
+    {
+        $role = auth()->user()?->rol?->codigo;
+
+        if (in_array($role, self::VISUALIZADOR_EVALUACIONES_ROLES, true)) {
+            return response()->json([
+                'message' => 'Este rol solo puede visualizar el seguimiento de evaluaciones, sin acceso a documentos.',
+            ], 403);
+        }
+
+        return null;
     }
 
     private function authorizeRolExamenAccess(RolExamen $examen)

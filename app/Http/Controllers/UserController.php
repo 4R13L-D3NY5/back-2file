@@ -163,7 +163,7 @@ class UserController extends Controller
                 }
             }
 
-            if ($user->rol && $user->rol->codigo === 'PLATAFORMA') {
+            if ($this->rolUsaMultiplesSedes($user->rol?->codigo)) {
                 $this->sincronizarCampusPorSedes($user, $sedeIdsAsignadas);
             }
 
@@ -300,7 +300,7 @@ class UserController extends Controller
                 }
             }
 
-            if ($user->rol && $user->rol->codigo === 'PLATAFORMA' && is_array($sedeIdsAsignadas)) {
+            if ($this->rolUsaMultiplesSedes($user->rol?->codigo) && is_array($sedeIdsAsignadas)) {
                 $this->sincronizarCampusPorSedes($user, $sedeIdsAsignadas);
             }
         });
@@ -383,6 +383,11 @@ class UserController extends Controller
         $user->campus_id = $campusIds->first();
         $user->save();
         $user->campusAsignados()->sync($campusIds->all());
+    }
+
+    private function rolUsaMultiplesSedes(?string $codigo): bool
+    {
+        return in_array($codigo, ['PLATAFORMA', 'VISUALIZADOR_EVALUACIONES_SEDE'], true);
     }
 
     private function anexarAmbitoUsuario(User $user)
