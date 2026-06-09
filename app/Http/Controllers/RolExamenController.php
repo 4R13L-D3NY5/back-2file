@@ -395,7 +395,7 @@ class RolExamenController extends Controller
     private function calcularStatsBancoRolExamenParaGeneracion(RolExamen $examen): array
     {
         $grupoNormalizado = $this->normalizarGrupoBanco($examen->grupo);
-        $partial = $this->normalizarTipoExamen($examen->tipo_examen);
+        $partial = $this->obtenerParcialFuenteBanco($examen->tipo_examen);
         $asignaturaIds = DB::table('asignaturas')
             ->join('asignatura_carrera', 'asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
             ->where('asignaturas.codigo', $examen->materia_codigo)
@@ -1206,6 +1206,8 @@ class RolExamenController extends Controller
     public function generatePackage(Request $request, $id)
     {
         $examen = RolExamen::findOrFail($id);
+        $tipoExamenNormalizado = $this->normalizarTipoExamen($examen->tipo_examen)
+            ?? trim((string) $examen->tipo_examen);
 
         if ($examen->estado !== 'programados') {
             return response()->json([
@@ -1213,13 +1215,13 @@ class RolExamenController extends Controller
             ], 422);
         }
 
-        if (! in_array($examen->tipo_examen, ['2do Parcial', 'Final'], true)) {
+        if (! in_array($tipoExamenNormalizado, ['2do Parcial', 'Final', '2da Instancia'], true)) {
             return response()->json([
-                'message' => 'La generación asincrónica consolidada está habilitada solo para 2do Parcial y Examen Final.',
+                'message' => 'La generación asincrónica consolidada está habilitada solo para 2do Parcial, Examen Final y 2da Instancia.',
             ], 422);
         }
 
-        if ($examen->tipo_examen === 'Final') {
+        if ($tipoExamenNormalizado === 'Final') {
             $statsBanco = $this->calcularStatsBancoRolExamenParaGeneracion($examen);
             if ((int) ($statsBanco['total'] ?? 0) < 120) {
                 return response()->json([
@@ -2908,5 +2910,12 @@ class RolExamenController extends Controller
         ];
 
         return $mapping[$tipo] ?? null;
+    }
+
+    private function obtenerParcialFuenteBanco($tipo)
+    {
+        $tipoNormalizado = $this->normalizarTipoExamen($tipo);
+
+        return $tipoNormalizado === '2da Instancia' ? 'Final' : $tipoNormalizado;
     }
 }

@@ -165,7 +165,7 @@ class GenerateRolExamenPackageJob implements ShouldQueue
     private function loadQuestions(RolExamen $examen, array $examContext)
     {
         $normalizedGroup = $this->normalizeGroup($examen->grupo);
-        $partial = $this->normalizePartial($examen->tipo_examen);
+        $partial = $this->resolveQuestionBankPartial($examen->tipo_examen);
         $asignaturaId = (int) $examContext['asignatura_id'];
         $docenteId = ! empty($examContext['docente_id']) ? (int) $examContext['docente_id'] : null;
 
@@ -324,10 +324,17 @@ class GenerateRolExamenPackageJob implements ShouldQueue
         ][$value] ?? (string) $value;
     }
 
+    private function resolveQuestionBankPartial(?string $value): string
+    {
+        $partial = $this->normalizePartial($value);
+
+        return $partial === '2da Instancia' ? 'Final' : $partial;
+    }
+
     private function resolveExamContext(RolExamen $examen): array
     {
         $normalizedGroup = $this->normalizeGroup($examen->grupo);
-        $partial = $this->normalizePartial($examen->tipo_examen);
+        $partial = $this->resolveQuestionBankPartial($examen->tipo_examen);
 
         $groupRows = $this->queryGroupContext($examen, $normalizedGroup, true)->get();
 
