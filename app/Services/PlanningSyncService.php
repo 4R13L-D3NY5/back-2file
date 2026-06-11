@@ -249,7 +249,7 @@ class PlanningSyncService
                     // MIGRATION FIX: Check for legacy group (null carrera_id) matching other criteria
                     // This prevents "Duplicate Entry" errors if a unique index exists on (gestion, asignatura, nombre...)
                     // withTrashed: necesitamos encontrar cualquier grupo (activo, inactivo o soft-deleted)
-                    $legacyGrupo = Grupo::withTrashed()->where([
+                    $legacyGrupo = Grupo::withoutGlobalScope('activo')->withTrashed()->where([
                         'gestion' => $dto->gestion,
                         'asignatura_id' => $asignatura->id,
                         'carrera_id' => null, // Legacy has no career
@@ -265,7 +265,7 @@ class PlanningSyncService
 
                     // Un grupo es el mismo si tiene la misma gestión, asignatura, carrera, nombre, tipo y sede
                     // withTrashed: buscar también grupos ELIMINADOS (soft-deletes) para restaurarlos
-                    $grupo = Grupo::withTrashed()->firstOrNew(
+                    $grupo = Grupo::withoutGlobalScope('activo')->withTrashed()->firstOrNew(
                         [
                             'gestion' => $dto->gestion,
                             'asignatura_id' => $asignatura->id,

@@ -14,6 +14,7 @@ class HorarioController extends Controller
     public function index(Request $request)
     {
         $query = Horario::query();
+        $mostrarInactivos = $request->boolean('mostrar_inactivos');
 
         if ($request->has('grupo_id') && $request->grupo_id) {
             $query->where('grupo_id', $request->grupo_id);
@@ -29,19 +30,33 @@ class HorarioController extends Controller
 
         // Filtrar por sede_id a través de la relación grupo
         if ($request->has('sede_id') && $request->sede_id) {
-            $query->whereHas('grupo', function ($q) use ($request) {
+            $query->whereHas('grupo', function ($q) use ($request, $mostrarInactivos) {
+                if ($mostrarInactivos) {
+                    $q->withoutGlobalScope('activo');
+                }
                 $q->where('sede_id', $request->sede_id);
             });
         }
 
         // Filtrar por carrera_id a través de la relación grupo
         if ($request->has('carrera_id') && $request->carrera_id) {
-            $query->whereHas('grupo', function ($q) use ($request) {
+            $query->whereHas('grupo', function ($q) use ($request, $mostrarInactivos) {
+                if ($mostrarInactivos) {
+                    $q->withoutGlobalScope('activo');
+                }
                 $q->where('carrera_id', $request->carrera_id);
             });
         }
 
-        $horarios = $query->with(['grupo.asignatura', 'grupo.carrera', 'grupo.sede', 'grupo.docente', 'aula.bloque'])->get();
+        $horarios = $query->with([
+            'grupo' => function ($q) use ($mostrarInactivos) {
+                if ($mostrarInactivos) {
+                    $q->withoutGlobalScope('activo');
+                }
+                $q->with(['asignatura', 'carrera', 'sede', 'docente']);
+            },
+            'aula.bloque',
+        ])->get();
 
         return response()->json($horarios);
     }

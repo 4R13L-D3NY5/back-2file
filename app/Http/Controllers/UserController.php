@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\User;
 use App\Models\Director;
+use App\Models\Docente;
 use App\Models\Carrera;
 use App\Observers\DirectorObserver;
 use App\Observers\CarreraObserver;
@@ -125,43 +126,8 @@ class UserController extends Controller
             $user = User::create($validated);
             $user->load('rol');
 
-            // Lógica para Director de Carrera
-            if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-                $director = \App\Models\Director::create([
-                    'user_id' => $user->id,
-                    'nombres' => $user->nombre,
-                    'apellidos' => $user->apellido,
-                    'sede_id' => $validated['sede_id'] ?? null,
-                ]);
-
-                // Asignar carreras
-                if (isset($validated['carrera'])) {
-                    $carreraString = trim($validated['carrera']);
-                    if ($carreraString !== '') {
-                        $carreraIds = array_map('trim', explode(',', $carreraString));
-                        $carreraIds = array_filter($carreraIds, function ($id) {
-                            return is_numeric($id) && $id > 0;
-                        });
-
-                        if (!empty($carreraIds)) {
-                            // Sincronizar tabla pivot
-                            $syncData = [];
-                            foreach ($carreraIds as $index => $id) {
-                                $syncData[$id] = ['es_principal' => ($index === 0)];
-                            }
-                            $director->carreras()->sync($syncData);
-                            
-                            // Campo legacy
-                            $director->carrera_id = $carreraIds[0];
-                            $director->save();
-                            
-                            // users.carrera
-                            $user->carrera = implode(', ', $carreraIds);
-                            $user->save();
-                        }
-                    }
-                }
-            }
+            $this->sincronizarPerfilDirector($user, $validated);
+            $this->sincronizarPerfilDocente($user, $validated);
 
             if ($this->rolUsaMultiplesSedes($user->rol?->codigo)) {
                 $this->sincronizarCampusPorSedes($user, $sedeIdsAsignadas);
@@ -249,56 +215,8 @@ class UserController extends Controller
             $user->update($validated);
             $user->load('rol');
 
-            // Sync Director Data
-            if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
-                $director = \App\Models\Director::firstOrCreate(['user_id' => $user->id]);
-
-                // Update fields
-                $director->update([
-                    'nombres' => $validated['nombre'] ?? $director->nombres,
-                    'apellidos' => $validated['apellido'] ?? $director->apellidos,
-                    'sede_id' => $validated['sede_id'] ?? $director->sede_id
-                ]);
-
-                // Sync Carreras
-                if (isset($validated['carrera'])) {
-                    $carreraString = trim($validated['carrera']);
-
-                    if ($carreraString !== '') {
-                        $carreraIds = array_map('trim', explode(',', $carreraString));
-                        $carreraIds = array_filter($carreraIds, function ($id) {
-                            return is_numeric($id) && $id > 0;
-                        });
-
-                        if (!empty($carreraIds)) {
-                            $syncData = [];
-                            foreach ($carreraIds as $index => $id) {
-                                $syncData[$id] = ['es_principal' => ($index === 0)];
-                            }
-                            $director->carreras()->sync($syncData);
-                            
-                            $director->carrera_id = $carreraIds[0];
-                            $director->save();
-                            
-                            // Asegurar que users.carrera tenga la misma cadena
-                            $user->carrera = implode(', ', $carreraIds);
-                            $user->save();
-                        } else {
-                            $director->carreras()->sync([]);
-                            $director->carrera_id = null;
-                            $director->save();
-                            $user->carrera = null;
-                            $user->save();
-                        }
-                    } else {
-                        $director->carreras()->sync([]);
-                        $director->carrera_id = null;
-                        $director->save();
-                        $user->carrera = null;
-                        $user->save();
-                    }
-                }
-            }
+            $this->sincronizarPerfilDirector($user, $validated);
+            $this->sincronizarPerfilDocente($user, $validated);
 
             if ($this->rolUsaMultiplesSedes($user->rol?->codigo) && is_array($sedeIdsAsignadas)) {
                 $this->sincronizarCampusPorSedes($user, $sedeIdsAsignadas);
@@ -341,6 +259,84 @@ class UserController extends Controller
             $count++;
         }
         return $username;
+    }
+
+    private function sincronizarPerfilDirector(User $user, array $validated): void
+    {
+        if (!$user->rol || $user->rol->codigo !== 'DIRECTOR_CARRERA') {
+            return;
+        }
+
+        $director = Director::firstOrCreate(
+            ['user_id' => $user->id],
+            [
+                'nombres' => $user->nombre,
+                'apellidos' => $user->apellido,
+                'sede_id' => $validated['sede_id'] ?? $user->sede_id,
+            ]
+        );
+
+        $director->update([
+            'nombres' => $validated['nombre'] ?? $user->nombre,
+            'apellidos' => $validated['apellido'] ?? $user->apellido,
+            'sede_id' => $validated['sede_id'] ?? $director->sede_id,
+        ]);
+
+        if (!array_key_exists('carrera', $validated)) {
+            return;
+        }
+
+        $carreraString = trim((string) ($validated['carrera'] ?? ''));
+        if ($carreraString === '') {
+            $director->carreras()->sync([]);
+            $director->carrera_id = null;
+            $director->save();
+            $user->carrera = null;
+            $user->save();
+            return;
+        }
+
+        $carreraIds = array_filter(array_map('trim', explode(',', $carreraString)), function ($id) {
+            return is_numeric($id) && (int) $id > 0;
+        });
+
+        if (empty($carreraIds)) {
+            $user->carrera = $carreraString;
+            $user->save();
+            return;
+        }
+
+        $syncData = [];
+        foreach ($carreraIds as $index => $id) {
+            $syncData[$id] = ['es_principal' => ($index === 0)];
+        }
+
+        $director->carreras()->sync($syncData);
+        $director->carrera_id = (int) $carreraIds[0];
+        $director->save();
+
+        $user->carrera = implode(', ', $carreraIds);
+        $user->save();
+    }
+
+    private function sincronizarPerfilDocente(User $user, array $validated): void
+    {
+        if (!$user->rol || $user->rol->codigo !== 'DOCENTE') {
+            return;
+        }
+
+        $docente = Docente::withTrashed()->firstOrNew(['user_id' => $user->id]);
+        $docente->nombre_completo = trim(($validated['nombre'] ?? $user->nombre) . ' ' . ($validated['apellido'] ?? $user->apellido));
+        $docente->ci = $validated['ci'] ?? $user->ci;
+        $docente->email = $validated['email'] ?? $user->email;
+        $docente->celular = $validated['telefono'] ?? $user->telefono;
+        $docente->sede_id = $validated['sede_id'] ?? $user->sede_id;
+        $docente->estado = (bool) ($validated['estado'] ?? $user->estado ?? true);
+        $docente->save();
+
+        if ($docente->trashed()) {
+            $docente->restore();
+        }
     }
 
     private function sincronizarCampusPorSedes(User $user, array $sedeIds): void

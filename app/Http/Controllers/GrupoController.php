@@ -232,7 +232,7 @@ class GrupoController extends Controller
     }
     public function show($id)
     {
-        $grupo = \App\Models\Grupo::with([
+        $grupo = \App\Models\Grupo::withoutGlobalScope('activo')->with([
             'asignatura.carreras.sedes', // To find context
             'asignatura.carreras.director',
             'docente.sede',
@@ -496,7 +496,7 @@ class GrupoController extends Controller
      */
     public function update(Request $request, $id)
     {
-        $grupo = \App\Models\Grupo::findOrFail($id);
+        $grupo = \App\Models\Grupo::withoutGlobalScope('activo')->withTrashed()->findOrFail($id);
 
         $validated = $request->validate([
             'nombre'               => 'sometimes|string|max:50',
@@ -527,7 +527,7 @@ class GrupoController extends Controller
      */
     public function destroy($id)
     {
-        $grupo = \App\Models\Grupo::findOrFail($id);
+        $grupo = \App\Models\Grupo::withoutGlobalScope('activo')->withTrashed()->findOrFail($id);
         $grupo->delete();
 
         return response()->json(null, 204);
