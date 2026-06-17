@@ -338,6 +338,9 @@ class AsignaturaController extends Controller
                         'sede_id'                 => $sedeId,
                         'tiene_grupo_teorico'     => $grupoTeorico !== null,
                         'grupo_teorico_nombre'    => $grupoTeorico->nombre ?? null,
+                        'grupo_id'                 => $firstGroup?->id,
+                        'grupo_nombre'             => $grupoTeorico->nombre ?? $firstGroup?->nombre,
+                        'grupo_tipo'               => $grupoTeorico->tipo ?? $firstGroup?->tipo,
                         'progreso_documentacion'  => $progresoDocente,
                         'indicadores_documentacion' => $indicadoresDocente,
                         'preguntas_1p_stats'      => $stats1P
