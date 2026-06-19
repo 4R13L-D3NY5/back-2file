@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Asignatura;
 use App\Models\Carrera;
+use App\Services\PlanEstudiosContextService;
 use App\Services\University\UniversityService;
 use App\Services\MateriasComunesSyncService;
 use Illuminate\Http\Request;
@@ -22,6 +23,7 @@ class AsignaturaController extends Controller
     protected $cronogramaParser; // Added
     protected $syncService;
     protected MateriasComunesSyncService $materiasComunesSyncService;
+    protected PlanEstudiosContextService $planEstudiosContextService;
 
     public function __construct(
         UniversityService $universityService,
@@ -29,7 +31,8 @@ class AsignaturaController extends Controller
         PlanClaseParserService $planClaseParser, // Added
         CronogramaParserService $cronogramaParser, // Added
         \App\Services\AsignaturaSyncService $syncService,
-        MateriasComunesSyncService $materiasComunesSyncService
+        MateriasComunesSyncService $materiasComunesSyncService,
+        PlanEstudiosContextService $planEstudiosContextService
     ) {
         $this->universityService = $universityService;
         $this->parser = $parser; // Added
@@ -37,6 +40,7 @@ class AsignaturaController extends Controller
         $this->cronogramaParser = $cronogramaParser; // Added
         $this->syncService = $syncService;
         $this->materiasComunesSyncService = $materiasComunesSyncService;
+        $this->planEstudiosContextService = $planEstudiosContextService;
     }
 
     /**
@@ -126,6 +130,20 @@ class AsignaturaController extends Controller
                 $q->where('nombre', 'like', "%{$term}%")
                     ->orWhere('codigo', 'like', "%{$term}%");
             });
+        }
+
+        if ($request->boolean('plan_contexto') && $sedeId && $carreraId) {
+            $planesContexto = $this->planEstudiosContextService->resolverPlanes(
+                (int) $carreraId,
+                (int) $sedeId,
+                $request->input('gestion')
+            );
+
+            if (empty($planesContexto)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('plan_estudios', $planesContexto);
+            }
         }
 
         $asignaturas = $query->limit(500)->get();
