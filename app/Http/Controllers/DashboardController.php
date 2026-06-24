@@ -41,16 +41,23 @@ class DashboardController extends Controller
         $totalAvanceCount = 0;
         $documentacionPendiente = 0;
 
-        // Progress per semester
+        // Progress per semester. Medicina plan nuevo puede tener semestres por encima de 10.
         $semestresMap = [];
-        for ($i = 1; $i <= 10; $i++) $semestresMap[$i] = ['asignaturas' => 0, 'avanceSum' => 0];
 
         foreach ($asignaturas as $asignatura) {
-            $semestre = DB::table('asignatura_carrera')
+            $semestre = (int) (DB::table('asignatura_carrera')
                 ->where('asignatura_id', $asignatura->id)
                 ->where('carrera_id', $carreraId)
                 ->where('sede_id', $sedeId)
-                ->value('semestre') ?? 1;
+                ->value('semestre') ?? 1);
+
+            if ($semestre < 1) {
+                $semestre = 1;
+            }
+
+            if (!isset($semestresMap[$semestre])) {
+                $semestresMap[$semestre] = ['asignaturas' => 0, 'avanceSum' => 0];
+            }
 
             $semestresMap[$semestre]['asignaturas']++;
             $materiaAvance = $asignatura->progreso;
@@ -65,6 +72,8 @@ class DashboardController extends Controller
         }
 
         $semestresFormatted = [];
+        ksort($semestresMap);
+
         foreach ($semestresMap as $num => $data) {
             if ($data['asignaturas'] > 0) {
                 $semestresFormatted[] = [

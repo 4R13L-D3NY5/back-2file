@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Jobs\GenerateRolExamenPackageJob;
+use App\Models\Asignatura;
 use App\Models\BancoPregunta;
 use App\Models\RolExamen;
+use App\Services\PlanEstudiosContextService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -22,11 +24,30 @@ class RolExamenController extends Controller
         'VISUALIZADOR_EVALUACIONES_SEDE',
     ];
 
+    public function __construct(
+        private PlanEstudiosContextService $planEstudiosContextService
+    ) {
+    }
+
     /**
      * Listar exámenes por gestión y carrera
      */
     public function index(Request $request)
     {
+        $carreraIdContexto = $request->filled('carrera_id')
+            ? (int) $request->carrera_id
+            : null;
+        $sedeIdContexto = $request->filled('sede_id')
+            ? (int) $request->sede_id
+            : null;
+        $planesContexto = $carreraIdContexto && $sedeIdContexto
+            ? $this->planEstudiosContextService->resolverPlanes(
+                $carreraIdContexto,
+                $sedeIdContexto,
+                $request->input('gestion')
+            )
+            : [];
+
         $query = RolExamen::query()
             ->select(
                 'rol_examenes.*',
@@ -67,10 +88,25 @@ class RolExamenController extends Controller
             )
             ->join('carreras', 'rol_examenes.carrera_id', '=', 'carreras.id')
             ->join('sedes', 'rol_examenes.sede_id', '=', 'sedes.id')
-            ->join('asignaturas', function ($join) {
+            ->join('asignaturas', function ($join) use (
+                $carreraIdContexto,
+                $sedeIdContexto,
+                $planesContexto
+            ) {
                 $join->on('rol_examenes.materia_codigo', '=', 'asignaturas.codigo')
-                    ->where('asignaturas.estado', '!=', 'cancelado')
-                    ->whereRaw("(rol_examenes.sede_id != 1 OR (rol_examenes.sede_id = 1 AND asignaturas.plan_estudios = 'N'))");
+                    ->where('asignaturas.estado', '!=', 'cancelado');
+
+                if ($carreraIdContexto && $sedeIdContexto) {
+                    if (empty($planesContexto)) {
+                        $join->whereRaw('1 = 0');
+                    } else {
+                        $join->whereIn('asignaturas.plan_estudios', $planesContexto);
+                    }
+                } else {
+                    $join->whereRaw(
+                        "(rol_examenes.sede_id != 1 OR (rol_examenes.sede_id = 1 AND asignaturas.plan_estudios = 'N'))"
+                    );
+                }
             })
             ->join('asignatura_carrera', function ($join) {
                 $join->on('asignaturas.id', '=', 'asignatura_carrera.asignatura_id')
@@ -1050,9 +1086,11 @@ class RolExamenController extends Controller
         $validator = Validator::make($request->all(), [
             'gestion' => 'required|string|max:20',
             'carrera_id' => 'required|exists:carreras,id',
+            'sede_id' => 'nullable|exists:sedes,id',
             'materia_codigo' => 'required|string|max:50',
             'materia_nombre' => 'required|string|max:255',
             'tipo_examen' => 'required|in:1er Parcial,2do Parcial,Final,2da Instancia',
+            'grupo' => 'required|string|max:50',
             'semana' => 'required|integer|min:1|max:25',
             'fecha' => 'required|date',
             'hora_inicio' => 'required',
@@ -1077,6 +1115,45 @@ class RolExamenController extends Controller
                 $data['sede_id'] = $user->sede_id ?: 1;
             }
         }
+
+        $sedeId = isset($data['sede_id']) ? (int) $data['sede_id'] : null;
+        $carreraId = (int) $data['carrera_id'];
+
+        if (! $sedeId) {
+            return response()->json([
+                'message' => 'No se pudo determinar la sede del rol de examen.',
+            ], 422);
+        }
+
+        $planesContexto = $this->planEstudiosContextService->resolverPlanes(
+            $carreraId,
+            $sedeId,
+            $data['gestion'] ?? null
+        );
+
+        if (empty($planesContexto)) {
+            return response()->json([
+                'message' => 'No se pudo determinar el plan de estudios para la carrera y sede seleccionadas.',
+            ], 422);
+        }
+
+        $asignatura = Asignatura::query()
+            ->where('codigo', $data['materia_codigo'])
+            ->whereIn('plan_estudios', $planesContexto)
+            ->where('estado', '!=', 'cancelado')
+            ->whereHas('carreras', function ($query) use ($carreraId, $sedeId) {
+                $query->where('carreras.id', $carreraId)
+                    ->where('asignatura_carrera.sede_id', $sedeId);
+            })
+            ->first();
+
+        if (! $asignatura) {
+            return response()->json([
+                'message' => 'La materia seleccionada no pertenece al plan de estudios vigente para esta carrera y sede.',
+            ], 422);
+        }
+
+        $data['materia_nombre'] = $asignatura->nombre;
 
         $examen = RolExamen::create([
             ...$data,
