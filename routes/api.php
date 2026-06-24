@@ -476,6 +476,16 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
     Route::post('/restauracion/asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'restaurarAsignatura'])
         ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::get('/restauracion/exportar-excel', [\App\Http\Controllers\RestauracionAcademicaController::class, 'exportarExcel'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/importar-excel', [\App\Http\Controllers\RestauracionAcademicaController::class, 'importarExcel'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/exportar-pdf-asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'exportarPdfAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/exportar-pac-asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'exportarExcelPacAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN,DOCENTE');
+    Route::post('/restauracion/exportar-plan-clase-asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'exportarExcelPlanClaseAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
 
     // Recuperacion de Bancos de Preguntas (Solo SUPER_ADMIN)
     Route::prefix('restauracion/bancos')->middleware('role:SUPER_ADMIN')->group(function () {
