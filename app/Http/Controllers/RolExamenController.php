@@ -1015,12 +1015,6 @@ class RolExamenController extends Controller
 
             DB::beginTransaction();
 
-            RolExamen::where('gestion', $gestion)
-                ->where('carrera_id', $carreraId)
-                ->where('sede_id', $sedeId)
-                ->where('tipo_examen', '2da Instancia')
-                ->delete();
-
             foreach ($rows as $index => $row) {
                 $rowNumber = $index + 2;
                 $codigo = trim((string) ($row[0] ?? ''));
