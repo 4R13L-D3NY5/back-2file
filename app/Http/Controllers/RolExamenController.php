@@ -952,6 +952,191 @@ class RolExamenController extends Controller
         }
     }
 
+    /**
+     * Subir plantilla simple para roles de 2da Instancia.
+     */
+    public function uploadSegundaInstancia(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'file' => 'required|file|mimes:xlsx,xls|max:5120',
+            'carrera_id' => 'required|exists:carreras,id',
+            'sede_id' => 'nullable|exists:sedes,id',
+            'gestion' => 'nullable|string|max:20',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Archivo invÃ¡lido', 'errors' => $validator->errors()], 422);
+        }
+
+        $gestion = $request->get('gestion', date('Y').'-I');
+        $carreraId = (int) $request->get('carrera_id');
+        $sedeId = $request->get('sede_id');
+        $user = auth()->user();
+
+        if ($user) {
+            if ($user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+                if (! $this->directorPuedeGestionarCarrera($user, $carreraId)) {
+                    return response()->json([
+                        'message' => 'No tiene permiso para subir roles de examen de esta carrera.',
+                    ], 403);
+                }
+
+                $sedeId = $user->director && $user->director->sede_id
+                    ? $user->director->sede_id
+                    : $user->sede_id;
+            } elseif (! $sedeId) {
+                $sedeId = $user->docente && $user->docente->sede_id
+                    ? $user->docente->sede_id
+                    : $user->sede_id;
+            }
+        }
+
+        if (! $sedeId) {
+            return response()->json([
+                'message' => 'No se pudo determinar la sede para importar el rol.',
+            ], 422);
+        }
+
+        $planesContexto = $this->planEstudiosContextService->resolverPlanes($carreraId, (int) $sedeId, $gestion);
+        if (empty($planesContexto)) {
+            return response()->json([
+                'message' => 'No se pudo determinar el plan de estudios para la carrera y sede seleccionadas.',
+            ], 422);
+        }
+
+        try {
+            $spreadsheet = IOFactory::load($request->file('file')->getPathname());
+            $sheet = $spreadsheet->getSheetByName('2da Instancia') ?: $spreadsheet->getActiveSheet();
+            $rows = array_slice($sheet->toArray(null, true, true, false), 1);
+
+            $imported = 0;
+            $errors = [];
+            $warnings = [];
+
+            DB::beginTransaction();
+
+            RolExamen::where('gestion', $gestion)
+                ->where('carrera_id', $carreraId)
+                ->where('sede_id', $sedeId)
+                ->where('tipo_examen', '2da Instancia')
+                ->delete();
+
+            foreach ($rows as $index => $row) {
+                $rowNumber = $index + 2;
+                $codigo = trim((string) ($row[0] ?? ''));
+                $grupo = trim((string) ($row[1] ?? ''));
+                $semana = trim((string) ($row[2] ?? ''));
+                $fechaRaw = $row[3] ?? null;
+                $horaInicioRaw = $row[4] ?? null;
+                $horaFinRaw = $row[5] ?? null;
+
+                if ($codigo === '' && $grupo === '' && $semana === '' && empty($fechaRaw) && empty($horaInicioRaw) && empty($horaFinRaw)) {
+                    continue;
+                }
+
+                if ($codigo === '' || $grupo === '' || $semana === '' || empty($fechaRaw) || empty($horaInicioRaw) || empty($horaFinRaw)) {
+                    $errors[] = "Fila {$rowNumber}: Complete cÃ³digo, grupo, semana, fecha, hora inicio y hora fin.";
+
+                    continue;
+                }
+
+                if (! is_numeric($semana) || (int) $semana < 1 || (int) $semana > 25) {
+                    $errors[] = "Fila {$rowNumber}: La semana debe ser un nÃºmero entre 1 y 25.";
+
+                    continue;
+                }
+
+                $asignatura = Asignatura::query()
+                    ->where('codigo', $codigo)
+                    ->whereIn('plan_estudios', $planesContexto)
+                    ->where('estado', '!=', 'cancelado')
+                    ->whereHas('carreras', function ($query) use ($carreraId, $sedeId) {
+                        $query->where('carreras.id', $carreraId)
+                            ->where('asignatura_carrera.sede_id', $sedeId);
+                    })
+                    ->first();
+
+                if (! $asignatura) {
+                    $errors[] = "Fila {$rowNumber}: La materia '{$codigo}' no pertenece al plan vigente de esta carrera y sede.";
+
+                    continue;
+                }
+
+                $fecha = $this->parseDate($fechaRaw, (int) date('Y'));
+                $horaInicio = $this->parseTime($horaInicioRaw);
+                $horaFin = $this->parseTime($horaFinRaw);
+
+                if (! $fecha || ! $horaInicio || ! $horaFin) {
+                    $errors[] = "Fila {$rowNumber}: Fecha u horarios invÃ¡lidos.";
+
+                    continue;
+                }
+
+                $validation = $this->validateExamRules($carreraId, $codigo, $grupo, (int) $semana, $fecha, '2da Instancia');
+
+                if (! empty($validation['errors'])) {
+                    $errors[] = "Fila {$rowNumber} - Materia {$codigo}: ".implode(', ', $validation['errors']);
+
+                    continue;
+                }
+
+                $conflictos = $validation['warnings'] ?? [];
+                $conflictosData = [];
+                foreach ($conflictos as $warning) {
+                    $warningLower = mb_strtolower($warning, 'UTF-8');
+                    if (str_contains($warningLower, 'semana')) {
+                        $conflictosData['semana'] = $warning;
+                    }
+                    if (str_contains($warningLower, 'clase') || str_contains($warningLower, 'dia') || str_contains($warningLower, 'dÃ­a')) {
+                        $conflictosData['horario'] = $warning;
+                    }
+                }
+
+                if (! empty($conflictos)) {
+                    $warnings[] = "Fila {$rowNumber} - Materia {$codigo}: ".implode(', ', $conflictos);
+                }
+
+                RolExamen::updateOrCreate(
+                    [
+                        'gestion' => $gestion,
+                        'carrera_id' => $carreraId,
+                        'materia_codigo' => $codigo,
+                        'tipo_examen' => '2da Instancia',
+                        'grupo' => $grupo,
+                        'sede_id' => $sedeId,
+                    ],
+                    [
+                        'grupoTeorico' => $grupo,
+                        'materia_nombre' => $asignatura->nombre,
+                        'semana' => (int) $semana,
+                        'fecha' => $fecha,
+                        'hora_inicio' => $horaInicio,
+                        'hora_fin' => $horaFin,
+                        'created_by' => auth()->id(),
+                        'conflictos' => ! empty($conflictosData) ? $conflictosData : null,
+                    ]
+                );
+
+                $imported++;
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'message' => "Se importaron {$imported} exÃ¡menes de 2da Instancia.",
+                'imported' => $imported,
+                'errors' => $errors,
+                'warnings' => $warnings,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+
+            return response()->json([
+                'message' => 'Error crÃ­tico procesando archivo: '.$e->getMessage(),
+            ], 500);
+        }
+    }
+
     private function validateExamRules($carreraId, $codigo, $grupo, $semana, $fecha, $tipo)
     {
         $result = ['errors' => [], 'warnings' => []];
@@ -2996,6 +3181,117 @@ class RolExamenController extends Controller
         }, 'plantilla_rol_examenes.xlsx', [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ]);
+    }
+
+    /**
+     * Descargar plantilla Excel para importar solo 2da Instancia.
+     */
+    public function templateSegundaInstancia(Request $request)
+    {
+        $carreraId = (int) $request->get('carrera_id');
+        $user = auth()->user();
+
+        if ($carreraId && $user?->rol && $user->rol->codigo === 'DIRECTOR_CARRERA' && ! $this->directorPuedeGestionarCarrera($user, $carreraId)) {
+            return response()->json([
+                'message' => 'No tiene permiso para descargar la plantilla de esta carrera.',
+            ], 403);
+        }
+
+        $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet;
+        $sheet = $spreadsheet->getActiveSheet();
+        $sheet->setTitle('2da Instancia');
+
+        $headers = ["C\u{00F3}digo Materia", 'Grupo', 'Semana', 'Fecha', 'Hora Inicio', 'Hora Fin'];
+        $sheet->fromArray($headers, null, 'A1');
+
+        $headerStyle = [
+            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['rgb' => 'DC2626']],
+            'alignment' => ['horizontal' => \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
+        ];
+        $sheet->getStyle('A1:F1')->applyFromArray($headerStyle);
+
+        foreach (range('A', 'F') as $col) {
+            $sheet->getColumnDimension($col)->setAutoSize(true);
+        }
+
+        $samples = $this->obtenerEjemplosPlantillaSegundaInstancia($request);
+
+        $row = 2;
+        foreach ($samples as $sample) {
+            $sheet->fromArray($sample, null, 'A'.$row);
+            $row++;
+        }
+
+        $sheet->getComment('A1')->getText()->createTextRun("Use el c\u{00F3}digo exacto de una materia de su carrera.");
+        $sheet->getComment('B1')->getText()->createTextRun("Grupo te\u{00F3}rico, por ejemplo: 1, 2, 3.");
+        $sheet->getComment('C1')->getText()->createTextRun('Para 2da Instancia use semana 20.');
+        $sheet->getComment('D1')->getText()->createTextRun('Formato recomendado: AAAA-MM-DD.');
+        $sheet->getComment('E1')->getText()->createTextRun('Formato recomendado: HH:mm.');
+        $sheet->getComment('F1')->getText()->createTextRun('Formato recomendado: HH:mm.');
+
+        $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
+
+        return response()->streamDownload(function () use ($writer) {
+            $writer->save('php://output');
+        }, 'plantilla_2da_instancia.xlsx', [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
+    }
+
+    private function directorPuedeGestionarCarrera($user, int $carreraId): bool
+    {
+        if (! $user?->director || ! $carreraId) {
+            return false;
+        }
+
+        $user->loadMissing('director.carreras');
+
+        $carreraIds = collect([$user->director->carrera_id])
+            ->merge($user->director->carreras?->pluck('id') ?? collect())
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique();
+
+        return $carreraIds->contains($carreraId);
+    }
+
+    private function obtenerEjemplosPlantillaSegundaInstancia(Request $request): array
+    {
+        $carreraId = (int) $request->get('carrera_id');
+        $sedeId = (int) ($request->get('sede_id') ?: auth()->user()?->sede_id);
+        $gestion = $request->get('gestion', date('Y').'-I');
+
+        $codigos = collect();
+
+        if ($carreraId && $sedeId) {
+            $planesContexto = $this->planEstudiosContextService->resolverPlanes($carreraId, $sedeId, $gestion);
+
+            $codigos = Asignatura::query()
+                ->where('estado', '!=', 'cancelado')
+                ->when(! empty($planesContexto), fn ($query) => $query->whereIn('plan_estudios', $planesContexto))
+                ->whereHas('carreras', function ($query) use ($carreraId, $sedeId) {
+                    $query->where('carreras.id', $carreraId)
+                        ->where('asignatura_carrera.sede_id', $sedeId);
+                })
+                ->orderBy('codigo')
+                ->limit(2)
+                ->pluck('codigo');
+        }
+
+        if ($codigos->isEmpty()) {
+            $codigos = collect(['SIS-101', 'SIS-102']);
+        }
+
+        return $codigos
+            ->values()
+            ->map(function ($codigo, $index) {
+                $horaInicio = $index === 0 ? '08:00' : '09:45';
+                $horaFin = $index === 0 ? '09:30' : '11:15';
+
+                return [$codigo, (string) ($index + 1), 20, date('Y-m-d', strtotime('+30 days')), $horaInicio, $horaFin];
+            })
+            ->all();
     }
 
     // ==========================================

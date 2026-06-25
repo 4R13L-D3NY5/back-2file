@@ -322,8 +322,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/', [\App\Http\Controllers\RolExamenController::class, 'index']);
         Route::post('/', [\App\Http\Controllers\RolExamenController::class, 'store']);
         Route::post('/upload', [\App\Http\Controllers\RolExamenController::class, 'upload']);
+        Route::post('/upload-segunda-instancia', [\App\Http\Controllers\RolExamenController::class, 'uploadSegundaInstancia']);
         Route::post('/bulk-delete', [\App\Http\Controllers\RolExamenController::class, 'destroyAll']);
         Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
+        Route::get('/template-segunda-instancia', [\App\Http\Controllers\RolExamenController::class, 'templateSegundaInstancia']);
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
           Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update'])
               ->middleware('role:DIRECTOR_CARRERA,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
