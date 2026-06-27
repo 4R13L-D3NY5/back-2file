@@ -120,6 +120,32 @@ class RoleSeeder extends Seeder
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
+            [
+                'id' => 9,
+                'nombre' => 'RESPONSABLE DE EVALUACIONES',
+                'codigo' => 'RESPONSABLE_EVALUACIONES',
+                'descripcion' => 'Gestión nacional de evaluaciones y administración del sistema de exámenes',
+                'color' => '#be185d',
+                'icono' => 'admin_panel_settings',
+                'activo' => true,
+                'permisos' => json_encode(['evaluaciones', 'examenes', 'administración']),
+                'orden' => 9,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
+            [
+                'id' => 10,
+                'nombre' => 'PLATAFORMA',
+                'codigo' => 'PLATAFORMA',
+                'descripcion' => 'Acceso operativo al plan de estudios y exportacion de patrones',
+                'color' => '#0f766e',
+                'icono' => 'layers',
+                'activo' => true,
+                'permisos' => json_encode(['plan_estudios', 'exportar_patron']),
+                'orden' => 10,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ],
         ];
 
         DB::table('roles')->insert($roles);

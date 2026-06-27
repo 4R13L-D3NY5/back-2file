@@ -13,8 +13,8 @@ use App\Models\Horario;
 use App\Models\Sede;
 use App\Models\User;
 use App\Models\Rol;
+use App\Services\ContentMigrationService;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 
 class PlanningSyncService
@@ -95,6 +95,10 @@ class PlanningSyncService
                     // Se distinguen por el campo plan_estudios, no por el código.
                     $planBuscar = $dto->planEst ?: 'N';
 
+                    // FIX CRITICO: Consolidar asignaturas duplicadas del mismo código
+                    // antes de buscar/crear, para evitar grupos huérfanos en duplicados
+                    $this->consolidarAsignaturasDuplicadas($dto->siglaP, $planBuscar);
+
                     $asignatura = Asignatura::withTrashed()
                         ->where('codigo', $dto->siglaP)
                         ->where('plan_estudios', $planBuscar)
@@ -102,7 +106,6 @@ class PlanningSyncService
 
                     if ($asignatura) {
                         // Actualizar nombre solo si es muy similar (corrección ortográfica)
-                        // para no sobreescribir con otro nombre completamente diferente
                         similar_text(strtoupper($asignatura->nombre), strtoupper($dto->materia), $namePct);
                         if ($namePct > 70) {
                             $asignatura->nombre = $dto->materia ?: $asignatura->nombre;
@@ -210,7 +213,7 @@ class PlanningSyncService
                                         // 'name' column does not exist in DB, using nombre/apellido below
                                         'email' => strtolower($dto->ci) . '@unitepc.edu.bo', // Dummy email based on CI
                                         'username' => $dto->ci,
-                                        'password' => Hash::make($dto->ci), // Def pw: CI
+                                        'password' => $dto->ci, // cast 'hashed' del modelo lo hashea automaticamente
                                         'rol_id' => $docenteRoleId,
                                         'estado' => 1, // 1 = ACTIVO
                                         'password_change_required' => false,
@@ -250,7 +253,8 @@ class PlanningSyncService
 
                     // MIGRATION FIX: Check for legacy group (null carrera_id) matching other criteria
                     // This prevents "Duplicate Entry" errors if a unique index exists on (gestion, asignatura, nombre...)
-                    $legacyGrupo = Grupo::where([
+                    // withTrashed: necesitamos encontrar cualquier grupo (activo, inactivo o soft-deleted)
+                    $legacyGrupo = Grupo::withoutGlobalScope('activo')->withTrashed()->where([
                         'gestion' => $dto->gestion,
                         'asignatura_id' => $asignatura->id,
                         'carrera_id' => null, // Legacy has no career
@@ -265,7 +269,8 @@ class PlanningSyncService
                     }
 
                     // Un grupo es el mismo si tiene la misma gestión, asignatura, carrera, nombre, tipo y sede
-                    $grupo = Grupo::updateOrCreate(
+                    // withTrashed: buscar también grupos ELIMINADOS (soft-deletes) para restaurarlos
+                    $grupo = Grupo::withoutGlobalScope('activo')->withTrashed()->firstOrNew(
                         [
                             'gestion' => $dto->gestion,
                             'asignatura_id' => $asignatura->id,
@@ -273,12 +278,19 @@ class PlanningSyncService
                             'nombre' => $dto->grupo,
                             'tipo' => $tipo,
                             'sede_id' => $sede->id
-                        ],
-                        [
-                            'docente_id'    => $docenteId,
-                            'estado'        => 'ACTIVO'
                         ]
                     );
+
+                    // Restaurar si estaba soft-deleted
+                    if ($grupo->trashed()) {
+                        $grupo->restore();
+                    }
+
+                    $grupo->fill([
+                        'docente_id' => $docenteId,
+                        'estado'     => 'ACTIVO',
+                    ]);
+                    $grupo->save();
 
                     $stats['grupos']++;
 
@@ -295,32 +307,36 @@ class PlanningSyncService
                     // 8. HORARIO (SESIÓN): Identificación por ID único de API
                     // Esto permite que el Grupo "A" tenga N sesiones sin duplicar el grupo.
                     if ($dto->idHorario) {
-                        $horario = Horario::updateOrCreate(
-                            [
-                                'id_horario_api' => $dto->idHorario,
-                            ],
-                            [
-                                'grupo_id' => $grupo->id,
-                                'aula_id' => $aula->id,
-                                'dia' => strtoupper($dto->dia),
-                                'hora_inicio' => $dto->horaInicio,
-                                'hora_fin' => $dto->horaFin,
-                            ]
+                        $horario = Horario::withTrashed()->firstOrNew(
+                            ['id_horario_api' => $dto->idHorario]
                         );
+                        if ($horario->trashed()) {
+                            $horario->restore();
+                        }
+                        $horario->fill([
+                            'grupo_id' => $grupo->id,
+                            'aula_id' => $aula->id,
+                            'dia' => strtoupper($dto->dia),
+                            'hora_inicio' => $dto->horaInicio,
+                            'hora_fin' => $dto->horaFin,
+                        ]);
+                        $horario->save();
                         $horariosByGroup[$grupo->id][] = $horario->id;
                     } else {
                         // Fallback para APIs sin ID (vínculo por contenido)
-                        $horario = Horario::updateOrCreate(
-                            [
-                                'grupo_id' => $grupo->id,
-                                'dia' => strtoupper($dto->dia),
-                                'hora_inicio' => $dto->horaInicio,
-                            ],
-                            [
-                                'aula_id' => $aula->id,
-                                'hora_fin' => $dto->horaFin,
-                            ]
-                        );
+                        $horario = Horario::withTrashed()->firstOrNew([
+                            'grupo_id' => $grupo->id,
+                            'dia' => strtoupper($dto->dia),
+                            'hora_inicio' => $dto->horaInicio,
+                        ]);
+                        if ($horario->trashed()) {
+                            $horario->restore();
+                        }
+                        $horario->fill([
+                            'aula_id' => $aula->id,
+                            'hora_fin' => $dto->horaFin,
+                        ]);
+                        $horario->save();
                         $horariosByGroup[$grupo->id][] = $horario->id;
                     }
                     $stats['horarios']++;
@@ -356,5 +372,382 @@ class PlanningSyncService
             
             return $stats;
         });
+    }
+
+    // =========================================================================
+    // RECONCILIACIÓN POST-SYNC
+    // =========================================================================
+    // Este método SOLO es llamado desde SyncController (sync manual del admin).
+    // NO se llama desde el scheduler, jobs ni comandos artisan.
+    // Garantiza que syncBatch() permanece intacto y sin efectos secundarios.
+    // =========================================================================
+
+    /**
+     * Fase de reconciliación post-sync por carrera/sede/gestión.
+     *
+     * Acciones:
+     *  A) Inactivar grupos que ya no existen en la API para esta carrera/sede/gestión
+     *  B) Detectar y fusionar asignaturas duplicadas (migrando banco de preguntas)
+     *  C) Desvincular asignaturas huérfanas del pivot carrera/sede
+     *  D) Registrar conflictos en grupos modificados localmente
+     *
+     * @param int    $carreraId  ID de la carrera local
+     * @param int    $sedeId     ID de la sede local
+     * @param string $gestion    Gestión académica (ej: "1-2026")
+     * @param array  $apiItems   Items crudos devueltos por la API Planning
+     * @return array Resultado detallado para el diff
+     */
+    public function reconcile(int $carreraId, int $sedeId, string $gestion, array $apiItems): array
+    {
+        $resultado = [
+            'grupos_inactivados'       => [],
+            'asignaturas_desvinculadas'=> [],
+            'duplicados_fusionados'    => [],
+            'conflictos_locales'       => [],
+        ];
+
+        return DB::transaction(function () use ($carreraId, $sedeId, $gestion, $apiItems, &$resultado) {
+
+            // ── A) Construir el conjunto de grupos que la API dice que existen ──────
+            // Extraemos las identidades (asignatura_codigo+plan, nombre, tipo) de los items de la API
+            $gruposEnApi = collect($apiItems)->map(function ($item) {
+                $dto  = AcademicDataDTO::fromArray($item);
+                $plan = $dto->planEst ?: 'N';
+                $tipo = isset($dto->tipoClase)
+                    ? ((strtoupper(trim($dto->tipoClase)) === 'REGULAR') ? 'TEORICO' : strtoupper(trim($dto->tipoClase)))
+                    : 'TEORICO';
+                return [
+                    'sigla'   => $dto->siglaP,
+                    'plan'    => $plan,
+                    'nombre'  => $dto->grupo,
+                    'tipo'    => $tipo,
+                    'gestion' => $dto->gestion,
+                ];
+            })->unique(fn($g) => "{$g['sigla']}|{$g['plan']}|{$g['nombre']}|{$g['tipo']}");
+
+            // Obtener asignaturas procesadas (por código+plan) para esta carrera/sede
+            $asignaturasProcesadas = Asignatura::withoutGlobalScopes()
+                ->whereIn(DB::raw("CONCAT(codigo, '|', COALESCE(plan_estudios,'N'))"),
+                    $gruposEnApi->pluck('sigla')->map(fn($s) => $s . '|' . 'N')->toArray()
+                )
+                ->orWhere(function ($q) use ($gruposEnApi) {
+                    foreach ($gruposEnApi->unique('sigla') as $g) {
+                        $q->orWhere(function ($sub) use ($g) {
+                            $sub->where('codigo', $g['sigla'])
+                                ->where('plan_estudios', $g['plan']);
+                        });
+                    }
+                })
+                ->pluck('id')
+                ->toArray();
+
+            // ── B) Inactivar grupos obsoletos ────────────────────────────────────────
+            // Un grupo es obsoleto si:
+            //   - Está en BD para esta carrera/sede/gestión como ACTIVO
+            //   - Su asignatura.codigo+plan + nombre + tipo NO aparece en los apiItems
+            $gruposBD = Grupo::withoutGlobalScope('activo')
+                ->with('asignatura')
+                ->where('carrera_id', $carreraId)
+                ->where('sede_id', $sedeId)
+                ->where('gestion', $gestion)
+                ->where('estado', 'ACTIVO')
+                ->whereNull('deleted_at')
+                ->get();
+
+            foreach ($gruposBD as $grupo) {
+                if (!$grupo->asignatura) continue;
+
+                $estaEnApi = $gruposEnApi->first(fn($g) =>
+                    $g['sigla']  === $grupo->asignatura->codigo &&
+                    ($g['plan']  === ($grupo->asignatura->plan_estudios ?? 'N')) &&
+                    $g['nombre'] === $grupo->nombre &&
+                    $g['tipo']   === $grupo->tipo
+                );
+
+                if (!$estaEnApi) {
+                    $grupo->estado = 'INACTIVO';
+                    $grupo->save();
+
+                    $resultado['grupos_inactivados'][] = [
+                        'id'         => $grupo->id,
+                        'grupo'      => $grupo->nombre . ' (' . $grupo->tipo . ')',
+                        'asignatura' => $grupo->asignatura->nombre,
+                        'codigo'     => $grupo->asignatura->codigo,
+                    ];
+                }
+            }
+
+            // ── C) Detectar y fusionar duplicados de asignaturas ─────────────────────
+            // Un duplicado es una asignatura vinculada a esta carrera/sede que tiene el
+            // MISMO código con diferente plan_estudios (ej: ENF-111 Plan A y ENF-111 Plan N).
+            // NUNCA se fusionan códigos diferentes aunque tengan nombres parecidos.
+            // La "correcta" es la que tiene plan_estudios = 'N' (Plan Nuevo, la de la API).
+            $asignaturasEnCarrera = Asignatura::withoutGlobalScopes()
+                ->whereHas('carreras', fn($q) =>
+                    $q->where('carreras.id', $carreraId)
+                      ->where('asignatura_carrera.sede_id', $sedeId)
+                )
+                ->whereNull('deleted_at')
+                ->get();
+
+            $migrationService = app(ContentMigrationService::class);
+            $fusionadas = collect(); // IDs ya procesados para no procesar dos veces
+
+            foreach ($asignaturasEnCarrera as $asignatura) {
+                if ($fusionadas->contains($asignatura->id)) continue;
+
+                // Buscar duplicados SOLO por mismo código con diferente plan
+                $duplicados = $asignaturasEnCarrera->filter(fn($a) =>
+                    $a->id !== $asignatura->id &&
+                    !$fusionadas->contains($a->id) &&
+                    $a->codigo === $asignatura->codigo &&
+                    $a->plan_estudios !== $asignatura->plan_estudios
+                );
+
+                foreach ($duplicados as $duplicado) {
+                    if ($fusionadas->contains($duplicado->id)) continue;
+
+                    // La "correcta" es la que tiene plan N (de la API) o la que tiene mayor score
+                    $correcta  = ($asignatura->plan_estudios === 'N') ? $asignatura : $duplicado;
+                    $duplicadaA = ($correcta->id === $asignatura->id) ? $duplicado : $asignatura;
+
+                    try {
+                        // Migrar banco de preguntas y documentación
+                        $detalles = $migrationService->fusionarDuplicados($correcta, $duplicadaA);
+
+                        // Reasignar grupos de la duplicada a la correcta
+                        Grupo::withoutGlobalScope('activo')
+                            ->where('asignatura_id', $duplicadaA->id)
+                            ->where('carrera_id', $carreraId)
+                            ->where('sede_id', $sedeId)
+                            ->update(['asignatura_id' => $correcta->id]);
+
+                        // Desvincular la duplicada del pivot de esta carrera/sede
+                        DB::table('asignatura_carrera')
+                            ->where('asignatura_id', $duplicadaA->id)
+                            ->where('carrera_id', $carreraId)
+                            ->where('sede_id', $sedeId)
+                            ->delete();
+
+                        $resultado['duplicados_fusionados'][] = array_merge($detalles, [
+                            'correcta_plan'  => $correcta->plan_estudios,
+                            'duplicada_plan' => $duplicadaA->plan_estudios,
+                        ]);
+
+                        $fusionadas->push($duplicadaA->id);
+
+                        Log::info("PlanningSyncService::reconcile - duplicado fusionado", [
+                            'correcta_id'  => $correcta->id,
+                            'duplicada_id' => $duplicadaA->id,
+                        ]);
+                    } catch (\Throwable $e) {
+                        Log::error("PlanningSyncService::reconcile - error fusionando duplicado", [
+                            'correcta_id'  => $correcta->id,
+                            'duplicada_id' => $duplicadaA->id,
+                            'error'        => $e->getMessage(),
+                        ]);
+                    }
+                }
+
+                $fusionadas->push($asignatura->id);
+            }
+
+            // ── D) Desvincular asignaturas huérfanas ─────────────────────────────────
+            // Una asignatura es huérfana en esta carrera/sede si no tiene ningún grupo
+            // ACTIVO en esta gestión (y no es una asignatura que acabamos de procesar).
+            $asignaturasConGrupoActivo = Grupo::withoutGlobalScope('activo')
+                ->where('carrera_id', $carreraId)
+                ->where('sede_id', $sedeId)
+                ->where('gestion', $gestion)
+                ->where('estado', 'ACTIVO')
+                ->whereNull('deleted_at')
+                ->pluck('asignatura_id')
+                ->unique()
+                ->toArray();
+
+            $asignaturasEnPivot = DB::table('asignatura_carrera')
+                ->where('carrera_id', $carreraId)
+                ->where('sede_id', $sedeId)
+                ->pluck('asignatura_id')
+                ->toArray();
+
+            foreach ($asignaturasEnPivot as $asigId) {
+                // Si ya fue fusionada (el ID es de la duplicada), no procesar
+                if ($fusionadas->contains($asigId)) continue;
+
+                // Si tiene grupos activos en esta gestión, no tocar
+                if (in_array($asigId, $asignaturasConGrupoActivo)) continue;
+
+                // Verificar si tiene grupos activos en OTRAS gestiones para esta carrera/sede
+                $tieneGruposOtrasGestiones = Grupo::withoutGlobalScope('activo')
+                    ->where('asignatura_id', $asigId)
+                    ->where('carrera_id', $carreraId)
+                    ->where('sede_id', $sedeId)
+                    ->where('gestion', '!=', $gestion)
+                    ->where('estado', 'ACTIVO')
+                    ->whereNull('deleted_at')
+                    ->exists();
+
+                if ($tieneGruposOtrasGestiones) continue;
+
+                // No tiene grupos activos en ninguna gestión para esta carrera/sede → desvincular
+                $asignatura = Asignatura::withoutGlobalScopes()->find($asigId);
+                if (!$asignatura) continue;
+
+                DB::table('asignatura_carrera')
+                    ->where('asignatura_id', $asigId)
+                    ->where('carrera_id', $carreraId)
+                    ->where('sede_id', $sedeId)
+                    ->delete();
+
+                $resultado['asignaturas_desvinculadas'][] = [
+                    'id'     => $asignatura->id,
+                    'codigo' => $asignatura->codigo,
+                    'nombre' => $asignatura->nombre,
+                    'plan'   => $asignatura->plan_estudios,
+                ];
+
+                Log::info("PlanningSyncService::reconcile - asignatura desvinculada de carrera", [
+                    'asignatura_id' => $asigId,
+                    'carrera_id'    => $carreraId,
+                    'sede_id'       => $sedeId,
+                ]);
+            }
+
+            // ── E) Detectar conflictos locales ───────────────────────────────────────
+            // Grupos modificados localmente donde la API trae un docente diferente
+            $apiDocentes = collect($apiItems)->mapWithKeys(function ($item) {
+                $dto  = AcademicDataDTO::fromArray($item);
+                $plan = $dto->planEst ?: 'N';
+                $tipo = isset($dto->tipoClase)
+                    ? ((strtoupper(trim($dto->tipoClase)) === 'REGULAR') ? 'TEORICO' : strtoupper(trim($dto->tipoClase)))
+                    : 'TEORICO';
+                $key = "{$dto->siglaP}|{$plan}|{$dto->grupo}|{$tipo}";
+                return [$key => ['ci' => $dto->ci, 'nombre' => $dto->docente]];
+            });
+
+            $gruposModificados = Grupo::withoutGlobalScope('activo')
+                ->with(['asignatura', 'docente'])
+                ->where('carrera_id', $carreraId)
+                ->where('sede_id', $sedeId)
+                ->where('gestion', $gestion)
+                ->where('modificado_localmente', true)
+                ->whereNull('deleted_at')
+                ->get();
+
+            foreach ($gruposModificados as $grupo) {
+                if (!$grupo->asignatura) continue;
+
+                $plan = $grupo->asignatura->plan_estudios ?? 'N';
+                $key  = "{$grupo->asignatura->codigo}|{$plan}|{$grupo->nombre}|{$grupo->tipo}";
+
+                if ($apiDocentes->has($key)) {
+                    $docenteApi = $apiDocentes[$key];
+                    $docenteLocal = $grupo->docente?->nombre_completo ?? 'Sin asignar';
+
+                    // Solo reportar si el docente es diferente
+                    $docenteLocalCi = $grupo->docente?->ci ?? '';
+                    if ($docenteApi['ci'] && $docenteLocalCi !== $docenteApi['ci']) {
+                        $resultado['conflictos_locales'][] = [
+                            'grupo_id'        => $grupo->id,
+                            'grupo'           => $grupo->nombre . ' (' . $grupo->tipo . ')',
+                            'asignatura'      => $grupo->asignatura->nombre,
+                            'campo'           => 'docente',
+                            'valor_local'     => $docenteLocal,
+                            'valor_api'       => $docenteApi['nombre'],
+                            'docente_ci_api'  => $docenteApi['ci'],
+                        ];
+                    }
+                }
+            }
+
+            return $resultado;
+        });
+    }
+
+    /**
+     * Consolidar asignaturas duplicadas del mismo código.
+     * Busca todas las asignaturas con el mismo código, elige la "correcta"
+     * (la que tiene plan_estudios = planPreferido, o la más completa),
+     * y migra grupos/horarios/pivots de las duplicadas hacia ella.
+     */
+    private function consolidarAsignaturasDuplicadas(string $codigo, ?string $planPreferido = null): ?Asignatura
+    {
+        $asignaturas = Asignatura::withoutGlobalScopes()
+            ->where('codigo', $codigo)
+            ->where(function ($q) use ($planPreferido) {
+                $q->where('plan_estudios', $planPreferido)
+                  ->orWhereNull('plan_estudios');
+            })
+            ->get();
+
+        if ($asignaturas->count() <= 1) {
+            return $asignaturas->first();
+        }
+
+        Log::info('PlanningSyncService::consolidarAsignaturasDuplicadas - Encontradas duplicadas', [
+            'codigo' => $codigo,
+            'cantidad' => $asignaturas->count(),
+            'ids' => $asignaturas->pluck('id')->toArray(),
+        ]);
+
+        // Elegir la asignatura "correcta":
+        // 1. La que tenga plan_estudios = planPreferido
+        // 2. La que tenga más grupos
+        // 3. La más reciente
+        $correcta = $asignaturas->first(function ($a) use ($planPreferido) {
+            return $planPreferido && $a->plan_estudios === $planPreferido;
+        });
+
+        if (!$correcta) {
+            $correcta = $asignaturas->sortByDesc(function ($a) {
+                return $a->grupos()->count();
+            })->first();
+        }
+
+        $duplicadas = $asignaturas->where('id', '!=', $correcta->id);
+
+        foreach ($duplicadas as $dup) {
+            Log::info('PlanningSyncService::consolidar - Fusionando duplicada', [
+                'dup_id' => $dup->id,
+                'plan' => $dup->plan_estudios,
+                'into_id' => $correcta->id,
+            ]);
+
+            // Migrar grupos
+            Grupo::withoutGlobalScope('activo')
+                ->where('asignatura_id', $dup->id)
+                ->update(['asignatura_id' => $correcta->id]);
+
+            // Migrar pivots carrera
+            $pivots = DB::table('asignatura_carrera')
+                ->where('asignatura_id', $dup->id)
+                ->get();
+            foreach ($pivots as $p) {
+                $exists = DB::table('asignatura_carrera')
+                    ->where('asignatura_id', $correcta->id)
+                    ->where('carrera_id', $p->carrera_id)
+                    ->where('sede_id', $p->sede_id)
+                    ->exists();
+                if (!$exists) {
+                    DB::table('asignatura_carrera')->insert([
+                        'asignatura_id' => $correcta->id,
+                        'carrera_id' => $p->carrera_id,
+                        'sede_id' => $p->sede_id,
+                        'semestre' => $p->semestre,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+
+            // Eliminar pivots de la duplicada
+            DB::table('asignatura_carrera')->where('asignatura_id', $dup->id)->delete();
+
+            // Soft-delete la duplicada
+            $dup->delete();
+        }
+
+        return $correcta->fresh();
     }
 }

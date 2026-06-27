@@ -25,6 +25,19 @@ Route::get('/export/documentacion-carrera', [\App\Http\Controllers\AsignaturaCon
 Route::get('/export/documentacion-asignatura', [\App\Http\Controllers\AsignaturaController::class, 'documentacionAsignatura']);
 Route::get('/reportes/semanal/print', [\App\Http\Controllers\ReporteController::class, 'exportWeeklyReportHtml']);
 Route::get('/asignaturas/{id}/template-personal', [AsignaturaController::class, 'templatePersonal']);
+Route::get('/rol-examenes/{id}/archivo-examen/{filename}', [\App\Http\Controllers\RolExamenController::class, 'previewExamen'])
+    ->middleware('signed')
+    ->name('rol-examenes.preview-examen');
+Route::get('/rol-examenes/{id}/archivo-patron/{tipo}/{filename}', [\App\Http\Controllers\RolExamenController::class, 'previewPatron'])
+    ->middleware('signed')
+    ->name('rol-examenes.preview-patron');
+
+Route::prefix('examen-virtual')->group(function () {
+    Route::post('/access', [\App\Http\Controllers\VirtualExamController::class, 'access'])->middleware('throttle:30,1');
+    Route::post('/answers', [\App\Http\Controllers\VirtualExamController::class, 'saveAnswers'])->middleware('throttle:120,1');
+    Route::post('/finish', [\App\Http\Controllers\VirtualExamController::class, 'finish'])->middleware('throttle:30,1');
+    Route::get('/patron/{downloadToken}', [\App\Http\Controllers\VirtualExamController::class, 'downloadStudentPattern'])->middleware('throttle:30,1');
+});
 
 // Debug endpoint for checking API data (temporary)
 Route::get('/debug/plan-n-data', function (Illuminate\Http\Request $request) {
@@ -94,6 +107,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Asignaturas
     Route::get('/asignaturas', [AsignaturaController::class, 'index']);
     Route::post('/asignaturas', [AsignaturaController::class, 'store']);
+    Route::get('/asignaturas/master/{carrera_id}', [AsignaturaController::class, 'masterPorCarrera']);
+    Route::post('/asignaturas/asignar', [AsignaturaController::class, 'asignarMasivo']);
     Route::get('/asignaturas/{id}', [AsignaturaController::class, 'show']);
     Route::put('/asignaturas/{id}', [AsignaturaController::class, 'update']);
     Route::put('/asignaturas/{id}/estado', [AsignaturaController::class, 'cambiarEstado']);
@@ -110,6 +125,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Docentes
     Route::post('/docentes/sync', [App\Http\Controllers\DocenteController::class, 'sync']);
+    Route::get('/docentes-simple', [App\Http\Controllers\DocenteController::class, 'listSimple']); // Endpoint ligero para selectores
     Route::get('/docentes', [App\Http\Controllers\DocenteController::class, 'index']);
 
     // Grupos
@@ -210,6 +226,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/logo-unitepc', [BancoPreguntaController::class, 'getLogo']);
         Route::post('/', [BancoPreguntaController::class, 'store']);
         Route::post('/import', [BancoPreguntaController::class, 'import']);
+        Route::post('/save-config', [BancoPreguntaController::class, 'saveConfig']);
+        Route::post('/bulk-delete', [BancoPreguntaController::class, 'destroyByFiltro']);
         Route::post('/{id}', [BancoPreguntaController::class, 'update']);
         Route::delete('/{id}', [BancoPreguntaController::class, 'destroy']);
     });
@@ -217,13 +235,19 @@ Route::middleware('auth:sanctum')->group(function () {
     // Generaciones Manuales (Registro de Auditoría)
     Route::prefix('generaciones-manuales')->group(function () {
         Route::get('/', [GeneracionManualController::class, 'index']);
-        Route::post('/', [GeneracionManualController::class, 'store']);
-        Route::put('/{id}/estado', [GeneracionManualController::class, 'updateEstado']);
-        Route::post('/{id}/upload-archivos', [GeneracionManualController::class, 'uploadArchivos']);
+        Route::post('/', [GeneracionManualController::class, 'store'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{id}/generate-package', [GeneracionManualController::class, 'generatePackage'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::put('/{id}/estado', [GeneracionManualController::class, 'updateEstado'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{id}/upload-archivos', [GeneracionManualController::class, 'uploadArchivos'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
         Route::get('/{id}/download-examen', [GeneracionManualController::class, 'downloadExamen']);
         Route::get('/{id}/download-patron-pdf', [GeneracionManualController::class, 'downloadPatronPdf']);
         Route::get('/{id}/download-patron-xlsx', [GeneracionManualController::class, 'downloadPatronXlsx']);
-        Route::delete('/{id}', [GeneracionManualController::class, 'destroy']);
+        Route::delete('/{id}', [GeneracionManualController::class, 'destroy'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
     });
 
     // Planificación Semestral (Nuevo Módulo)
@@ -272,16 +296,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/sedes', [\App\Http\Controllers\SedeController::class, 'store'])->middleware('role:SUPER_ADMIN');
     Route::put('/sedes/{id}', [\App\Http\Controllers\SedeController::class, 'update'])->middleware('role:SUPER_ADMIN');
     Route::delete('/sedes/{id}', [\App\Http\Controllers\SedeController::class, 'destroy'])->middleware('role:SUPER_ADMIN');
-    Route::apiResource('campus', \App\Http\Controllers\CampusController::class);
-    Route::get('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'obtenerCarreras']);
-    Route::post('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'asignarCarreras']);
-    Route::delete('/campus/{id}/carreras/{carreraId}', [\App\Http\Controllers\CampusController::class, 'deasignarCarrera']);
+    Route::apiResource('campus', \App\Http\Controllers\CampusController::class)->middleware('national.admin');
+    Route::get('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'obtenerCarreras'])->middleware('national.admin');
+    Route::post('/campus/{id}/carreras', [\App\Http\Controllers\CampusController::class, 'asignarCarreras'])->middleware('national.admin');
+    Route::delete('/campus/{id}/carreras/{carreraId}', [\App\Http\Controllers\CampusController::class, 'deasignarCarrera'])->middleware('national.admin');
     
     // Evaluadores
-    Route::get('/evaluadores', [\App\Http\Controllers\CampusController::class, 'obtenerEvaluadores']);
-    Route::get('/evaluadores/disponibles', [\App\Http\Controllers\CampusController::class, 'evaluadoresDisponibles']);
-    Route::post('/campus/{id}/evaluadores', [\App\Http\Controllers\CampusController::class, 'asignarEvaluador']);
-    Route::delete('/campus/{id}/evaluadores/{userId}', [\App\Http\Controllers\CampusController::class, 'removerEvaluador']);
+    Route::get('/evaluadores', [\App\Http\Controllers\CampusController::class, 'obtenerEvaluadores'])->middleware('national.admin');
+    Route::get('/evaluadores/disponibles', [\App\Http\Controllers\CampusController::class, 'evaluadoresDisponibles'])->middleware('national.admin');
+    Route::post('/campus/{id}/evaluadores', [\App\Http\Controllers\CampusController::class, 'asignarEvaluador'])->middleware('national.admin');
+    Route::delete('/campus/{id}/evaluadores/{userId}', [\App\Http\Controllers\CampusController::class, 'removerEvaluador'])->middleware('national.admin');
     Route::apiResource('docentes', \App\Http\Controllers\DocenteController::class);
     Route::get('/my-subjects', [\App\Http\Controllers\DocenteController::class, 'mySubjects']);
 
@@ -304,10 +328,47 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/bulk-delete', [\App\Http\Controllers\RolExamenController::class, 'destroyAll']);
         Route::get('/template', [\App\Http\Controllers\RolExamenController::class, 'template']);
         Route::get('/materia/{materiaId}', [\App\Http\Controllers\RolExamenController::class, 'getByMateria']);
-        Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update']);
-        Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy']);
-        Route::post('/{id}/upload-examen', [\App\Http\Controllers\RolExamenController::class, 'uploadExamen']);
-        Route::post('/{id}/upload-patron', [\App\Http\Controllers\RolExamenController::class, 'uploadPatron']);
+          Route::put('/{id}', [\App\Http\Controllers\RolExamenController::class, 'update'])
+              ->middleware('role:DIRECTOR_CARRERA,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+          Route::post('/{id}/restore-generated-package', [\App\Http\Controllers\RolExamenController::class, 'restoreGeneratedPackage'])
+              ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+          Route::post('/{id}/generate-package', [\App\Http\Controllers\RolExamenController::class, 'generatePackage'])
+              ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+          Route::post('/{id}/pattern-verifier', [\App\Http\Controllers\RolExamenController::class, 'patternVerifier'])
+              ->middleware('role:ADMIN,SUPER_ADMIN');
+          Route::get('/{id}/download-examen-url', [\App\Http\Controllers\RolExamenController::class, 'signedExamenUrl']);
+          Route::get('/{id}/download-patron-url', [\App\Http\Controllers\RolExamenController::class, 'signedPatronUrl']);
+          Route::get('/{id}/download-examen', [\App\Http\Controllers\RolExamenController::class, 'downloadExamen']);
+          Route::get('/{id}/download-patron', [\App\Http\Controllers\RolExamenController::class, 'downloadPatron']);
+          Route::delete('/{id}', [\App\Http\Controllers\RolExamenController::class, 'destroy'])
+              ->middleware('role:DIRECTOR_CARRERA,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{id}/upload-examen', [\App\Http\Controllers\RolExamenController::class, 'uploadExamen'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{id}/upload-patron', [\App\Http\Controllers\RolExamenController::class, 'uploadPatron'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+    });
+
+    Route::prefix('virtual-exams')->group(function () {
+        Route::get('/', [\App\Http\Controllers\VirtualExamController::class, 'index'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::get('/{session}', [\App\Http\Controllers\VirtualExamController::class, 'show'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/rol-examenes/{rolExamen}/generate', [\App\Http\Controllers\VirtualExamController::class, 'generate'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/roster', [\App\Http\Controllers\VirtualExamController::class, 'uploadRoster'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/roster/{roster}/status', [\App\Http\Controllers\VirtualExamController::class, 'updateRosterStatus'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/start', [\App\Http\Controllers\VirtualExamController::class, 'start'])
+            ->middleware('role:DOCENTE,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/close', [\App\Http\Controllers\VirtualExamController::class, 'close'])
+            ->middleware('role:DOCENTE,EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::get('/{session}/export-remark', [\App\Http\Controllers\VirtualExamController::class, 'exportRemark'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/mark-uploaded', [\App\Http\Controllers\VirtualExamController::class, 'markUploaded'])
+            ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,ADMIN,SUPER_ADMIN');
+        Route::post('/{session}/reset', [\App\Http\Controllers\VirtualExamController::class, 'reset'])
+            ->middleware('role:ADMIN,SUPER_ADMIN');
     });
 
     // Materias Comunes
@@ -331,6 +392,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/reportes/avance-general', [\App\Http\Controllers\ReporteController::class, 'avanceGeneral']);
     Route::get('/reportes/matriz-control', [\App\Http\Controllers\ReporteController::class, 'getMatrizControl']);
     Route::get('/reportes/auditoria-25', [\App\Http\Controllers\ReporteController::class, 'getAuditoria25']);
+    Route::get('/reportes/evaluaciones', [\App\Http\Controllers\ReporteEvaluacionController::class, 'index'])
+        ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::get('/reportes/evaluaciones/cobertura-banco', [\App\Http\Controllers\ReporteEvaluacionController::class, 'coberturaBanco'])
+        ->middleware('role:EVALUACIONES,RESPONSABLE_EVALUACIONES,DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
     
     Route::get('/reportes/semanal/draft', [\App\Http\Controllers\ReporteController::class, 'getWeeklyReportDraft']);
     Route::post('/reportes/semanal', [\App\Http\Controllers\ReporteController::class, 'storeWeeklyReport']);
@@ -388,9 +453,59 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Módulo de Sincronización Académica (Solo SUPER_ADMIN)
     Route::prefix('sync')->group(function () {
-        Route::post('/carrera',       [\App\Http\Controllers\SyncController::class, 'syncCarrera']);
-        Route::post('/sede',          [\App\Http\Controllers\SyncController::class, 'syncSede']);
-        Route::post('/materia',       [\App\Http\Controllers\SyncController::class, 'syncMateria']);
+        Route::post('/carrera',              [\App\Http\Controllers\SyncController::class, 'syncCarrera']);
+        Route::post('/sede',                 [\App\Http\Controllers\SyncController::class, 'syncSede']);
+        Route::post('/materia',              [\App\Http\Controllers\SyncController::class, 'syncMateria']);
+        Route::post('/asignatura',           [\App\Http\Controllers\SyncController::class, 'syncAsignatura']);
+        Route::get('/logs',                  [\App\Http\Controllers\SyncController::class, 'getLogs']);
+        Route::get('/logs/{id}/diff',        [\App\Http\Controllers\SyncController::class, 'getDiff']);
+        Route::post('/resolver-conflictos',  [\App\Http\Controllers\SyncController::class, 'resolverConflicto']);
+    });
+
+    // Carga Académica (Gestión Unificada de Docentes, Grupos y Horarios)
+    Route::prefix('carga-academica')->group(function () {
+        Route::get('/materia', [\App\Http\Controllers\CargaAcademicaController::class, 'getByMateria']);
+        Route::get('/carrera', [\App\Http\Controllers\CargaAcademicaController::class, 'getByCarrera']);
+        Route::post('/grupo', [\App\Http\Controllers\CargaAcademicaController::class, 'storeGrupo'])->middleware('role:SUPER_ADMIN,ADMIN');
+        Route::put('/grupo/{id}', [\App\Http\Controllers\CargaAcademicaController::class, 'updateGrupo'])->middleware('role:SUPER_ADMIN,ADMIN');
+        Route::put('/grupo/{id}/docente', [\App\Http\Controllers\CargaAcademicaController::class, 'assignDocente'])->middleware('role:SUPER_ADMIN,ADMIN');
+        Route::post('/validar', [\App\Http\Controllers\CargaAcademicaController::class, 'validar']);
+        Route::post('/sync', [\App\Http\Controllers\CargaAcademicaController::class, 'syncMateria'])->middleware('role:SUPER_ADMIN,ADMIN');
+    });
+
+    // Modulo de Restauracion Academica
+    Route::post('/restauracion/extraccion-api', [\App\Http\Controllers\RestauracionAcademicaController::class, 'extraerDesdeApiExterna'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/estado-asignaturas', [\App\Http\Controllers\RestauracionAcademicaController::class, 'estadoAsignaturas'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'restaurarAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::get('/restauracion/exportar-excel', [\App\Http\Controllers\RestauracionAcademicaController::class, 'exportarExcel'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/importar-excel', [\App\Http\Controllers\RestauracionAcademicaController::class, 'importarExcel'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/exportar-pdf-asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'exportarPdfAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+    Route::post('/restauracion/exportar-pac-asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'exportarExcelPacAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN,DOCENTE');
+    Route::post('/restauracion/exportar-plan-clase-asignatura', [\App\Http\Controllers\RestauracionAcademicaController::class, 'exportarExcelPlanClaseAsignatura'])
+        ->middleware('role:DIRECTOR_CARRERA,DIRECCION_ACADEMICA,VICERRECTOR_SEDE,VICERRECTOR_NACIONAL,ADMIN,SUPER_ADMIN');
+
+    // Recuperacion de Bancos de Preguntas (Solo SUPER_ADMIN)
+    Route::prefix('restauracion/bancos')->middleware('role:SUPER_ADMIN')->group(function () {
+        Route::post('/sedes', [\App\Http\Controllers\RestauracionBancosController::class, 'sedes']);
+        Route::post('/carreras', [\App\Http\Controllers\RestauracionBancosController::class, 'carreras']);
+        Route::post('/materias', [\App\Http\Controllers\RestauracionBancosController::class, 'materias']);
+        Route::post('/preview', [\App\Http\Controllers\RestauracionBancosController::class, 'preview']);
+        Route::post('/execute', [\App\Http\Controllers\RestauracionBancosController::class, 'execute']);
+    });
+
+    Route::prefix('restauracion/bancos-plan')->middleware('role:ADMIN,SUPER_ADMIN')->group(function () {
+        Route::post('/sedes', [\App\Http\Controllers\RestauracionBancosController::class, 'sedes']);
+        Route::post('/carreras', [\App\Http\Controllers\RestauracionBancosController::class, 'carreras']);
+        Route::post('/preview', [\App\Http\Controllers\RestauracionBancosController::class, 'previewPlan']);
+        Route::post('/questions', [\App\Http\Controllers\RestauracionBancosController::class, 'questionsPlan']);
+        Route::post('/restore', [\App\Http\Controllers\RestauracionBancosController::class, 'restorePlan']);
     });
 
     // Módulo de Restauración Académica

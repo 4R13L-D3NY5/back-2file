@@ -81,15 +81,17 @@ class GruposExternoController extends Controller
     }
 
     /**
-     * Obtener materias del Plan N (API externa)
+     * Obtener materias de un plan específico (N o A) desde la API externa
      */
     public function planN(Request $request): JsonResponse
     {
         $gestion = $request->input('gestion', '1-2026');
         $carrera = $request->input('carrera', 'carsis');
         $sede = (int) $request->input('sede', 1);
+        // Si no se especifica plan, se devuelven TODOS los planes (N y A)
+        $plan = $request->input('plan_estudios') ?: null;
 
-        $data = $this->service->listarMateriasPlanN($gestion, $carrera, $sede);
+        $data = $this->service->listarMateriasPlan($gestion, $carrera, $sede, $plan);
 
         return response()->json([
             'success' => true,
@@ -98,6 +100,7 @@ class GruposExternoController extends Controller
                 'gestion' => $gestion,
                 'carrera' => strtoupper($carrera),
                 'sede' => $sede,
+                'plan_estudios' => $plan ?? 'todos',
                 'total_materias' => count($data)
             ]
         ]);
@@ -189,6 +192,8 @@ class GruposExternoController extends Controller
                 ->where('asignaturas.codigo', $codigo)
                 ->where('asignaturas.plan_estudios', 'N')
                 ->where('docentes.sede_id', $sedeModel->id)
+                ->where('grupos.estado', 'ACTIVO')
+                ->whereNull('grupos.deleted_at')
                 ->get();
                 
             Log::debug('GruposExternoController.compararAsignatura - Consulta SQL directa (depuración)', [
@@ -422,8 +427,8 @@ class GruposExternoController extends Controller
                     }]);
                 },
                 'grupos' => function ($q) {
-                    // Grupo sí usa SoftDeletes
-                    $q->withTrashed()->with('docente');
+                    // withTrashed + withoutGlobalScope: buscarCarpeta necesita ver TODOS los grupos
+                    $q->withoutGlobalScope('activo')->withTrashed()->with('docente');
                 },
                 'cronogramas' => function ($q) {
                     $q->select('id', 'asignatura_id', 'fecha', 'tema_ejecutado')->limit(10);
@@ -668,7 +673,9 @@ class GruposExternoController extends Controller
                 }
 
                 // 2. Buscar o crear grupo
-                $grupo = \App\Models\Grupo::where('asignatura_id', $asignaturaId)
+                // withoutGlobalScope: el import necesita encontrar grupos existentes sin importar estado
+                $grupo = \App\Models\Grupo::withoutGlobalScope('activo')
+                    ->where('asignatura_id', $asignaturaId)
                     ->where('carrera_id', $carreraId)
                     ->where('sede_id', $sedeId)
                     ->where('nombre', $item['grupo_nombre'])

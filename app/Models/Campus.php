@@ -30,4 +30,9 @@ class Campus extends Model
     {
         return $this->belongsToMany(Carrera::class, 'campus_carrera');
     }
+
+    public function evaluadores()
+    {
+        return $this->belongsToMany(User::class, 'campus_user')->withTimestamps();
+    }
 }

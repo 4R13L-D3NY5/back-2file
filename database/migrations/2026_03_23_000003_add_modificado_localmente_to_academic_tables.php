@@ -28,14 +28,14 @@ return new class extends Migration
         // Asignaturas
         Schema::table('asignaturas', function (Blueprint $table) {
             if (!Schema::hasColumn('asignaturas', 'modificado_localmente')) {
-                $table->boolean('modificado_localmente')->default(false)->after('plan_estudios');
+                $table->boolean('modificado_localmente')->default(false);
             }
         });
 
         // Grupos
         Schema::table('grupos', function (Blueprint $table) {
             if (!Schema::hasColumn('grupos', 'modificado_localmente')) {
-                $table->boolean('modificado_localmente')->default(false)->after('plan_estudios');
+                $table->boolean('modificado_localmente')->default(false);
             }
         });
     }

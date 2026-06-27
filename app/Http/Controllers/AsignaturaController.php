@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Asignatura;
 use App\Models\Carrera;
+use App\Services\PlanEstudiosContextService;
 use App\Services\University\UniversityService;
 use App\Services\MateriasComunesSyncService;
 use Illuminate\Http\Request;
@@ -22,6 +23,7 @@ class AsignaturaController extends Controller
     protected $cronogramaParser; // Added
     protected $syncService;
     protected MateriasComunesSyncService $materiasComunesSyncService;
+    protected PlanEstudiosContextService $planEstudiosContextService;
 
     public function __construct(
         UniversityService $universityService,
@@ -29,7 +31,8 @@ class AsignaturaController extends Controller
         PlanClaseParserService $planClaseParser, // Added
         CronogramaParserService $cronogramaParser, // Added
         \App\Services\AsignaturaSyncService $syncService,
-        MateriasComunesSyncService $materiasComunesSyncService
+        MateriasComunesSyncService $materiasComunesSyncService,
+        PlanEstudiosContextService $planEstudiosContextService
     ) {
         $this->universityService = $universityService;
         $this->parser = $parser; // Added
@@ -37,6 +40,7 @@ class AsignaturaController extends Controller
         $this->cronogramaParser = $cronogramaParser; // Added
         $this->syncService = $syncService;
         $this->materiasComunesSyncService = $materiasComunesSyncService;
+        $this->planEstudiosContextService = $planEstudiosContextService;
     }
 
     /**
@@ -53,6 +57,30 @@ class AsignaturaController extends Controller
         // Eager load grupos and context, optionally filtered by sede and carrera
         $sedeId = $request->input('sede_id');
         $carreraId = $request->input('carrera_id');
+
+        $user = auth()->user();
+        if ($user) {
+            $user->loadMissing(['rol', 'campus.sede', 'campusAsignados.sede']);
+        }
+
+        if ($user && $user->rol && $user->rol->codigo === 'PLATAFORMA') {
+            $sedeIdsPermitidas = $user->campusAsignados
+                ->pluck('sede_id')
+                ->merge([$user->campus?->sede_id, $user->sede_id])
+                ->filter()
+                ->map(fn ($id) => (int) $id)
+                ->unique()
+                ->values();
+
+            if ($sedeIdsPermitidas->isEmpty()) {
+                $query->whereRaw('1 = 0');
+            } elseif ($sedeId && ! $sedeIdsPermitidas->contains((int) $sedeId)) {
+                $query->whereRaw('1 = 0');
+            } elseif (! $sedeId) {
+                $sedeId = $sedeIdsPermitidas->first();
+                $request->merge(['sede_id' => $sedeId]);
+            }
+        }
 
         $query->with(['grupos' => function ($q) use ($sedeId, $carreraId) {
             if ($sedeId) {
@@ -91,9 +119,9 @@ class AsignaturaController extends Controller
                 }
                 if ($request->filled('carrera_id')) $q->where('carreras.id', $request->carrera_id);
                 if ($request->filled('semestre')) $q->where('asignatura_carrera.semestre', $request->semestre);
-            }, 'unidades.temas.planificacionesPersonales', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes', 'bancoPreguntas']);
+            }, 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.indicadores', 'cronogramas:id,asignatura_id', 'bibliografias', 'docentes']);
         } else {
-            $query->with(['carreras', 'unidades.temas.planificacionesPersonales', 'unidades.temas.logros.bancoPreguntas', 'cronogramas', 'bibliografias', 'docentes', 'bancoPreguntas']);
+            $query->with(['carreras', 'unidades.temas.planificacionPersonal', 'unidades.temas.logros.indicadores', 'cronogramas:id,asignatura_id', 'bibliografias', 'docentes']);
         }
 
         if ($request->filled('search')) {
@@ -102,6 +130,20 @@ class AsignaturaController extends Controller
                 $q->where('nombre', 'like', "%{$term}%")
                     ->orWhere('codigo', 'like', "%{$term}%");
             });
+        }
+
+        if ($request->boolean('plan_contexto') && $sedeId && $carreraId) {
+            $planesContexto = $this->planEstudiosContextService->resolverPlanes(
+                (int) $carreraId,
+                (int) $sedeId,
+                $request->input('gestion')
+            );
+
+            if (empty($planesContexto)) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('plan_estudios', $planesContexto);
+            }
         }
 
         $asignaturas = $query->limit(500)->get();
@@ -166,10 +208,51 @@ class AsignaturaController extends Controller
                 $sedeNombre = $sedesMap[$actualSedeId] ?? 'N/A';
             }
 
+            $gruposTeoricosData = $a->grupos
+                ->filter(fn($g) => $this->esGrupoTeorico($g))
+                ->sortBy(fn($g) => strtoupper(($g->docente->nombre_completo ?? 'ZZZ SIN DOCENTE') . ' ' . ($g->nombre ?? '')))
+                ->map(function ($g) use ($a, $progreso) {
+                    $docente = $g->docente;
+                    $userId = $docente?->user_id;
+                    $indicadoresDocente = $userId
+                        ? $a->getIndicadoresDocumentacionPorDocente($userId)
+                        : $a->indicadores_documentacion;
+                    $progresoDocente = $userId ? $a->getProgresoPorDocente($userId) : $progreso;
+                    $preguntas1P = $docente
+                        ? $this->buscarPreguntasBancoPorGrupo(
+                            $a->id,
+                            $docente->id,
+                            $g->sede_id,
+                            $g->nombre,
+                            '1er Parcial'
+                        )
+                        : collect();
+
+                    return [
+                        'id' => $docente?->id,
+                        'docente_id' => $docente?->id,
+                        'grupo_id' => $g->id,
+                        'user_id' => $userId,
+                        'nombre' => $docente?->nombre_completo,
+                        'descripcion_grupos' => ($g->nombre ?? 'S/N') . ' (' . ($g->tipo ?? 'TEO') . ')',
+                        'carrera_id' => $g->carrera_id,
+                        'sede_id' => $g->sede_id,
+                        'tiene_grupo_teorico' => true,
+                        'grupo_teorico_nombre' => $g->nombre,
+                        'grupo_nombre' => $g->nombre,
+                        'grupo_tipo' => $g->tipo,
+                        'progreso_documentacion' => $progresoDocente,
+                        'indicadores_documentacion' => $indicadoresDocente,
+                        'preguntas_1p_stats' => $this->resumirPreguntasBanco($preguntas1P, $g->nombre),
+                    ];
+                })
+                ->values();
+
             return [
                 'id' => $a->id,
                 'codigo' => $a->codigo,
                 'nombre' => $a->nombre,
+                'plan_estudios' => $a->plan_estudios,
                 'comun_token' => $a->comun_token, // Added for frontend indicator
                 'creditos' => $a->creditos,
                 'semestre' => $context?->pivot?->semestre,
@@ -185,8 +268,9 @@ class AsignaturaController extends Controller
                 'grupos_count' => $a->grupos->count(),
                 'progreso_documentacion' => $progreso,
                 'indicadores_documentacion' => $a->indicadores_documentacion,
-                'docentes_data' => $docentes->map(function ($d) use ($a, $progreso) { // Para el diÃ¡logo de selecciÃ³n y lista individual
-                    // Calcular descripciÃ³n de grupos para este docente
+                'grupos_teoricos_data' => $gruposTeoricosData,
+                'docentes_data' => $docentes->map(function ($d) use ($a, $progreso) { // Para el diálogo de selección y lista individual
+                    // Calcular descripción de grupos para este docente
                     $gruposDocente = $a->grupos->where('docente_id', $d->id);
                     $desc = $gruposDocente->map(fn($g) => ($g->nombre ?? 'S/N') . ' (' . ($g->tipo ?? 'TEO') . ')')->implode(', ');
 
@@ -203,39 +287,185 @@ class AsignaturaController extends Controller
                     // Calcular progreso por docente utilizando la misma lÃ³gica del progreso general
                     $progresoDocente = $userId ? $a->getProgresoPorDocente($userId) : $progreso;
                     
-                    // EstadÃ­sticas de preguntas 1P por docente
-                    $preguntasDocente1P = $a->bancoPreguntas
-                        ->where('docente_id', $d->id)
-                        ->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1);
+                    // Solo los grupos TEORICO tienen preguntas ligadas
+                    $gruposTeoricoDocente = $gruposDocente->filter(
+                        fn($g) => in_array(strtoupper($g->tipo ?? ''), ['TEORICO', 'TEO'])
+                    );
                     
-                    $stats1P = [
-                        'faciles' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'FACIL' || $p->dificultad == 1)->count(),
-                        'medias' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == 2)->count(),
-                        'dificiles' => $preguntasDocente1P->filter(fn($p) => $p->dificultad == 'DIFICIL' || $p->dificultad == 3)->count(),
-                        'total' => $preguntasDocente1P->count()
-                    ];
+                    // Obtener el primer grupo teórico del docente (para mostrar en la UI)
+                    $grupoTeorico = $gruposTeoricoDocente->first();
+                    
+                    // Estadísticas de preguntas 1P por docente: SOLO si tiene grupo teórico
+                    $stats1P = null;
+                    if ($grupoTeorico !== null) {
+                        // Nombres de todos los grupos TEORICO de este docente
+                        $nombresGruposTeorico = $gruposTeoricoDocente->pluck('nombre')->filter()->values()->toArray();
+
+                        // Estrategia 1: docente_id + asignatura_id + sede_id (más preciso)
+                        $q1P = \App\Models\BancoPregunta::where('asignatura_id', $a->id)
+                            ->where('docente_id', $d->id)
+                            ->where(function ($q) {
+                                $q->where('parcial', '1er Parcial')
+                                  ->orWhere('parcial', '1')
+                                  ->orWhere('parcial', 1);
+                            });
+                        if ($sedeId) $q1P->where('sede_id', $sedeId);
+                        $preguntasDocente1P = $q1P->get();
+
+                        // Estrategia 2: created_by (user_id del docente) + asignatura_id + sede_id
+                        if ($preguntasDocente1P->isEmpty() && $userId) {
+                            $q2 = \App\Models\BancoPregunta::where('asignatura_id', $a->id)
+                                ->where('created_by', $userId)
+                                ->where(function ($q) {
+                                    $q->where('parcial', '1er Parcial')
+                                      ->orWhere('parcial', '1')
+                                      ->orWhere('parcial', 1);
+                                });
+                            if ($sedeId) $q2->where('sede_id', $sedeId);
+                            $preguntasDocente1P = $q2->get();
+                        }
+
+                        // Estrategia 3: grupoTeorico SOLO si hay sede_id (sin sede es muy ambiguo)
+                        if ($preguntasDocente1P->isEmpty() && !empty($nombresGruposTeorico) && $sedeId) {
+                            $preguntasDocente1P = \App\Models\BancoPregunta::where('asignatura_id', $a->id)
+                                ->whereIn('grupoTeorico', $nombresGruposTeorico)
+                                ->where('sede_id', $sedeId)
+                                ->where(function ($q) {
+                                    $q->where('parcial', '1er Parcial')
+                                      ->orWhere('parcial', '1')
+                                      ->orWhere('parcial', 1);
+                                })
+                                ->get();
+                        }
+                        
+                        $stats1P = [
+                            'faciles'      => $preguntasDocente1P->filter(fn($p) => in_array($p->dificultad, ['FACIL', '1', 1]))->count(),
+                            'medias'       => $preguntasDocente1P->filter(fn($p) => in_array($p->dificultad, ['MEDIA', 'MEDIO', '2', 2]))->count(),
+                            'dificiles'    => $preguntasDocente1P->filter(fn($p) => in_array($p->dificultad, ['DIFICIL', '3', 3]))->count(),
+                            'total'        => $preguntasDocente1P->count(),
+                            'grupo_teorico'=> $grupoTeorico->nombre ?? null,
+                        ];
+                    }
 
                     return [
-                        'id' => $d->id,
-                        'user_id' => $userId,
-                        'nombre' => $d->nombre_completo,
-                        'descripcion_grupos' => $desc,
-                        'carrera_id' => $carreraId,
-                        'sede_id' => $sedeId,
-                        'progreso_documentacion' => $progresoDocente,
+                        'id'                      => $d->id,
+                        'user_id'                 => $userId,
+                        'nombre'                  => $d->nombre_completo,
+                        'descripcion_grupos'      => $desc,
+                        'carrera_id'              => $carreraId,
+                        'sede_id'                 => $sedeId,
+                        'tiene_grupo_teorico'     => $grupoTeorico !== null,
+                        'grupo_teorico_nombre'    => $grupoTeorico->nombre ?? null,
+                        'grupo_id'                 => $firstGroup?->id,
+                        'grupo_nombre'             => $grupoTeorico->nombre ?? $firstGroup?->nombre,
+                        'grupo_tipo'               => $grupoTeorico->tipo ?? $firstGroup?->tipo,
+                        'progreso_documentacion'  => $progresoDocente,
                         'indicadores_documentacion' => $indicadoresDocente,
-                        'preguntas_1p_stats' => $stats1P
+                        'preguntas_1p_stats'      => $stats1P
                     ];
                 })->values(),
-                // EstadÃ­sticas consolidadas de la asignatura (Parcial 1)
-                'preguntas_1p_stats' => [
-                    'faciles' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'FACIL' || $p->dificultad == 1))->count(),
-                    'medias' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == 2))->count(),
-                    'dificiles' => $a->bancoPreguntas->filter(fn($p) => ($p->parcial === '1er Parcial' || $p->parcial == 1) && ($p->dificultad == 'DIFICIL' || $p->dificultad == 3))->count(),
-                    'total' => $a->bancoPreguntas->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1)->count()
-                ]
+                // Estadísticas consolidadas: suma de todos los grupos TEORICO, filtrada por sede
+                'preguntas_1p_stats' => (function () use ($a, $docentes) {
+                    // Para cada docente TEORICO, recolectar grupoTeorico+sede_id combinados
+                    // y hacer una consulta que respete ambos
+                    $gruposSedeCombos = $docentes->flatMap(function ($d) use ($a) {
+                        $gruposTeorico = $a->grupos->where('docente_id', $d->id)->filter(
+                            fn($g) => in_array(strtoupper($g->tipo ?? ''), ['TEORICO', 'TEO'])
+                        );
+                        return $gruposTeorico->map(fn($g) => [
+                            'nombre'  => $g->nombre,
+                            'sede_id' => $g->sede_id,
+                        ]);
+                    })->filter(fn($c) => $c['nombre'] !== null);
+
+                    if ($gruposSedeCombos->isEmpty()) {
+                        // Sin grupos TEORICO: mostrar global de la asignatura
+                        $preguntasTeorico1P = $a->bancoPreguntas
+                            ->filter(fn($p) => $p->parcial === '1er Parcial' || $p->parcial == 1);
+                    } else {
+                        // Construir query con OR por cada (grupoTeorico, sede_id) combinación
+                        $preguntasTeorico1P = \App\Models\BancoPregunta::where('asignatura_id', $a->id)
+                            ->where(function ($q) use ($gruposSedeCombos) {
+                                foreach ($gruposSedeCombos as $combo) {
+                                    $q->orWhere(function ($sub) use ($combo) {
+                                        $sub->where('grupoTeorico', $combo['nombre']);
+                                        if ($combo['sede_id']) {
+                                            $sub->where('sede_id', $combo['sede_id']);
+                                        }
+                                    });
+                                }
+                            })
+                            ->where(function ($q) {
+                                $q->where('parcial', '1er Parcial')
+                                  ->orWhere('parcial', '1')
+                                  ->orWhere('parcial', 1);
+                            })
+                            ->get();
+                    }
+
+                    return [
+                        'faciles'   => $preguntasTeorico1P->filter(fn($p) => in_array($p->dificultad, ['FACIL',   '1', 1]))->count(),
+                        'medias'    => $preguntasTeorico1P->filter(fn($p) => in_array($p->dificultad, ['MEDIA', 'MEDIO', '2', 2]))->count(),
+                        'dificiles' => $preguntasTeorico1P->filter(fn($p) => in_array($p->dificultad, ['DIFICIL', '3', 3]))->count(),
+                        'total'     => $preguntasTeorico1P->count(),
+                    ];
+                })()
             ];
         })); // END MAP
+    }
+
+    private function esGrupoTeorico($grupo): bool
+    {
+        $tipo = strtoupper(trim((string) ($grupo->tipo ?? '')));
+
+        return in_array($tipo, ['TEORICO', 'TEO'], true);
+    }
+
+    private function buscarPreguntasBancoPorGrupo(
+        int $asignaturaId,
+        ?int $docenteId,
+        ?int $sedeId,
+        ?string $grupoTeorico,
+        string $parcial
+    ) {
+        if (!$docenteId || !$grupoTeorico) {
+            return collect();
+        }
+
+        $query = \App\Models\BancoPregunta::where('asignatura_id', $asignaturaId)
+            ->where('docente_id', $docenteId)
+            ->where('grupoTeorico', $grupoTeorico);
+
+        if ($sedeId) {
+            $query->where('sede_id', $sedeId);
+        }
+
+        if ($parcial === '1er Parcial') {
+            $query->where(function ($q) {
+                $q->where('parcial', '1er Parcial')
+                    ->orWhere('parcial', '1')
+                    ->orWhere('parcial', 1);
+            });
+        } else {
+            $query->where(function ($q) {
+                $q->where('parcial', '2do Parcial')
+                    ->orWhere('parcial', '2')
+                    ->orWhere('parcial', 2);
+            });
+        }
+
+        return $query->get();
+    }
+
+    private function resumirPreguntasBanco($preguntas, ?string $grupoTeorico = null): array
+    {
+        return [
+            'faciles' => $preguntas->filter(fn($p) => in_array($p->dificultad, ['FACIL', '1', 1], true))->count(),
+            'medias' => $preguntas->filter(fn($p) => in_array($p->dificultad, ['MEDIA', 'MEDIO', '2', 2], true))->count(),
+            'dificiles' => $preguntas->filter(fn($p) => in_array($p->dificultad, ['DIFICIL', '3', 3], true))->count(),
+            'total' => $preguntas->count(),
+            'grupo_teorico' => $grupoTeorico,
+        ];
     }
 
     /**
@@ -363,7 +593,16 @@ class AsignaturaController extends Controller
                 $mySpecifiedGroup = $local->grupos->where('docente_id', $requestedDocenteId)->first();
             } elseif ($currentUser && $currentUser->docente) {
                 // Fallback: Use authenticated teacher context
-                $mySpecifiedGroup = $local->grupos->where('docente_id', $currentUser->docente->id)->first();
+                // Si se solicitó una sede_id específica, priorizar el grupo de esa sede
+                $docenteId = $currentUser->docente->id;
+                $requestedSede = $request->input('sede_id');
+                $docenteGrupos = $local->grupos->where('docente_id', $docenteId);
+                if ($requestedSede) {
+                    $mySpecifiedGroup = $docenteGrupos->firstWhere('sede_id', $requestedSede)
+                        ?? $docenteGrupos->first();
+                } else {
+                    $mySpecifiedGroup = $docenteGrupos->first();
+                }
             }
 
             // Explicit sede_id injection. PRIORITY: User's Group > Pivot > Career > Fallback
@@ -680,8 +919,20 @@ class AsignaturaController extends Controller
     public function destroy($id)
     {
         $asignatura = Asignatura::findOrFail($id);
+
+        // Soft-delete en cascada: horarios de los grupos de esta asignatura
+        $grupoIds = $asignatura->grupos()->pluck('grupos.id');
+        if ($grupoIds->isNotEmpty()) {
+            \App\Models\Horario::whereIn('grupo_id', $grupoIds)->delete();
+        }
+
+        // Soft-delete en cascada: grupos de esta asignatura
+        $asignatura->grupos()->delete();
+
+        // Soft-delete la asignatura
         $asignatura->delete();
-        return response()->json(['message' => 'Asignatura eliminada correctamente']);
+
+        return response()->json(['message' => 'Asignatura y sus grupos/horarios eliminados correctamente']);
     }
 
     public function assignDocentes(Request $request, $id)
@@ -724,7 +975,7 @@ class AsignaturaController extends Controller
             // Flags de importaciÃ³n (Refined split: Word only for Units/Themes)
             $importDatos = false;
             $importUnidades = true;
-            $importBiblio = false;
+            $importBiblio = true;
 
             // 1. IMPORTAR DATOS GENERALES (Plan de Asignatura)
             if ($importDatos) {
@@ -1342,9 +1593,9 @@ class AsignaturaController extends Controller
             }
 
             if (!empty($especifica) || !empty($complementaria)) {
-                $asignatura->bibliografias()->delete();
-                if (!empty($especifica)) $this->saveBibliografias($asignatura, $especifica, 'Basica');
-                if (!empty($complementaria)) $this->saveBibliografias($asignatura, $complementaria, 'Complementaria');
+                \Illuminate\Support\Facades\Log::info(
+                    "PAC bibliografia detectada pero omitida: la fuente oficial ahora es el Programa Analitico Word."
+                );
             }
 
             // LOG DE RESULTADOS PARA DEPURACIÃ“N
@@ -1368,26 +1619,20 @@ class AsignaturaController extends Controller
                 $item = trim($item);
                 if (empty($item)) continue;
 
-                // Truncado estricto a 180 caracteres
-                $titulo = substr($item, 0, 180);
-                $descripcion = (strlen($item) > 180) ? $item : null;
+                $titulo = mb_substr($item, 0, 180);
+                $descripcion = $item;
 
-                // Verificar duplicados simples
-                $exists = $asignatura->bibliografias()
-                    ->where('titulo', $titulo)
-                    ->where('tipo', $tipo)
-                    ->exists();
-
-                if (!$exists) {
-                    $asignatura->bibliografias()->create([
-                        'titulo' => $titulo,
-                        'descripcion' => $descripcion,
-                        'tipo' => $tipo,
-                        'autor' => 'AA.VV.',
-                        'anio' => 'S/F',
-                        'editorial' => 'S/E'
-                    ]);
-                }
+                $asignatura->bibliografias()->create([
+                    'titulo' => $titulo,
+                    'descripcion' => $descripcion,
+                    'tipo' => $tipo,
+                    'autor' => null,
+                    'anio' => null,
+                    'editorial' => null,
+                    'edicion' => null,
+                    'isbn' => null,
+                    'paginas' => null,
+                ]);
             } catch (\Exception $e) {
                 \Illuminate\Support\Facades\Log::warning("Error guardando bibliografia '$item': " . $e->getMessage());
             }
@@ -1618,10 +1863,14 @@ class AsignaturaController extends Controller
                     'bibliografias' => $a->bibliografias->map(fn($b) => [
                         'id' => $b->id,
                         'titulo' => $b->titulo,
+                        'descripcion' => $b->descripcion,
                         'autor' => $b->autor,
                         'editorial' => $b->editorial,
+                        'edicion' => $b->edicion,
                         'anio' => $b->anio,
                         'tipo' => $b->tipo,
+                        'isbn' => $b->isbn,
+                        'paginas' => $b->paginas,
                     ]),
 
                     // Progreso
@@ -1632,17 +1881,14 @@ class AsignaturaController extends Controller
     }
 
     /**
-     * Exportación completa de documentación por carrera (incluye planificaciones personales de todos los docentes)
+     * Exportacion completa de documentacion por carrera.
      * GET /api/export/documentacion-carrera?carrera_id=X&sede_id=Y&token=TOKEN
      */
     public function documentacionCarrera(Request $request)
     {
-        // Validar token estático (sin Sanctum)
-        $expectedToken = env('PROGRAMAS_API_TOKEN', 'unitepc-programas-2026');
-        $providedToken = $request->bearerToken() ?? $request->query('token');
-
-        if (!$providedToken || $providedToken !== $expectedToken) {
-            return response()->json(['error' => 'Token inválido o no proporcionado.'], 401);
+        $invalidTokenResponse = $this->validateProgramasApiToken($request);
+        if ($invalidTokenResponse) {
+            return $invalidTokenResponse;
         }
 
         $request->validate([
@@ -1650,10 +1896,7 @@ class AsignaturaController extends Controller
             'sede_id' => 'nullable|integer',
         ]);
 
-        $query = Asignatura::query();
-
-        // Eager load: estructura completa + planificaciones personales
-        $query->with([
+        $query = Asignatura::query()->with([
             'unidades.temas.logros.indicadores',
             'unidades.temas.secuencias',
             'unidades.temas.bibliografias',
@@ -1663,13 +1906,13 @@ class AsignaturaController extends Controller
             'grupos.docente.user',
         ]);
 
-        // Filtrar por carrera y sede
         $query->whereHas('carreras', function ($q) use ($request) {
-            $q->where('carreras.id', $request->carrera_id);
+            $q->where('carreras.id', $request->integer('carrera_id'));
+
             if ($request->filled('sede_id')) {
                 $q->where(function ($sub) use ($request) {
-                    $sub->where('asignatura_carrera.sede_id', $request->sede_id)
-                        ->orWhere('carreras.sede_id', $request->sede_id);
+                    $sub->where('asignatura_carrera.sede_id', $request->integer('sede_id'))
+                        ->orWhere('carreras.sede_id', $request->integer('sede_id'));
                 });
             }
         });
@@ -1677,164 +1920,27 @@ class AsignaturaController extends Controller
         $asignaturas = $query->orderBy('nombre')->get();
 
         return response()->json([
+            'status' => 'success',
             'total' => $asignaturas->count(),
-            'carrera_id' => $request->carrera_id,
-            'sede_id' => $request->sede_id,
-            'data' => $asignaturas->map(function ($a) {
-                $mainCarrera = $a->carreras->first();
-                // Obtener todos los docentes únicos asignados a esta materia
-                $docentes = $a->grupos->map(function ($grupo) {
-                    if (!$grupo->docente) return null;
-                    return [
-                        'id' => $grupo->docente->id,
-                        'nombre_completo' => $grupo->docente->nombre_completo,
-                        'user_id' => $grupo->docente->user_id,
-                        'email' => $grupo->docente->user->email ?? $grupo->docente->email,
-                        'ci' => $grupo->docente->ci ?? $grupo->docente->user->ci ?? null,
-                    ];
-                })->filter()->unique('id')->values();
-
-                return [
-                    'id' => $a->id,
-                    'codigo' => $a->codigo,
-                    'plan_estudios' => $a->plan_estudios,
-                    'nombre' => $a->nombre,
-                    'creditos' => $a->creditos,
-                    'semestre' => $mainCarrera?->pivot?->semestre,
-                    'carrera_id' => $mainCarrera?->id,
-                    'sede_id' => $mainCarrera?->pivot?->sede_id ?? $mainCarrera?->sede?->id,
-                    'carrera' => $mainCarrera ? [
-                        'id' => $mainCarrera->id,
-                        'nombre' => $mainCarrera->nombre,
-                        'sede' => $mainCarrera->sede?->nombre,
-                    ] : null,
-
-                    // Datos generales del programa
-                    'descripcion' => $a->descripcion,
-                    'justificacion' => $a->justificacion,
-                    'proposito_general' => $a->proposito_general,
-                    'competencia_asignatura' => $a->competencia_asignatura,
-                    'competencia_global_especifica' => $a->competencia_global_especifica,
-                    'elementos_competencia' => $a->elementos_competencia,
-                    'contenido_minimo' => $a->contenido_minimo,
-                    'metodologia_general' => $a->metodologia_general,
-                    'sistema_evaluacion' => $a->sistema_evaluacion,
-                    'requisitos' => $a->requisitos,
-
-                    // Estructura del programa analítico con planificaciones personales
-                    'unidades' => $a->unidades->map(function ($u) {
-                        return [
-                            'id' => $u->id,
-                            'numero' => $u->numero,
-                            'titulo' => $u->titulo,
-                            'elemento_competencia' => $u->elemento_competencia,
-                            'temas' => $u->temas->map(function ($t) {
-                                // Agrupar planificaciones personales por docente
-                                $planificacionesPorDocente = $t->planificacionesPersonales->map(function ($pp) {
-                                    return [
-                                        'docente_id' => $pp->user->docente->id ?? null,
-                                        'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
-                                        'user_id' => $pp->user_id,
-                                        'docente_email' => $pp->user->email ?? $pp->user->docente->email ?? null,
-                                        'docente_ci' => $pp->user->ci ?? $pp->user->docente->ci ?? null,
-                                        'estrategias_metodologicas' => $pp->estrategias_metodologicas,
-                                        'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
-                                        'estrategias_recursos' => $pp->estrategias_recursos,
-                                        'evaluacion_formativa' => $pp->evaluacion_formativa,
-                                        'evaluacion_sumativa' => $pp->evaluacion_sumativa,
-                                        'secuencia_didactica' => $pp->secuencia_didactica,
-                                    ];
-                                });
-
-                                return [
-                                    'id' => $t->id,
-                                    'titulo' => $t->titulo,
-                                    'orden' => $t->orden,
-                                    'resultado_aprendizaje' => $t->resultado_aprendizaje,
-                                    'contenido_items' => $t->contenido_items,
-                                    'contenido_conceptual' => $t->contenido_conceptual,
-                                    'contenido_procedimental' => $t->contenido_procedimental,
-                                    'contenido_actitudinal' => $t->contenido_actitudinal,
-                                    'estrategias_metodologicas' => $t->estrategias_metodologicas,
-                                    'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
-                                    'estrategias_recursos' => $t->estrategias_recursos,
-                                    'evaluacion_formativa' => $t->evaluacion_formativa,
-                                    'evaluacion_sumativa' => $t->evaluacion_sumativa,
-                                    'horas_teoricas' => $t->horas_teoricas,
-                                    'horas_practicas' => $t->horas_practicas,
-                                    'secuencias' => $t->secuencias->map(fn($s) => [
-                                        'id' => $s->id,
-                                        'momento' => $s->momento,
-                                        'descripcion' => $s->descripcion,
-                                        'duracion_minutos' => $s->duracion_minutos,
-                                    ]),
-
-                                    'logros_esperados' => $t->logros->map(function ($l) {
-                                        return [
-                                            'id' => $l->id,
-                                            'descripcion' => $l->descripcion,
-                                            'tipo_logro' => $l->tipo_logro,
-                                            'periodo' => $l->periodo,
-                                            'indicadores' => $l->indicadores->map(fn($i) => [
-                                                'id' => $i->id,
-                                                'descripcion' => $i->descripcion,
-                                            ]),
-                                        ];
-                                    }),
-                                    'bibliografias' => $t->bibliografias->map(fn($b) => [
-                                        'id' => $b->id,
-                                        'titulo' => $b->titulo,
-                                        'autor' => $b->autor,
-                                        'descripcion' => $b->descripcion,
-                                        'editorial' => $b->editorial,
-                                        'edicion' => $b->edicion,
-                                        'anio' => $b->anio,
-                                        'tipo' => $b->tipo,
-                                        'isbn' => $b->isbn,
-                                        'paginas' => $b->paginas,
-                                        'pivot' => [
-                                            'pagina_desde' => $b->pivot?->pagina_desde,
-                                            'pagina_hasta' => $b->pivot?->pagina_hasta,
-                                        ],
-                                    ]),
-                                    'planificaciones_personales' => $planificacionesPorDocente,
-                                ];
-                            }),
-                        ];
-                    }),
-
-                    // Bibliografía general de la asignatura
-                    'bibliografias' => $a->bibliografias->map(fn($b) => [
-                        'id' => $b->id,
-                        'titulo' => $b->titulo,
-                        'autor' => $b->autor,
-                        'editorial' => $b->editorial,
-                        'anio' => $b->anio,
-                        'tipo' => $b->tipo,
-                    ]),
-
-                    // Docentes asignados
-                    'docentes' => $docentes,
-
-                    // Progreso
-                    'progreso' => $a->estadisticas_progreso,
-                ];
-            }),
+            'carrera_id' => $request->integer('carrera_id'),
+            'sede_id' => $request->filled('sede_id') ? $request->integer('sede_id') : null,
+            'data' => [
+                'asignaturas' => $asignaturas->map(function ($asignatura) {
+                    return $this->buildAsignaturaDocumentacionPayload($asignatura);
+                }),
+            ],
         ]);
     }
 
     /**
-     * Exportación completa de documentación por asignatura (incluye planificaciones personales de todos los docentes)
+     * Exportacion completa de documentacion por asignatura.
      * GET /api/export/documentacion-asignatura?codigo=XXX&sede_id=Y&token=TOKEN
      */
     public function documentacionAsignatura(Request $request)
     {
-        // Validar token estático (sin Sanctum)
-        $expectedToken = env('PROGRAMAS_API_TOKEN', 'unitepc-programas-2026');
-        $providedToken = $request->bearerToken() ?? $request->query('token');
-
-        if (!$providedToken || $providedToken !== $expectedToken) {
-            return response()->json(['error' => 'Token inválido o no proporcionado.'], 401);
+        $invalidTokenResponse = $this->validateProgramasApiToken($request);
+        if ($invalidTokenResponse) {
+            return $invalidTokenResponse;
         }
 
         $request->validate([
@@ -1842,10 +1948,7 @@ class AsignaturaController extends Controller
             'sede_id' => 'nullable|integer',
         ]);
 
-        $query = Asignatura::query();
-
-        // Eager load: estructura completa + planificaciones personales
-        $query->with([
+        $query = Asignatura::query()->with([
             'unidades.temas.logros.indicadores',
             'unidades.temas.secuencias',
             'unidades.temas.bibliografias',
@@ -1853,15 +1956,13 @@ class AsignaturaController extends Controller
             'bibliografias',
             'carreras.sede',
             'grupos.docente.user',
-        ]);
+        ])->where('codigo', $request->input('codigo'));
 
-        // Filtrar por código y sede
-        $query->where('codigo', $request->codigo);
         if ($request->filled('sede_id')) {
             $query->whereHas('carreras', function ($q) use ($request) {
                 $q->where(function ($sub) use ($request) {
-                    $sub->where('asignatura_carrera.sede_id', $request->sede_id)
-                        ->orWhere('carreras.sede_id', $request->sede_id);
+                    $sub->where('asignatura_carrera.sede_id', $request->integer('sede_id'))
+                        ->orWhere('carreras.sede_id', $request->integer('sede_id'));
                 });
             });
         }
@@ -1869,345 +1970,62 @@ class AsignaturaController extends Controller
         $asignatura = $query->first();
 
         if (!$asignatura) {
-            return response()->json(['error' => 'Asignatura no encontrada.'], 404);
+            return response()->json(['status' => 'error', 'message' => 'Asignatura no encontrada.'], 404);
         }
-
-        $mainCarrera = $asignatura->carreras->first();
-        $docentes = $asignatura->grupos->map(function ($grupo) {
-            if (!$grupo->docente) return null;
-            return [
-                'id' => $grupo->docente->id,
-                'nombre_completo' => $grupo->docente->nombre_completo,
-                'user_id' => $grupo->docente->user_id,
-                'email' => $grupo->docente->email,
-            ];
-        })->filter()->unique('id')->values();
 
         return response()->json([
-            'id' => $asignatura->id,
-            'codigo' => $asignatura->codigo,
-            'nombre' => $asignatura->nombre,
-            'creditos' => $asignatura->creditos,
-            'semestre' => $mainCarrera?->pivot?->semestre,
-            'carrera' => $mainCarrera ? [
-                'id' => $mainCarrera->id,
-                'nombre' => $mainCarrera->nombre,
-                'sede' => $mainCarrera->sede?->nombre,
-            ] : null,
-
-            // Datos generales del programa
-            'descripcion' => $asignatura->descripcion,
-            'justificacion' => $asignatura->justificacion,
-            'proposito_general' => $asignatura->proposito_general,
-            'competencia_asignatura' => $asignatura->competencia_asignatura,
-            'competencia_global_especifica' => $asignatura->competencia_global_especifica,
-            'elementos_competencia' => $asignatura->elementos_competencia,
-            'contenido_minimo' => $asignatura->contenido_minimo,
-            'metodologia_general' => $asignatura->metodologia_general,
-            'sistema_evaluacion' => $asignatura->sistema_evaluacion,
-            'requisitos' => $asignatura->requisitos,
-
-            // Estructura del programa analítico con planificaciones personales
-            'unidades' => $asignatura->unidades->map(function ($u) {
-                return [
-                    'id' => $u->id,
-                    'numero' => $u->numero,
-                    'titulo' => $u->titulo,
-                    'elemento_competencia' => $u->elemento_competencia,
-                    'temas' => $u->temas->map(function ($t) {
-                        // Agrupar planificaciones personales por docente
-                        $planificacionesPorDocente = $t->planificacionesPersonales->map(function ($pp) {
-                            return [
-                                'docente_id' => $pp->user->docente->id ?? null,
-                                'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
-                                'user_id' => $pp->user_id,
-                                'estrategias_metodologicas' => $pp->estrategias_metodologicas,
-                                'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
-                                'estrategias_recursos' => $pp->estrategias_recursos,
-                                'evaluacion_formativa' => $pp->evaluacion_formativa,
-                                'evaluacion_sumativa' => $pp->evaluacion_sumativa,
-                                'secuencia_didactica' => $pp->secuencia_didactica,
-                            ];
-                        });
-
-                        return [
-                            'id' => $t->id,
-                            'titulo' => $t->titulo,
-                            'orden' => $t->orden,
-                            'resultado_aprendizaje' => $t->resultado_aprendizaje,
-                            'contenido_items' => $t->contenido_items,
-                            'contenido_conceptual' => $t->contenido_conceptual,
-                            'contenido_procedimental' => $t->contenido_procedimental,
-                            'contenido_actitudinal' => $t->contenido_actitudinal,
-                            'estrategias_metodologicas' => $t->estrategias_metodologicas,
-                            'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
-                            'estrategias_recursos' => $t->estrategias_recursos,
-                            'evaluacion_formativa' => $t->evaluacion_formativa,
-                            'evaluacion_sumativa' => $t->evaluacion_sumativa,
-                            'horas_teoricas' => $t->horas_teoricas,
-                            'horas_practicas' => $t->horas_practicas,
-
-                            'logros_esperados' => $t->logros->map(function ($l) {
-                                return [
-                                    'id' => $l->id,
-                                    'descripcion' => $l->descripcion,
-                                    'tipo_logro' => $l->tipo_logro,
-                                    'indicadores' => $l->indicadores->map(fn($i) => [
-                                        'id' => $i->id,
-                                        'descripcion' => $i->descripcion,
-                                    ]),
-                                ];
-                            }),
-                            'bibliografias' => $t->bibliografias->map(fn($b) => [
-                                'id' => $b->id,
-                                'titulo' => $b->titulo,
-                                'autor' => $b->autor,
-                            ]),
-                            'planificaciones_personales' => $planificacionesPorDocente,
-                        ];
-                    }),
-                ];
-            }),
-
-            // Bibliografía general de la asignatura
-            'bibliografias' => $asignatura->bibliografias->map(fn($b) => [
-                'id' => $b->id,
-                'titulo' => $b->titulo,
-                'autor' => $b->autor,
-                'editorial' => $b->editorial,
-                'anio' => $b->anio,
-                'tipo' => $b->tipo,
-            ]),
-
-            // Docentes asignados
-            'docentes' => $docentes,
-
-            // Progreso
-            'progreso' => $asignatura->estadisticas_progreso,
+            'status' => 'success',
+            'data' => $this->buildAsignaturaDocumentacionPayload($asignatura),
         ]);
     }
 
-    /**
-     * Exportar documentación completa de una asignatura en formato JSON (descarga directa)
-     * GET /api/asignaturas/{id}/export-json
-     * Acceso: Solo DIRECTOR_CARRERA y SUPER_ADMIN (controlado por middleware)
-     */
-    public function exportJson(Request $request, $id)
+    private function validateProgramasApiToken(Request $request)
     {
-        Log::info('AsignaturaController::exportJson invoked', [
-            'id' => $id,
-            'user_id' => $request->user()?->id,
-            'user_role' => $request->user()?->rol?->codigo,
-        ]);
-        
-        // El middleware auth:sanctum ya valida la autenticación
-        // El middleware de rol valida que sea DIRECTOR_CARRERA o SUPER_ADMIN
+        $expectedToken = env('PROGRAMAS_API_TOKEN', 'unitepc-programas-2026');
+        $providedToken = $request->bearerToken() ?? $request->query('token');
 
-        // Reutilizar la lógica de documentacionAsignatura pero sin parámetros de sede
-        $asignatura = Asignatura::query();
-        
-        // Eager load: estructura completa + planificaciones personales
-        $asignatura->with([
-            'unidades.temas.logros.indicadores',
-            'unidades.temas.secuencias',
-            'unidades.temas.bibliografias',
-            'unidades.temas.planificacionesPersonales.user.docente',
-            'bibliografias',
-            'carreras.sede',
-            'grupos.docente.user',
-        ]);
-
-        $asignatura = $asignatura->find($id);
-
-        if (!$asignatura) {
-            return response()->json(['error' => 'Asignatura no encontrada.'], 404);
+        if (!$providedToken || $providedToken !== $expectedToken) {
+            return response()->json(['status' => 'error', 'message' => 'Token invalido o no proporcionado.'], 401);
         }
 
-        $mainCarrera = $asignatura->carreras->first();
-        $docentes = $asignatura->grupos->map(function ($grupo) {
-            if (!$grupo->docente) return null;
-            return [
-                'id' => $grupo->docente->id,
-                'nombre_completo' => $grupo->docente->nombre_completo,
-                'user_id' => $grupo->docente->user_id,
-                'email' => $grupo->docente->email,
-            ];
-        })->filter()->unique('id')->values();
-
-        $jsonData = [
-            'id' => $asignatura->id,
-            'codigo' => $asignatura->codigo,
-            'nombre' => $asignatura->nombre,
-            'creditos' => $asignatura->creditos,
-            'semestre' => $mainCarrera?->pivot?->semestre,
-            'carrera' => $mainCarrera ? [
-                'id' => $mainCarrera->id,
-                'nombre' => $mainCarrera->nombre,
-                'sede' => $mainCarrera->sede?->nombre,
-            ] : null,
-
-            // Datos generales del programa
-            'descripcion' => $asignatura->descripcion,
-            'justificacion' => $asignatura->justificacion,
-            'proposito_general' => $asignatura->proposito_general,
-            'competencia_asignatura' => $asignatura->competencia_asignatura,
-            'competencia_global_especifica' => $asignatura->competencia_global_especifica,
-            'elementos_competencia' => $asignatura->elementos_competencia,
-            'contenido_minimo' => $asignatura->contenido_minimo,
-            'metodologia_general' => $asignatura->metodologia_general,
-            'sistema_evaluacion' => $asignatura->sistema_evaluacion,
-            'requisitos' => $asignatura->requisitos,
-
-            // Estructura del programa analítico con planificaciones personales
-            'unidades' => $asignatura->unidades->map(function ($u) {
-                return [
-                    'id' => $u->id,
-                    'numero' => $u->numero,
-                    'titulo' => $u->titulo,
-                    'elemento_competencia' => $u->elemento_competencia,
-                    'temas' => $u->temas->map(function ($t) {
-                        // Agrupar planificaciones personales por docente
-                        $planificacionesPorDocente = $t->planificacionesPersonales->map(function ($pp) {
-                            return [
-                                'docente_id' => $pp->user->docente->id ?? null,
-                                'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
-                                'user_id' => $pp->user_id,
-                                'estrategias_metodologicas' => $pp->estrategias_metodologicas,
-                                'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
-                                'estrategias_recursos' => $pp->estrategias_recursos,
-                                'evaluacion_formativa' => $pp->evaluacion_formativa,
-                                'evaluacion_sumativa' => $pp->evaluacion_sumativa,
-                                'secuencia_didactica' => $pp->secuencia_didactica,
-                            ];
-                        });
-
-                        return [
-                            'id' => $t->id,
-                            'titulo' => $t->titulo,
-                            'orden' => $t->orden,
-                            'resultado_aprendizaje' => $t->resultado_aprendizaje,
-                            'contenido_items' => $t->contenido_items,
-                            'contenido_conceptual' => $t->contenido_conceptual,
-                            'contenido_procedimental' => $t->contenido_procedimental,
-                            'contenido_actitudinal' => $t->contenido_actitudinal,
-                            'estrategias_metodologicas' => $t->estrategias_metodologicas,
-                            'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
-                            'estrategias_recursos' => $t->estrategias_recursos,
-                            'evaluacion_formativa' => $t->evaluacion_formativa,
-                            'evaluacion_sumativa' => $t->evaluacion_sumativa,
-                            'horas_teoricas' => $t->horas_teoricas,
-                            'horas_practicas' => $t->horas_practicas,
-
-                            'logros_esperados' => $t->logros->map(function ($l) {
-                                return [
-                                    'id' => $l->id,
-                                    'descripcion' => $l->descripcion,
-                                    'tipo_logro' => $l->tipo_logro,
-                                    'indicadores' => $l->indicadores->map(fn($i) => [
-                                        'id' => $i->id,
-                                        'descripcion' => $i->descripcion,
-                                    ]),
-                                ];
-                            }),
-                            'bibliografias' => $t->bibliografias->map(fn($b) => [
-                                'id' => $b->id,
-                                'titulo' => $b->titulo,
-                                'autor' => $b->autor,
-                            ]),
-                            'planificaciones_personales' => $planificacionesPorDocente,
-                        ];
-                    }),
-                ];
-            }),
-
-            // Bibliografía general de la asignatura
-            'bibliografias' => $asignatura->bibliografias->map(fn($b) => [
-                'id' => $b->id,
-                'titulo' => $b->titulo,
-                'autor' => $b->autor,
-                'editorial' => $b->editorial,
-                'anio' => $b->anio,
-                'tipo' => $b->tipo,
-            ]),
-
-            // Docentes asignados
-            'docentes' => $docentes,
-
-            // Progreso
-            'progreso' => $asignatura->estadisticas_progreso,
-        ];
-
-        // Generar nombre de archivo
-        $filename = 'asignatura_' . $asignatura->codigo . '_' . date('Y-m-d') . '.json';
-
-        // Devolver como descarga de archivo JSON
-        return response()->json($jsonData, 200, [
-            'Content-Type' => 'application/json',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
-        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+        return null;
     }
 
-    /**
-     * Exportar documentación completa de una asignatura en formato JSON (descarga directa) por código
-     * GET /api/asignaturas/codigo/{codigo}/export-json
-     * Acceso: Solo DIRECTOR_CARRERA y SUPER_ADMIN (controlado por middleware)
-     */
-    public function exportJsonByCode(Request $request, $codigo)
+    private function buildAsignaturaDocumentacionPayload(Asignatura $asignatura): array
     {
-        // El middleware auth:sanctum ya valida la autenticación
-        // El middleware de rol valida que sea DIRECTOR_CARRERA o SUPER_ADMIN
-
-        // Reutilizar la lógica de documentacionAsignatura pero con autenticación y descarga
-        $query = Asignatura::query();
-        
-        // Eager load: estructura completa + planificaciones personales
-        $query->with([
-            'unidades.temas.logros.indicadores',
-            'unidades.temas.secuencias',
-            'unidades.temas.bibliografias',
-            'unidades.temas.planificacionesPersonales.user.docente',
-            'bibliografias',
-            'carreras.sede',
-            'grupos.docente.user',
-        ]);
-
-        // Filtrar por código
-        $query->where('codigo', $codigo);
-        
-        // Opcional: filtrar por sede del usuario si es director
-        // (Se puede implementar según la sede del director)
-        // Por ahora, toma la primera asignatura encontrada
-
-        $asignatura = $query->first();
-
-        if (!$asignatura) {
-            return response()->json(['error' => 'Asignatura no encontrada.'], 404);
-        }
-
         $mainCarrera = $asignatura->carreras->first();
-        $docentes = $asignatura->grupos->map(function ($grupo) {
-            if (!$grupo->docente) return null;
-            return [
-                'id' => $grupo->docente->id,
-                'nombre_completo' => $grupo->docente->nombre_completo,
-                'user_id' => $grupo->docente->user_id,
-                'email' => $grupo->docente->email,
-            ];
-        })->filter()->unique('id')->values();
+        $docentes = $asignatura->grupos
+            ->map(function ($grupo) {
+                if (!$grupo->docente) {
+                    return null;
+                }
 
-        $jsonData = [
+                return [
+                    'id' => $grupo->docente->id,
+                    'nombre_completo' => $grupo->docente->nombre_completo,
+                    'user_id' => $grupo->docente->user_id,
+                    'email' => $grupo->docente->user->email ?? $grupo->docente->email,
+                    'ci' => $grupo->docente->ci ?? $grupo->docente->user->ci ?? null,
+                ];
+            })
+            ->filter()
+            ->unique('id')
+            ->values();
+
+        return [
             'id' => $asignatura->id,
             'codigo' => $asignatura->codigo,
+            'plan_estudios' => $asignatura->plan_estudios,
             'nombre' => $asignatura->nombre,
             'creditos' => $asignatura->creditos,
             'semestre' => $mainCarrera?->pivot?->semestre,
+            'carrera_id' => $mainCarrera?->id,
+            'sede_id' => $mainCarrera?->pivot?->sede_id ?? $mainCarrera?->sede?->id,
             'carrera' => $mainCarrera ? [
                 'id' => $mainCarrera->id,
                 'nombre' => $mainCarrera->nombre,
                 'sede' => $mainCarrera->sede?->nombre,
             ] : null,
-
-            // Datos generales del programa
             'descripcion' => $asignatura->descripcion,
             'justificacion' => $asignatura->justificacion,
             'proposito_general' => $asignatura->proposito_general,
@@ -2218,98 +2036,103 @@ class AsignaturaController extends Controller
             'metodologia_general' => $asignatura->metodologia_general,
             'sistema_evaluacion' => $asignatura->sistema_evaluacion,
             'requisitos' => $asignatura->requisitos,
-
-            // Estructura del programa analítico con planificaciones personales
-            'unidades' => $asignatura->unidades->map(function ($u) {
+            'unidades' => $asignatura->unidades->map(function ($unidad) {
                 return [
-                    'id' => $u->id,
-                    'numero' => $u->numero,
-                    'titulo' => $u->titulo,
-                    'elemento_competencia' => $u->elemento_competencia,
-                    'temas' => $u->temas->map(function ($t) {
-                        // Agrupar planificaciones personales por docente
-                        $planificacionesPorDocente = $t->planificacionesPersonales->map(function ($pp) {
+                    'id' => $unidad->id,
+                    'numero' => $unidad->numero,
+                    'titulo' => $unidad->titulo,
+                    'elemento_competencia' => $unidad->elemento_competencia,
+                    'temas' => $unidad->temas->map(function ($tema) {
+                        $planificaciones = $tema->planificacionesPersonales->map(function ($planificacion) {
                             return [
-                                'docente_id' => $pp->user->docente->id ?? null,
-                                'docente_nombre' => $pp->user->docente->nombre_completo ?? 'N/A',
-                                'user_id' => $pp->user_id,
-                                'estrategias_metodologicas' => $pp->estrategias_metodologicas,
-                                'estrategias_aprendizaje' => $pp->estrategias_aprendizaje,
-                                'estrategias_recursos' => $pp->estrategias_recursos,
-                                'evaluacion_formativa' => $pp->evaluacion_formativa,
-                                'evaluacion_sumativa' => $pp->evaluacion_sumativa,
-                                'secuencia_didactica' => $pp->secuencia_didactica,
+                                'docente_id' => $planificacion->user->docente->id ?? null,
+                                'docente_nombre' => $planificacion->user->docente->nombre_completo ?? 'N/A',
+                                'user_id' => $planificacion->user_id,
+                                'docente_email' => $planificacion->user->email ?? $planificacion->user->docente->email ?? null,
+                                'docente_ci' => $planificacion->user->ci ?? $planificacion->user->docente->ci ?? null,
+                                'estrategias_metodologicas' => $planificacion->estrategias_metodologicas,
+                                'estrategias_aprendizaje' => $planificacion->estrategias_aprendizaje,
+                                'estrategias_recursos' => $planificacion->estrategias_recursos,
+                                'evaluacion_formativa' => $planificacion->evaluacion_formativa,
+                                'evaluacion_sumativa' => $planificacion->evaluacion_sumativa,
+                                'secuencia_didactica' => $planificacion->secuencia_didactica,
                             ];
                         });
 
                         return [
-                            'id' => $t->id,
-                            'titulo' => $t->titulo,
-                            'orden' => $t->orden,
-                            'resultado_aprendizaje' => $t->resultado_aprendizaje,
-                            'contenido_items' => $t->contenido_items,
-                            'contenido_conceptual' => $t->contenido_conceptual,
-                            'contenido_procedimental' => $t->contenido_procedimental,
-                            'contenido_actitudinal' => $t->contenido_actitudinal,
-                            'estrategias_metodologicas' => $t->estrategias_metodologicas,
-                            'estrategias_aprendizaje' => $t->estrategias_aprendizaje,
-                            'estrategias_recursos' => $t->estrategias_recursos,
-                            'evaluacion_formativa' => $t->evaluacion_formativa,
-                            'evaluacion_sumativa' => $t->evaluacion_sumativa,
-                            'horas_teoricas' => $t->horas_teoricas,
-                            'horas_practicas' => $t->horas_practicas,
-
-                            'logros_esperados' => $t->logros->map(function ($l) {
+                            'id' => $tema->id,
+                            'titulo' => $tema->titulo,
+                            'orden' => $tema->orden,
+                            'resultado_aprendizaje' => $tema->resultado_aprendizaje,
+                            'contenido_items' => $tema->contenido_items,
+                            'contenido_conceptual' => $tema->contenido_conceptual,
+                            'contenido_procedimental' => $tema->contenido_procedimental,
+                            'contenido_actitudinal' => $tema->contenido_actitudinal,
+                            'estrategias_metodologicas' => $tema->estrategias_metodologicas,
+                            'estrategias_aprendizaje' => $tema->estrategias_aprendizaje,
+                            'estrategias_recursos' => $tema->estrategias_recursos,
+                            'evaluacion_formativa' => $tema->evaluacion_formativa,
+                            'evaluacion_sumativa' => $tema->evaluacion_sumativa,
+                            'horas_teoricas' => $tema->horas_teoricas,
+                            'horas_practicas' => $tema->horas_practicas,
+                            'secuencias' => $tema->secuencias->map(fn($secuencia) => [
+                                'id' => $secuencia->id,
+                                'momento' => $secuencia->momento,
+                                'descripcion' => $secuencia->descripcion,
+                                'duracion_minutos' => $secuencia->duracion_minutos,
+                            ]),
+                            'logros_esperados' => $tema->logros->map(function ($logro) {
                                 return [
-                                    'id' => $l->id,
-                                    'descripcion' => $l->descripcion,
-                                    'tipo_logro' => $l->tipo_logro,
-                                    'indicadores' => $l->indicadores->map(fn($i) => [
-                                        'id' => $i->id,
-                                        'descripcion' => $i->descripcion,
+                                    'id' => $logro->id,
+                                    'descripcion' => $logro->descripcion,
+                                    'tipo_logro' => $logro->tipo_logro,
+                                    'periodo' => $logro->periodo,
+                                    'indicadores' => $logro->indicadores->map(fn($indicador) => [
+                                        'id' => $indicador->id,
+                                        'descripcion' => $indicador->descripcion,
                                     ]),
                                 ];
                             }),
-                            'bibliografias' => $t->bibliografias->map(fn($b) => [
-                                'id' => $b->id,
-                                'titulo' => $b->titulo,
-                                'autor' => $b->autor,
+                            'bibliografias' => $tema->bibliografias->map(fn($bibliografia) => [
+                                'id' => $bibliografia->id,
+                                'titulo' => $bibliografia->titulo,
+                                'autor' => $bibliografia->autor,
+                                'descripcion' => $bibliografia->descripcion,
+                                'editorial' => $bibliografia->editorial,
+                                'edicion' => $bibliografia->edicion,
+                                'anio' => $bibliografia->anio,
+                                'tipo' => $bibliografia->tipo,
+                                'isbn' => $bibliografia->isbn,
+                                'paginas' => $bibliografia->paginas,
+                                'pivot' => [
+                                    'pagina_desde' => $bibliografia->pivot?->pagina_desde,
+                                    'pagina_hasta' => $bibliografia->pivot?->pagina_hasta,
+                                ],
                             ]),
-                            'planificaciones_personales' => $planificacionesPorDocente,
+                            'planificaciones_personales' => $planificaciones,
                         ];
                     }),
                 ];
             }),
-
-            // Bibliografía general de la asignatura
-            'bibliografias' => $asignatura->bibliografias->map(fn($b) => [
-                'id' => $b->id,
-                'titulo' => $b->titulo,
-                'autor' => $b->autor,
-                'editorial' => $b->editorial,
-                'anio' => $b->anio,
-                'tipo' => $b->tipo,
+            'bibliografias' => $asignatura->bibliografias->map(fn($bibliografia) => [
+                'id' => $bibliografia->id,
+                'titulo' => $bibliografia->titulo,
+                'descripcion' => $bibliografia->descripcion,
+                'autor' => $bibliografia->autor,
+                'editorial' => $bibliografia->editorial,
+                'edicion' => $bibliografia->edicion,
+                'anio' => $bibliografia->anio,
+                'tipo' => $bibliografia->tipo,
+                'isbn' => $bibliografia->isbn,
+                'paginas' => $bibliografia->paginas,
             ]),
-
-            // Docentes asignados
             'docentes' => $docentes,
-
-            // Progreso
             'progreso' => $asignatura->estadisticas_progreso,
         ];
-
-        // Generar nombre de archivo
-        $filename = 'asignatura_' . $asignatura->codigo . '_' . date('Y-m-d') . '.json';
-
-        // Devolver como descarga de archivo JSON
-        return response()->json($jsonData, 200, [
-            'Content-Type' => 'application/json',
-            'Content-Disposition' => 'attachment; filename="' . $filename . '"',
-        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     }
 
     /**
-     * Descargar plantilla Excel para PlanificaciÃ³n Personal (Pre-llenada con temas)
+     * Descargar plantilla Excel para Planificación Personal (Pre-llenada con temas)
      */
     public function templatePersonal($id)
     {
@@ -2462,5 +2285,130 @@ class AsignaturaController extends Controller
             \Illuminate\Support\Facades\Log::error("Import Personal Excel Error: " . $e->getMessage());
             return response()->json(['error' => 'Error al procesar el archivo: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Obtiene TODAS las asignaturas asociadas a una carrera (de cualquier sede),
+     * indicando en qué sedes YA están asignadas.
+     * Agrupado por plan_estudios (N=Malla Nueva, A=Malla Antigua).
+     *
+     * GET /api/asignaturas/master/{carrera_id}?sede_id=X
+     */
+    public function masterPorCarrera($carreraId, Request $request)
+    {
+        $carrera = Carrera::findOrFail($carreraId);
+        $sedeActualId = $request->input('sede_id');
+
+        $asignaturaIds = \DB::table('asignatura_carrera')
+            ->where('carrera_id', $carreraId)
+            ->pluck('asignatura_id')
+            ->unique();
+
+        $asignaturas = Asignatura::whereIn('id', $asignaturaIds)
+            ->where('estado', '!=', 'cancelado')
+            ->orderBy('plan_estudios')
+            ->orderBy('codigo')
+            ->get();
+
+        $sedesMap = \App\Models\Sede::pluck('nombre', 'id');
+
+        $resultado = [
+            'carrera_id' => $carrera->id,
+            'carrera_nombre' => $carrera->nombre,
+            'mallas' => [
+                'N' => [],
+                'A' => []
+            ]
+        ];
+
+        foreach ($asignaturas as $asig) {
+            $pivotData = \DB::table('asignatura_carrera')
+                ->where('asignatura_id', $asig->id)
+                ->where('carrera_id', $carreraId)
+                ->first();
+
+            $asignadaEnSedes = \DB::table('asignatura_carrera')
+                ->join('sedes', 'asignatura_carrera.sede_id', '=', 'sedes.id')
+                ->where('asignatura_carrera.asignatura_id', $asig->id)
+                ->where('asignatura_carrera.carrera_id', $carreraId)
+                ->select('asignatura_carrera.sede_id', 'sedes.nombre as sede_nombre')
+                ->get()
+                ->map(fn($r) => [
+                    'sede_id' => $r->sede_id,
+                    'sede_nombre' => $r->sede_nombre
+                ])
+                ->values()
+                ->toArray();
+
+            $yaAsignadaEnSedeActual = collect($asignadaEnSedes)->contains('sede_id', $sedeActualId);
+
+            $item = [
+                'asignatura_id' => $asig->id,
+                'codigo' => $asig->codigo,
+                'nombre' => $asig->nombre,
+                'semestre' => $pivotData->semestre ?? null,
+                'creditos' => $asig->creditos,
+                'plan_estudios' => $asig->plan_estudios,
+                'asignada_en_sedes' => $asignadaEnSedes,
+                'ya_asignada_en_sede_actual' => $yaAsignadaEnSedeActual
+            ];
+
+            $planKey = $asig->plan_estudios === 'A' ? 'A' : 'N';
+            $resultado['mallas'][$planKey][] = $item;
+        }
+
+        return response()->json($resultado);
+    }
+
+    /**
+     * Asigna una o varias asignaturas a una carrera+sede+semestre.
+     * Omite las que ya están asignadas (evita duplicados en el pivot).
+     *
+     * POST /api/asignaturas/asignar
+     * Body: { asignatura_ids: [], carrera_id, sede_id, semestre }
+     */
+    public function asignarMasivo(Request $request)
+    {
+        $validated = $request->validate([
+            'asignatura_ids' => 'required|array|min:1',
+            'asignatura_ids.*' => 'integer|exists:asignaturas,id',
+            'carrera_id' => 'required|integer|exists:carreras,id',
+            'sede_id' => 'required|integer|exists:sedes,id',
+            'semestre' => 'required|integer|min:1|max:20'
+        ]);
+
+        $asignadas = 0;
+        $yaExistian = 0;
+
+        foreach ($validated['asignatura_ids'] as $asignaturaId) {
+            $existe = \DB::table('asignatura_carrera')
+                ->where('asignatura_id', $asignaturaId)
+                ->where('carrera_id', $validated['carrera_id'])
+                ->where('sede_id', $validated['sede_id'])
+                ->exists();
+
+            if ($existe) {
+                $yaExistian++;
+                continue;
+            }
+
+            \DB::table('asignatura_carrera')->insert([
+                'asignatura_id' => $asignaturaId,
+                'carrera_id' => $validated['carrera_id'],
+                'sede_id' => $validated['sede_id'],
+                'semestre' => $validated['semestre'],
+                'created_at' => now(),
+                'updated_at' => now()
+            ]);
+
+            $asignadas++;
+        }
+
+        return response()->json([
+            'message' => "Asignación completada",
+            'asignadas' => $asignadas,
+            'ya_existian' => $yaExistian,
+            'total' => count($validated['asignatura_ids'])
+        ]);
     }
 }

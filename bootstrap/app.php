@@ -13,7 +13,10 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->prepend(\Illuminate\Http\Middleware\HandleCors::class);
-        $middleware->alias(['role' => \App\Http\Middleware\CheckRole::class]);
+        $middleware->alias([
+            'role' => \App\Http\Middleware\CheckRole::class,
+            'national.admin' => \App\Http\Middleware\EnsureNationalAdmin::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

@@ -55,14 +55,25 @@ class GruposExternoService
      */
     public function listarMateriasPlanN(string $gestion, string $carrera, int $sede): array
     {
-        $cacheKey = "grupos_externos_plan_n_{$gestion}_{$carrera}_{$sede}";
+        // Delegar al método genérico con plan N por defecto (retrocompatibilidad)
+        return $this->listarMateriasPlan($gestion, $carrera, $sede, 'N');
+    }
 
-        return Cache::remember($cacheKey, 300, function () use ($gestion, $carrera, $sede) {
+    /**
+     * Listar materias de un plan específico (N o A)
+     */
+    public function listarMateriasPlan(string $gestion, string $carrera, int $sede, ?string $plan = null): array
+    {
+        $planKey = $plan ?? 'todos';
+        $cacheKey = "grupos_externos_plan_{$planKey}_{$gestion}_{$carrera}_{$sede}";
+
+        return Cache::remember($cacheKey, 300, function () use ($gestion, $carrera, $sede, $plan) {
             try {
-                Log::debug('GruposExternoService: Fetching Plan N data', [
+                Log::debug('GruposExternoService: Fetching Plan data', [
                     'gestion' => $gestion,
                     'carrera' => $carrera,
                     'sede' => $sede,
+                    'plan' => $plan,
                     'baseUrl' => $this->baseUrl
                 ]);
 
@@ -75,7 +86,7 @@ class GruposExternoService
                 if ($response->successful()) {
                     $rawData = $response->json();
                     Log::debug('GruposExternoService: Raw data count', ['count' => count($rawData)]);
-                    $filteredData = $this->transformarMateriasPlanN($rawData, $sede);
+                    $filteredData = $this->transformarMateriasPlan($rawData, $sede, $plan);
                     Log::debug('GruposExternoService: Filtered data count', ['count' => count($filteredData)]);
                     return $filteredData;
                 }
@@ -96,26 +107,29 @@ class GruposExternoService
     }
 
     /**
-     * Transformar datos raw a materias del Plan N (aplanadas)
+     * Transformar datos raw a materias de un plan específico (aplanadas)
      */
-    protected function transformarMateriasPlanN(array $rawData, int $sede): array
+    protected function transformarMateriasPlan(array $rawData, int $sede, ?string $plan = null): array
     {
-        Log::debug('GruposExternoService: Transforming Plan N data', [
+        Log::debug('GruposExternoService: Transforming Plan data', [
             'raw_count' => count($rawData),
-            'sede_filter' => $sede
+            'sede_filter' => $sede,
+            'plan_filter' => $plan ?? 'todos'
         ]);
 
-        // Filtrar solo Plan N y sede específica (doble verificación)
-        $filteredData = array_filter($rawData, function ($item) use ($sede) {
+        // Filtrar por sede (y por plan solo si se especificó)
+        $filteredData = array_filter($rawData, function ($item) use ($sede, $plan) {
             $planEst = $item['planEst'] ?? 'N';
             $idSede = $item['idSede'] ?? null;
-            $passes = $planEst === 'N' && $idSede == $sede;
+            $passesPlan = $plan ? ($planEst === $plan) : true; // sin plan = todos
+            $passes = $passesPlan && $idSede == $sede;
             if (!$passes) {
                 Log::debug('GruposExternoService: Item filtered out', [
                     'siglaP' => $item['siglaP'] ?? null,
                     'planEst' => $planEst,
                     'idSede' => $idSede,
-                    'sede_filter' => $sede
+                    'sede_filter' => $sede,
+                    'plan_filter' => $plan
                 ]);
             }
             return $passes;
@@ -155,7 +169,7 @@ class GruposExternoService
                     'sede_id' => $item['idSede'],
                     'sede_nombre' => $item['nombreSede'],
                     'gestion' => trim($item['gestion']),
-                    'plan_estudios' => 'N',
+                    'plan_estudios' => $item['planEst'] ?? $plan,
                     'docentes_grupos' => [] // array asociativo docente => grupos[]
                 ];
             }

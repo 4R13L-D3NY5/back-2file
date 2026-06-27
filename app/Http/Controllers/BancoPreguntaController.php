@@ -3,11 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\BancoPregunta;
-use App\Models\LogroEsperado;
-use Illuminate\Database\Eloquent\Model;
+use App\Models\BancoPreguntaConfiguracion;
+use App\Models\Docente;
+use App\Models\Asignatura;
+use App\Models\RolExamen;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BancoPreguntaController extends Controller
@@ -20,7 +23,7 @@ class BancoPreguntaController extends Controller
     public function index(Request $request)
     {
         $questions = BancoPregunta::query();
-        
+
         if ($request->has('logro_id')) {
             $questions->where('logro_esperado_id', $request->logro_id);
         }
@@ -33,42 +36,60 @@ class BancoPreguntaController extends Controller
             $questions->where('docente_id', $request->docente_id);
         }
 
+        if ($request->has('sede_id')) {
+            $questions->where('sede_id', $request->sede_id);
+        }
+
         if ($request->has('grupoTeorico')) {
-            $questions->where('grupoTeorico', $request->grupoTeorico);
+            $grupoTeorico = $request->grupoTeorico;
+            $grupoNormalizado = strtoupper(trim((string) $grupoTeorico));
+            $grupoNormalizado = str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $grupoNormalizado);
+            $questions->where(function ($query) use ($grupoTeorico, $grupoNormalizado) {
+                $query->where('grupoTeorico', $grupoTeorico)
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    );
+            });
         }
 
         if ($request->has('parcial')) {
             $questions->where('parcial', $request->parcial);
         }
-        
+
         // Debug Log
-        \Illuminate\Support\Facades\Log::info("BancoPregunta Index Request", [
+        \Illuminate\Support\Facades\Log::info('BancoPregunta Index Request', [
             'asignatura_id' => $request->asignatura_id,
             'docente_id' => $request->docente_id,
+            'sede_id' => $request->sede_id,
+            'grupoTeorico' => $request->grupoTeorico,
+            'parcial' => $request->parcial,
             'user_id' => auth()->id(),
-            'all_docentes' => $request->boolean('all_docentes')
+            'all_docentes' => $request->boolean('all_docentes'),
         ]);
 
         // Filtrar por docente actual (a menos que se pida todas o sea por asignatura/docente específico)
-        if (!$request->boolean('all_docentes') && !$request->has('asignatura_id') && !$request->has('docente_id')) {
+        if (! $request->boolean('all_docentes') && ! $request->has('asignatura_id') && ! $request->has('docente_id')) {
             $userId = auth()->id();
             if ($userId) {
                 $questions->where('created_by', $userId);
             }
         }
-        
-        $results = $questions->get();
+
+        $results = $questions->get()->map(function ($pregunta) {
+            return $this->sanitizePreguntaForResponse($pregunta);
+        });
         $count = $results->count();
         $stats = [
-            'facil' => $results->filter(fn($p) => $p->dificultad == 'FACIL' || $p->dificultad == '1')->count(),
-            'medio' => $results->filter(fn($p) => $p->dificultad == 'MEDIA' || $p->dificultad == 'MEDIO' || $p->dificultad == '2')->count(),
-            'dificil' => $results->filter(fn($p) => $p->dificultad == 'DIFICIL' || $p->dificultad == '3')->count(),
+            'facil' => $results->filter(fn ($p) => in_array($this->normalizarDificultadBanco($p->dificultad), ['FACIL', '1'], true))->count(),
+            'medio' => $results->filter(fn ($p) => in_array($this->normalizarDificultadBanco($p->dificultad), ['MEDIA', 'MEDIO', '2'], true))->count(),
+            'dificil' => $results->filter(fn ($p) => in_array($this->normalizarDificultadBanco($p->dificultad), ['DIFICIL', '3'], true))->count(),
         ];
 
         return response()->json([
             'total' => $count,
             'preguntas' => $results,
-            'stats' => $stats
+            'stats' => $stats,
         ]);
     }
 
@@ -82,7 +103,7 @@ class BancoPreguntaController extends Controller
             'docente_id' => 'nullable',
             'sede_id' => 'nullable',
             'parcial' => 'nullable',
-            'grupo' => 'nullable'
+            'grupo' => 'nullable',
         ]);
 
         $query = BancoPregunta::where('asignatura_id', $request->asignatura_id);
@@ -101,28 +122,89 @@ class BancoPreguntaController extends Controller
 
         if ($request->has('grupo')) {
             $grupo = $request->grupo;
-            $query->where(function($q) use ($grupo) {
+            $grupoNormalizado = strtoupper(trim((string) $grupo));
+            $grupoNormalizado = str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $grupoNormalizado);
+            $query->where(function ($q) use ($grupo, $grupoNormalizado) {
                 $q->where('grupoTeorico', $grupo)
-                  ->orWhere('grupoTeorico', 'LIKE', '%' . $grupo . '%');
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    )
+                    ->orWhere(function ($legacy) use ($grupo, $grupoNormalizado) {
+                        $legacy->where(function ($emptyGrupoTeorico) {
+                            $emptyGrupoTeorico->whereNull('grupoTeorico')
+                                ->orWhere('grupoTeorico', '');
+                        })->where(function ($legacyGrupo) use ($grupo, $grupoNormalizado) {
+                            $legacyGrupo->where('grupo', $grupo)
+                                ->orWhereRaw(
+                                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                                    [$grupoNormalizado]
+                                );
+                        });
+                    });
             });
         }
 
-        $stats = $query->selectRaw("
-            SUM(CASE WHEN dificultad = 'FACIL' OR dificultad = '1' THEN 1 ELSE 0 END) as facil,
-            SUM(CASE WHEN dificultad = 'MEDIA' OR dificultad = 'MEDIO' OR dificultad = '2' THEN 1 ELSE 0 END) as medio,
-            SUM(CASE WHEN dificultad = 'DIFICIL' OR dificultad = '3' THEN 1 ELSE 0 END) as dificil,
-            COUNT(*) as total
-        ")->first();
+        $preguntas = (clone $query)->get(['tipo', 'dificultad']);
+        $stats = $preguntas->reduce(function ($carry, $pregunta) {
+            $dificultad = $this->normalizarDificultadBanco($pregunta->dificultad);
+            if (in_array($dificultad, ['FACIL', '1'], true)) {
+                $carry['facil']++;
+            } elseif (in_array($dificultad, ['MEDIA', 'MEDIO', '2'], true)) {
+                $carry['medio']++;
+            } elseif (in_array($dificultad, ['DIFICIL', '3'], true)) {
+                $carry['dificil']++;
+            }
+            $carry['total']++;
+
+            return $carry;
+        }, ['facil' => 0, 'medio' => 0, 'dificil' => 0, 'total' => 0]);
+        $porTipo = $preguntas
+            ->map(fn ($pregunta) => $this->normalizarTipoPreguntaBanco($pregunta->tipo) ?: 'SIN_TIPO')
+            ->filter(fn ($tipo) => ! in_array($tipo, ['EMPAREJAMIENTO', 'PROBLEMA'], true))
+            ->countBy()
+            ->toArray();
+        $porGrupoTipo = $this->contarGruposTipoPregunta($porTipo);
+        $statsPayload = [
+            'facil' => (int) ($stats['facil'] ?? 0),
+            'medio' => (int) ($stats['medio'] ?? 0),
+            'dificil' => (int) ($stats['dificil'] ?? 0),
+            'total' => (int) ($stats['total'] ?? 0),
+            'por_tipo' => $porTipo,
+            'por_grupo_tipo' => $porGrupoTipo,
+            'g1' => $porGrupoTipo['g1'],
+            'g2' => $porGrupoTipo['g2'],
+            'g3' => $porGrupoTipo['g3'],
+        ];
 
         // Conteo general para la asignatura y docente (sin parcial/grupo)
         $totalAsignatura = BancoPregunta::where('asignatura_id', $request->asignatura_id)
             ->where('docente_id', $request->docente_id)
+            ->when($request->filled('sede_id'), function ($query) use ($request) {
+                $query->where('sede_id', $request->sede_id);
+            })
             ->count();
+
+        $configuracion = null;
+        if ($request->filled('grupo') && $request->filled('parcial')) {
+            $configuracion = BancoPreguntaConfiguracion::query()
+                ->where('asignatura_id', $request->asignatura_id)
+                ->when($request->filled('sede_id'), function ($query) use ($request) {
+                    $query->where('sede_id', $request->sede_id);
+                })
+                ->where('grupo_teorico', $request->grupo)
+                ->where('parcial', $this->normalizarTipoExamen($request->parcial))
+                ->first();
+        }
 
         return response()->json([
             'success' => true,
-            'stats' => $stats,
-            'total_asignatura' => $totalAsignatura
+            'stats' => $statsPayload,
+            'por_tipo' => $porTipo,
+            'por_grupo_tipo' => $porGrupoTipo,
+            'total_asignatura' => $totalAsignatura,
+            'con_cartilla' => $configuracion?->con_cartilla ?? true,
+            'configuracion' => $configuracion,
         ]);
     }
 
@@ -131,32 +213,112 @@ class BancoPreguntaController extends Controller
      */
     public function store(Request $request)
     {
-        // Validar tipos
         $validated = $request->validate([
-            'enunciado' => 'required',
-            'tipo' => 'required|in:SELECCION_UNICA,SELECCION_MULTIPLE,FALSO_VERDADERO',
-            'opciones' => 'nullable|array',
-            'respuesta_correcta' => 'required',
-            'logro_esperado_id' => 'required|exists:logros_esperados,id'
+            'enunciado' => 'required|string',
+            'tipo' => 'required|string',
+            'opciones' => 'nullable',
+            'respuesta_correcta' => 'nullable',
+            'dificultad' => 'nullable',
+            'parcial' => 'nullable|string',
+            'grupo' => 'nullable|string',
+            'grupoTeorico' => 'nullable|string',
+            'image_file' => 'nullable|image|max:5120',
+            'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'docente_id' => 'nullable|exists:docentes,id',
+            'sede_id' => 'nullable|exists:sedes,id',
         ]);
 
+        $validated['tipo'] = $this->normalizarTipoPreguntaManual($validated['tipo'] ?? null);
 
-        // Inyectar usuario actual y docente_id
+        if (! in_array($validated['tipo'], $this->tiposPreguntaPermitidos(), true)) {
+            throw ValidationException::withMessages([
+                'tipo' => 'Tipo de pregunta no permitido.',
+            ]);
+        }
+
+        $this->parsePreguntaPayload($validated);
+        $this->sanitizePreguntaPayload($validated);
+        $this->normalizePreguntaPayload($validated);
+
+        if (! empty($validated['parcial'])) {
+            $validated['parcial'] = $this->normalizarTipoExamen($validated['parcial']);
+        }
+
+        if (empty($validated['grupoTeorico']) && ! empty($validated['grupo'])) {
+            $validated['grupoTeorico'] = $validated['grupo'];
+        }
+
         $validated['created_by'] = $request->user()?->id;
-        $validated['docente_id'] = \App\Models\Docente::where('user_id', $validated['created_by'])->first()?->id;
+        $validated['docente_id'] = $request->input('docente_id')
+            ?? Docente::where('user_id', $validated['created_by'])->first()?->id;
+        $validated['peso'] = $validated['peso'] ?? 1;
+
+        $this->storePreguntaImage($request, $validated);
 
         $pregunta = BancoPregunta::create($validated);
-        return response()->json($pregunta, 201);
+
+        return response()->json($this->sanitizePreguntaForResponse($pregunta), 201);
     }
-    
+
     public function destroy($id)
     {
         $pregunta = BancoPregunta::findOrFail($id);
         if ($pregunta->imagen) {
-            Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
+            Storage::disk('public')->delete('preguntas/'.$pregunta->imagen);
         }
         $pregunta->delete();
+
         return response()->json(null, 204);
+    }
+
+    public function destroyByFiltro(Request $request)
+    {
+        $validated = $request->validate([
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'sede_id' => 'required|exists:sedes,id',
+            'rol_examen_id' => 'nullable|exists:rol_examenes,id',
+            'docente_id' => 'nullable|exists:docentes,id',
+            'grupo_teorico' => 'required|string',
+            'parcial' => 'required|string',
+        ]);
+
+        $queryDelete = $this->buildBancoDeleteQuery(
+            $validated['asignatura_id'],
+            $validated['sede_id'],
+            $validated['grupo_teorico'],
+            $validated['parcial'],
+            $validated['docente_id'] ?? null
+        );
+
+        $preguntas = (clone $queryDelete)->get(['id', 'imagen']);
+        $imagenes = $preguntas
+            ->pluck('imagen')
+            ->filter()
+            ->unique()
+            ->values();
+
+        $deletedCount = $queryDelete->delete();
+
+        foreach ($imagenes as $imagen) {
+            Storage::disk('public')->delete('preguntas/'.$imagen);
+        }
+
+        Log::info('Borrado masivo del banco de preguntas', [
+            'asignatura_id' => $validated['asignatura_id'],
+            'sede_id' => $validated['sede_id'],
+            'grupo_teorico' => $validated['grupo_teorico'],
+            'parcial' => $this->normalizarTipoExamen($validated['parcial']),
+            'docente_id' => $validated['docente_id'] ?? null,
+            'deleted' => $deletedCount,
+            'user_id' => auth()->id(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'deleted' => $deletedCount,
+            'message' => "Se eliminaron {$deletedCount} preguntas del banco filtrado.",
+        ]);
     }
 
     /**
@@ -168,40 +330,51 @@ class BancoPreguntaController extends Controller
 
         $validated = $request->validate([
             'enunciado' => 'required|string',
-            'tipo' => 'required|in:SELECCION_UNICA,SELECCION_MULTIPLE,FALSO_VERDADERO,PR,EM,SP',
+            'tipo' => 'required|string',
             'opciones' => 'nullable',
-            'respuesta_correcta' => 'required',
+            'respuesta_correcta' => 'nullable',
             'dificultad' => 'nullable',
             'parcial' => 'nullable|string',
             'grupo' => 'nullable|string',
             'grupoTeorico' => 'nullable|string',
-            'image_file' => 'nullable|image|max:5120'
+            'image_file' => 'nullable|image|max:5120',
+            'remove_image' => 'nullable|boolean',
+            'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
+            'asignatura_id' => 'nullable|exists:asignaturas,id',
+            'sede_id' => 'nullable|exists:sedes,id',
         ]);
 
-        // Procesar opciones si vienen como string (FormData puede enviarlas así)
-        if (isset($validated['opciones']) && is_string($validated['opciones'])) {
-            $validated['opciones'] = json_decode($validated['opciones'], true);
-        }
-        // Procesar respuesta_correcta si viene como string
-        if (isset($validated['respuesta_correcta']) && is_string($validated['respuesta_correcta'])) {
-             // Si parece un array JSON (e.g. ["A","B"]), decodificar
-             if (str_starts_with($validated['respuesta_correcta'], '[')) {
-                $validated['respuesta_correcta'] = json_decode($validated['respuesta_correcta'], true);
-             }
+        $validated['tipo'] = $this->normalizarTipoPreguntaManual($validated['tipo'] ?? null);
+
+        if (! in_array($validated['tipo'], $this->tiposPreguntaPermitidos(), true)) {
+            throw ValidationException::withMessages([
+                'tipo' => 'Tipo de pregunta no permitido.',
+            ]);
         }
 
-        if ($request->hasFile('image_file')) {
-            if ($pregunta->imagen) {
-                Storage::disk('public')->delete('preguntas/' . $pregunta->imagen);
-            }
-            $file = $request->file('image_file');
-            $filename = time() . '_' . uniqid() . '.' . $file->getClientOriginalExtension();
-            $file->storeAs('preguntas', $filename, 'public');
-            $validated['imagen'] = $filename;
+        $this->parsePreguntaPayload($validated);
+        $this->sanitizePreguntaPayload($validated);
+        $this->normalizePreguntaPayload($validated);
+
+        if (! empty($validated['parcial'])) {
+            $validated['parcial'] = $this->normalizarTipoExamen($validated['parcial']);
         }
+
+        if (empty($validated['grupoTeorico']) && ! empty($validated['grupo'])) {
+            $validated['grupoTeorico'] = $validated['grupo'];
+        }
+
+        if (($validated['remove_image'] ?? false) && ! $request->hasFile('image_file') && $pregunta->imagen) {
+            Storage::disk('public')->delete('preguntas/'.$pregunta->imagen);
+            $validated['imagen'] = null;
+        }
+        unset($validated['remove_image']);
+
+        $this->storePreguntaImage($request, $validated, $pregunta);
 
         $pregunta->update($validated);
-        return response()->json($pregunta);
+
+        return response()->json($this->sanitizePreguntaForResponse($pregunta));
     }
 
     public function import(Request $request)
@@ -209,9 +382,14 @@ class BancoPreguntaController extends Controller
         $request->validate([
             'file' => 'required|file|mimes:xlsx,xls,csv',
             'asignatura_id' => 'required|exists:asignaturas,id',
+            'docente_id' => 'nullable|exists:docentes,id',
             'logro_esperado_id' => 'nullable|exists:logros_esperados,id',
             'sede_id' => 'nullable|exists:sedes,id',
             'grupo' => 'nullable|string|max:255',
+            'grupoTeorico' => 'nullable|string|max:255',
+            'con_cartilla' => 'nullable|boolean',
+            'parcial' => 'nullable|string',
+            'modo' => 'nullable|in:agregar,reemplazar',
         ]);
 
         $file = $request->file('file');
@@ -219,60 +397,84 @@ class BancoPreguntaController extends Controller
         $logroId = $request->input('logro_esperado_id');
         $sedeId = $request->input('sede_id');
         $grupoTeorico = $request->input('grupoTeorico');
+        $conCartilla = true;
+        $parcialSolicitado = $request->input('parcial');
+        $parcialSolicitadoNormalizado = $parcialSolicitado
+            ? $this->normalizarTipoExamen($parcialSolicitado)
+            : null;
 
         try {
             $modo = $request->input('modo', 'agregar');
-            $docenteId = $request->input('docente_id') 
+            $docenteId = $request->input('docente_id')
                 ?? (\App\Models\Docente::where('user_id', auth()->id())->first()?->id);
 
             if ($modo === 'reemplazar') {
                 $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
                     ->where('docente_id', $docenteId);
-                
+
+                if ($sedeId) {
+                    $queryDelete->where('sede_id', $sedeId);
+                }
+
                 if ($grupoTeorico) {
                     $queryDelete->where('grupoTeorico', $grupoTeorico);
                 }
-                
+
                 if ($request->has('parcial') && $request->parcial) {
                     $queryDelete->where('parcial', $this->normalizarTipoExamen($request->parcial));
                 }
 
-                \Log::info("Vaciando banco de preguntas filtrado", [
+                Log::info('Vaciando banco de preguntas filtrado', [
                     'asignatura' => $asignaturaId,
+                    'sede_id' => $sedeId,
                     'docente' => $docenteId,
                     'grupo' => $grupoTeorico,
-                    'parcial' => $request->parcial
+                    'parcial' => $request->parcial,
                 ]);
 
                 $queryDelete->delete();
             }
 
             $spreadsheet = IOFactory::load($file->getPathname());
-            $worksheet = $spreadsheet->getActiveSheet();
-            $rows = $worksheet->toArray();
-            
+            $worksheet = $this->resolveBancoWorksheet($spreadsheet);
+            $rows = $this->truncateBancoRowsAtNotasCarga($worksheet->toArray());
+
             if (count($rows) < 2) {
-                throw new \Exception("El archivo no tiene filas de datos útiles.");
+                throw new \Exception('El archivo no tiene filas de datos útiles.');
             }
 
-            $headers = array_map(function($h) {
-                return mb_strtoupper(trim((string)$h));
+            $headers = array_map(function ($h) {
+                return mb_strtoupper(trim((string) $h));
             }, $rows[0]);
-            
+
             $cols = [];
             foreach ($headers as $index => $header) {
-                if (empty($header)) continue;
-                if (str_contains($header, 'TIPO')) $cols['TIPO'] = $index;
-                else if (str_contains($header, 'GRUPO')) $cols['GRUPO'] = $index;
-                else if (str_contains($header, 'ENUNCIADO')) $cols['ENUNCIADO'] = $index;
-                else if ($header === 'A' || str_contains($header, 'OPCION A') || str_contains($header, 'OPCIÓN A') || str_contains($header, 'OPCION_A') || str_contains($header, 'OPCIÓN_A')) $cols['A'] = $index;
-                else if ($header === 'B' || str_contains($header, 'OPCION B') || str_contains($header, 'OPCIÓN B') || str_contains($header, 'OPCION_B') || str_contains($header, 'OPCIÓN_B')) $cols['B'] = $index;
-                else if ($header === 'C' || str_contains($header, 'OPCION C') || str_contains($header, 'OPCIÓN C') || str_contains($header, 'OPCION_C') || str_contains($header, 'OPCIÓN_C')) $cols['C'] = $index;
-                else if ($header === 'D' || str_contains($header, 'OPCION D') || str_contains($header, 'OPCIÓN D') || str_contains($header, 'OPCION_D') || str_contains($header, 'OPCIÓN_D')) $cols['D'] = $index;
-                else if ($header === 'E' || str_contains($header, 'OPCION E') || str_contains($header, 'OPCIÓN E') || str_contains($header, 'OPCION_E') || str_contains($header, 'OPCIÓN_E')) $cols['E'] = $index;
-                else if (str_contains($header, 'RESPUESTA')) $cols['RESPUESTA'] = $index;
-                else if (str_contains($header, 'DIFICULTAD')) $cols['DIFICULTAD'] = $index;
-                else if (str_contains($header, 'PARCIAL')) $cols['PARCIAL'] = $index;
+                if (empty($header)) {
+                    continue;
+                }
+                if (str_contains($header, 'TIPO')) {
+                    $cols['TIPO'] = $index;
+                } elseif (str_contains($header, 'GRUPO')) {
+                    $cols['GRUPO'] = $index;
+                } elseif (str_contains($header, 'ENUNCIADO')) {
+                    $cols['ENUNCIADO'] = $index;
+                } elseif ($header === 'A' || str_contains($header, 'OPCION A') || str_contains($header, 'OPCIÓN A') || str_contains($header, 'OPCION_A') || str_contains($header, 'OPCIÓN_A')) {
+                    $cols['A'] = $index;
+                } elseif ($header === 'B' || str_contains($header, 'OPCION B') || str_contains($header, 'OPCIÓN B') || str_contains($header, 'OPCION_B') || str_contains($header, 'OPCIÓN_B')) {
+                    $cols['B'] = $index;
+                } elseif ($header === 'C' || str_contains($header, 'OPCION C') || str_contains($header, 'OPCIÓN C') || str_contains($header, 'OPCION_C') || str_contains($header, 'OPCIÓN_C')) {
+                    $cols['C'] = $index;
+                } elseif ($header === 'D' || str_contains($header, 'OPCION D') || str_contains($header, 'OPCIÓN D') || str_contains($header, 'OPCION_D') || str_contains($header, 'OPCIÓN_D')) {
+                    $cols['D'] = $index;
+                } elseif ($header === 'E' || str_contains($header, 'OPCION E') || str_contains($header, 'OPCIÓN E') || str_contains($header, 'OPCION_E') || str_contains($header, 'OPCIÓN_E')) {
+                    $cols['E'] = $index;
+                } elseif (str_contains($header, 'RESPUESTA')) {
+                    $cols['RESPUESTA'] = $index;
+                } elseif (str_contains($header, 'DIFICULTAD')) {
+                    $cols['DIFICULTAD'] = $index;
+                } elseif (str_contains($header, 'PARCIAL')) {
+                    $cols['PARCIAL'] = $index;
+                }
             }
 
             // Defaults if column isn't found
@@ -280,37 +482,74 @@ class BancoPreguntaController extends Controller
             $cols['ENUNCIADO'] = $cols['ENUNCIADO'] ?? 1;
 
             $count = 0;
-            $tipoMap = [
-                'FV' => 'FALSO_VERDADERO',
-                'SS' => 'SELECCION_UNICA',
-                'SM' => 'SELECCION_MULTIPLE',
-                'PR' => 'PROBLEMA',
-                'SP' => 'SUBPROBLEMA',
-                'EM' => 'EMPAREJAMIENTO'
-            ];
+            $evaluables = 0;
+            $auxiliares = 0;
+            $omitidas = 0;
+            $omitidasSeleccionMultiplePrimerParcial = 0;
+            $parcialExcelIgnorado = 0;
+            $existingDuplicateKeys = [];
+            $batchDuplicateKeys = [];
 
-            \Log::info("Importación Banco: docente_id detectado: " . ($docenteId ?? 'NULL'));
+            $existingQuery = BancoPregunta::where('asignatura_id', $asignaturaId)
+                ->where('docente_id', $docenteId);
+
+            if ($sedeId) {
+                $existingQuery->where('sede_id', $sedeId);
+            }
+
+            if ($grupoTeorico) {
+                $existingQuery->where('grupoTeorico', $grupoTeorico);
+            }
+
+            if ($parcialSolicitadoNormalizado) {
+                $existingQuery->where('parcial', $parcialSolicitadoNormalizado);
+            }
+
+            $existingQuery
+                ->get(['enunciado', 'grupo', 'grupoTeorico', 'parcial'])
+                ->each(function ($pregunta) use (&$existingDuplicateKeys) {
+                    $key = $this->construirClaveDuplicadoBanco([
+                        'enunciado' => $pregunta->enunciado,
+                        'grupo' => $pregunta->grupo,
+                        'grupoTeorico' => $pregunta->grupoTeorico,
+                        'parcial' => $pregunta->parcial,
+                    ]);
+
+                    if ($key !== '') {
+                        $existingDuplicateKeys[$key] = true;
+                    }
+                });
+
+            \Log::info('Importación Banco: docente_id detectado: '.($docenteId ?? 'NULL'));
 
             foreach ($rows as $index => $row) {
-                if ($index === 0) continue; // Skip Header
+                if ($index === 0) {
+                    continue;
+                } // Skip Header
 
-                $rawTipo = mb_strtoupper(trim((string)($row[$cols['TIPO']] ?? '')));
-                $rawEnunciado = trim((string)($row[$cols['ENUNCIADO']] ?? ''));
-                
-                if (empty($rawTipo) && empty($rawEnunciado)) continue; // Skip Empty Rows
+                $rawTipo = mb_strtoupper(trim((string) ($row[$cols['TIPO']] ?? '')));
+                $rawEnunciado = $this->sanitizePreguntaText(trim((string) ($row[$cols['ENUNCIADO']] ?? '')));
 
-                $tipo = $tipoMap[$rawTipo] ?? $rawTipo;
-                if (empty($tipo)) $tipo = 'SELECCION_UNICA'; // default
-                
+                if (empty($rawTipo) && empty($rawEnunciado)) {
+                    continue;
+                } // Skip Empty Rows
+
+                $tipo = $this->normalizarTipoPreguntaBanco($rawTipo);
+                if (empty($tipo)) {
+                    $tipo = 'SELECCION_SIMPLE';
+                }
+
                 $enunciado = nl2br($rawEnunciado); // Soporte saltos de línea (html)
-                $grupo = isset($cols['GRUPO']) ? trim((string)($row[$cols['GRUPO']] ?? '')) : null;
+                $grupo = isset($cols['GRUPO'])
+                    ? $this->sanitizePreguntaText(trim((string) ($row[$cols['GRUPO']] ?? '')))
+                    : null;
 
                 // Construir Opciones
                 $opciones = [];
                 $letters = ['A', 'B', 'C', 'D', 'E'];
                 foreach ($letters as $letter) {
                     if (isset($cols[$letter])) {
-                        $val = trim((string)($row[$cols[$letter]] ?? ''));
+                        $val = $this->sanitizePreguntaText(trim((string) ($row[$cols[$letter]] ?? '')));
                         if ($val !== '') {
                             $opciones[] = ['id' => $letter, 'text' => nl2br($val)];
                         }
@@ -318,60 +557,104 @@ class BancoPreguntaController extends Controller
                 }
 
                 // Construir Respuesta
-                $rawResp = isset($cols['RESPUESTA']) ? mb_strtoupper(trim((string)($row[$cols['RESPUESTA']] ?? ''))) : '';
-                if (str_contains($rawResp, ',')) {
-                    $respuesta = array_map('trim', explode(',', $rawResp));
-                } else {
-                    $respuesta = $rawResp;
-                }
+                $rawResp = isset($cols['RESPUESTA'])
+                    ? $this->sanitizePreguntaText(trim((string) ($row[$cols['RESPUESTA']] ?? '')))
+                    : '';
+                $respuesta = $this->normalizarRespuestaBancoExcel($rawResp);
 
                 // Validaciones por Tipo
                 // 1. Respuesta y Dificultad Obligatorias (Excepto PROBLEMA/EMPAREJAMIENTO)
                 if ($tipo !== 'PROBLEMA' && $tipo !== 'EMPAREJAMIENTO') {
                     if (empty($respuesta)) {
-                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" requiere respuesta.");
+                        throw new \Exception('Fila '.($index + 1).": tipo \"$tipo\" requiere respuesta.");
                     }
-                    $rawDif = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                    $rawDif = isset($cols['DIFICULTAD'])
+                        ? $this->sanitizePreguntaText(trim((string) ($row[$cols['DIFICULTAD']] ?? '')))
+                        : '';
                     if ($rawDif === '') {
-                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" requiere nivel de dificultad (1, 2 o 3).");
+                        throw new \Exception('Fila '.($index + 1).": tipo \"$tipo\" requiere nivel de dificultad (1, 2 o 3).");
                     }
                 } else {
                     // PROBLEMA y EMPAREJAMIENTO deben estar vacíos
-                    if (!empty($respuesta)) {
-                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" NO debe tener respuesta (debe estar vacía).");
+                    if (! empty($respuesta)) {
+                        throw new \Exception('Fila '.($index + 1).": tipo \"$tipo\" NO debe tener respuesta (debe estar vacía).");
                     }
-                    $rawDif = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
+                    $rawDif = isset($cols['DIFICULTAD'])
+                        ? $this->sanitizePreguntaText(trim((string) ($row[$cols['DIFICULTAD']] ?? '')))
+                        : '';
                     if ($rawDif !== '') {
-                        throw new \Exception("Fila " . ($index + 1) . ": tipo \"$tipo\" NO debe tener dificultad (debe estar vacía).");
+                        throw new \Exception('Fila '.($index + 1).": tipo \"$tipo\" NO debe tener dificultad (debe estar vacía).");
                     }
                 }
 
-                // 2. Validaciones para SM
-                if ($tipo === 'SELECCION_MULTIPLE') {
-                    // 1. Validar que tenga exactamente 2 respuestas
-                    $respLetters = is_array($respuesta) ? implode('', $respuesta) : $respuesta;
-                    $lettersOnly = preg_replace('/[^A-E]/', '', $respLetters);
-                    if (strlen($lettersOnly) !== 2) {
-                        throw new \Exception("Fila " . ($index + 1) . ": Selección Múltiple (SM) DEBE tener exactamente 2 respuestas correctas (ej: A,B).");
+                // 2. Validaciones por estructura especial
+                if ($tipo === 'RESPUESTA_COMPUESTA') {
+                    $respLetter = is_array($respuesta) ? ($respuesta[0] ?? '') : $respuesta;
+                    if (! in_array($respLetter, ['A', 'B', 'C', 'D'], true)) {
+                        throw new \Exception('Fila '.($index + 1).': Respuesta Compuesta debe tener una respuesta entre A y D.');
                     }
-                    // 2. Validar que tenga las 5 opciones A-E rellenadas
-                    if (count($opciones) < 5) {
-                        throw new \Exception("Fila " . ($index + 1) . ": Selección Múltiple (SM) DEBE tener las 5 opciones (A, B, C, D, E) rellenadas.");
+                    if (count($opciones) !== 4) {
+                        throw new \Exception('Fila '.($index + 1).': Respuesta Compuesta debe tener exactamente 4 opciones fijas (A, B, C y D).');
                     }
                 }
 
-                $dificultad = isset($cols['DIFICULTAD']) ? trim((string)($row[$cols['DIFICULTAD']] ?? '')) : '';
-                
+                if ($tipo === 'PREGUNTA_CON_CLAVE') {
+                    $respLetter = is_array($respuesta) ? ($respuesta[0] ?? '') : $respuesta;
+                    if (! in_array($respLetter, ['A', 'B', 'C', 'D', 'E'], true)) {
+                        throw new \Exception('Fila '.($index + 1).': Pregunta con Clave debe tener una respuesta entre A y E.');
+                    }
+                    if (count($opciones) !== 4) {
+                        throw new \Exception('Fila '.($index + 1).': Pregunta con Clave debe tener exactamente 4 incisos (1, 2, 3 y 4).');
+                    }
+                }
+
+                $dificultad = isset($cols['DIFICULTAD'])
+                    ? $this->sanitizePreguntaText(trim((string) ($row[$cols['DIFICULTAD']] ?? '')))
+                    : '';
+
                 // PR y EM no llevan dificultad por regla de negocio
                 if ($tipo === 'PROBLEMA' || $tipo === 'EMPAREJAMIENTO') {
-                    $dificultad = null;
+                    $dificultad = '';
                 } else {
                     $dificultad = $dificultad ?: 'MEDIA';
                 }
 
-                $parcial = isset($cols['PARCIAL']) ? trim((string)($row[$cols['PARCIAL']] ?? '')) : null;
-                if ($parcial) {
-                    $parcial = $this->normalizarTipoExamen($parcial);
+                $parcialExcel = isset($cols['PARCIAL'])
+                    ? $this->sanitizePreguntaText(trim((string) ($row[$cols['PARCIAL']] ?? '')))
+                    : null;
+
+                if ($parcialSolicitadoNormalizado) {
+                    $parcial = $parcialSolicitadoNormalizado;
+                    if ($parcialExcel && $this->normalizarTipoExamen($parcialExcel) !== $parcial) {
+                        $parcialExcelIgnorado++;
+                    }
+                } elseif ($parcialExcel) {
+                    $parcial = $this->normalizarTipoExamen($parcialExcel);
+                } else {
+                    $parcial = null;
+                }
+
+                if ($parcial === '1er Parcial' && $tipo === 'RESPUESTA_COMPUESTA') {
+                    $omitidas++;
+                    $omitidasSeleccionMultiplePrimerParcial++;
+
+                    continue;
+                }
+
+                $duplicateKey = $this->construirClaveDuplicadoBanco([
+                    'enunciado' => $enunciado,
+                    'grupo' => $grupo,
+                    'grupoTeorico' => $grupoTeorico,
+                    'parcial' => $parcial,
+                ]);
+
+                if (
+                    $duplicateKey !== ''
+                    && (isset($existingDuplicateKeys[$duplicateKey]) || isset($batchDuplicateKeys[$duplicateKey]))
+                ) {
+                    $omitidas++;
+
+                    continue;
                 }
 
                 BancoPregunta::create([
@@ -388,28 +671,403 @@ class BancoPreguntaController extends Controller
                     'dificultad' => mb_strtoupper($dificultad),
                     'parcial' => $parcial,
                     'peso' => 1,
-                    'created_by' => auth()->id()
+                    'con_cartilla' => $conCartilla,
+                    'created_by' => auth()->id(),
                 ]);
+
+                if ($duplicateKey !== '') {
+                    $batchDuplicateKeys[$duplicateKey] = true;
+                }
+
                 $count++;
+                if ($tipo === 'PROBLEMA' || $tipo === 'EMPAREJAMIENTO') {
+                    $auxiliares++;
+                } else {
+                    $evaluables++;
+                }
+            }
+
+            $advertencias = [];
+            if ($omitidasSeleccionMultiplePrimerParcial > 0) {
+                $advertencias[] = "Se omitieron {$omitidasSeleccionMultiplePrimerParcial} pregunta(s) de seleccion multiple / Respuesta A-B-Ambas-Ninguna porque 1er Parcial no permite importarlas.";
+            }
+            if ($parcialExcelIgnorado > 0) {
+                $advertencias[] = "Se uso el parcial activo seleccionado en pantalla y se ignoro la columna PARCIAL del Excel en {$parcialExcelIgnorado} fila(s).";
             }
 
             return response()->json([
                 'success' => true,
-                'message' => "Se han importado {$count} preguntas correctamente.",
-                'total' => $count
+                'message' => "Se han importado {$evaluables} preguntas nuevas correctamente.",
+                'total' => $count,
+                'evaluables' => $evaluables,
+                'auxiliares' => $auxiliares,
+                'omitidas' => $omitidas,
+                'advertencias' => $advertencias,
             ]);
 
         } catch (\Exception $e) {
+            $message = $e->getMessage();
+            $statusCode = 500;
+
+            if (
+                str_starts_with($message, 'Fila ')
+                || str_contains($message, 'hoja Banco')
+                || str_contains($message, 'filas de datos')
+            ) {
+                $statusCode = 422;
+            }
+
             return response()->json([
                 'success' => false,
-                'error' => 'Error al procesar el archivo Excel: ' . $e->getMessage()
-            ], 500);
+                'error' => 'Error al procesar el archivo Excel: '.$message,
+            ], $statusCode);
         }
+    }
+
+    private function resolveBancoWorksheet($spreadsheet)
+    {
+        $worksheet = $spreadsheet->getSheetByName('Banco');
+        if ($worksheet) {
+            return $worksheet;
+        }
+
+        foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
+            $title = mb_strtoupper(trim((string) $sheet->getTitle()));
+            if ($title === 'BANCO') {
+                return $sheet;
+            }
+        }
+
+        foreach ($spreadsheet->getWorksheetIterator() as $sheet) {
+            $rows = $sheet->toArray(null, false, false, false);
+            $headers = array_map(
+                fn ($header) => mb_strtoupper(trim((string) $header)),
+                $rows[0] ?? []
+            );
+
+            if (in_array('TIPO', $headers, true) && in_array('ENUNCIADO', $headers, true)) {
+                return $sheet;
+            }
+        }
+
+        throw new \Exception('No se encontro la hoja Banco con los encabezados esperados.');
+    }
+
+    private function truncateBancoRowsAtNotasCarga(array $rows): array
+    {
+        foreach ($rows as $index => $row) {
+            if ($this->isNotasCargaRow((array) $row)) {
+                return array_slice($rows, 0, $index);
+            }
+        }
+
+        return $rows;
+    }
+
+    private function isNotasCargaRow(array $row): bool
+    {
+        foreach ($row as $cell) {
+            if (mb_strtoupper(trim((string) $cell)) === 'NOTAS DE CARGA') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function construirClaveDuplicadoBanco(array $payload): string
+    {
+        $enunciado = $this->normalizarTextoDuplicadoBanco($payload['enunciado'] ?? '');
+
+        if ($enunciado === '') {
+            return '';
+        }
+
+        return implode('||', [
+            $enunciado,
+            $this->normalizarGrupoDuplicadoBanco($payload['grupoTeorico'] ?? $payload['grupo_teorico'] ?? ''),
+            $this->normalizarTipoExamen($payload['parcial'] ?? ''),
+            $this->normalizarGrupoDuplicadoBanco($payload['grupo'] ?? ''),
+        ]);
+    }
+
+    private function normalizarTextoDuplicadoBanco($value): string
+    {
+        $text = $this->sanitizePreguntaText((string) ($value ?? ''));
+        $text = preg_replace('/<br\s*\/?>/i', ' ', $text);
+        $text = strip_tags($text);
+        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $text = strtr($text, [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u',
+            'Á' => 'A', 'É' => 'E', 'Í' => 'I', 'Ó' => 'O', 'Ú' => 'U',
+            'ñ' => 'n', 'Ñ' => 'N', 'ü' => 'u', 'Ü' => 'U',
+        ]);
+        $text = preg_replace('/\s+/u', ' ', $text);
+
+        return mb_strtoupper(trim($text), 'UTF-8');
+    }
+
+    private function normalizarGrupoDuplicadoBanco($value): string
+    {
+        $text = $this->normalizarTextoDuplicadoBanco($value);
+        $text = preg_replace('/^(GRUPO|G\.?|GT)\s*/u', '', $text);
+
+        return trim((string) $text);
+    }
+
+    private function normalizarDificultadBanco($value): string
+    {
+        $text = $this->normalizarTextoDuplicadoBanco($value);
+        $text = strtr($text, [
+            'FµCIL' => 'FACIL',
+            'FÁCIL' => 'FACIL',
+            'INTERMEDIA' => 'MEDIA',
+            'INTERMEDIO' => 'MEDIO',
+            'DIFÖCIL' => 'DIFICIL',
+            'DIFÍCIL' => 'DIFICIL',
+        ]);
+
+        return $text;
+    }
+
+    /**
+     * Guardar configuración de cartilla (independiente de la importación)
+     */
+    public function saveConfig(Request $request)
+    {
+        $request->validate([
+            'asignatura_id' => 'required|exists:asignaturas,id',
+            'sede_id' => 'required|exists:sedes,id',
+            'docente_id' => 'nullable|exists:docentes,id',
+            'grupo_teorico' => 'required|string',
+            'parcial' => 'required|string',
+            'con_cartilla' => 'required|boolean',
+        ]);
+
+        $asignaturaId = (int) $request->asignatura_id;
+        $sedeId = (int) $request->sede_id;
+        $docenteId = $request->docente_id ? (int) $request->docente_id : null;
+        $grupoTeorico = $request->grupo_teorico;
+        $parcial = $request->parcial;
+        $conCartilla = $request->boolean('con_cartilla');
+        $rolExamenId = $request->rol_examen_id ? (int) $request->rol_examen_id : null;
+
+        $rolExamen = $this->assertCanManageCartillaConfig(
+            $asignaturaId,
+            $sedeId,
+            $grupoTeorico,
+            $parcial,
+            $rolExamenId
+        );
+        $grupoTeorico = $rolExamen->grupo ?: $grupoTeorico;
+        $parcial = $rolExamen->tipo_examen ?: $parcial;
+
+        // Si es Sin Cartilla (false), procedemos a limpiar el banco de preguntas para este grupo/parcial
+        if (! $conCartilla) {
+            $queryDelete = $this->buildBancoDeleteQuery(
+                $asignaturaId,
+                $sedeId,
+                $grupoTeorico,
+                $parcial,
+                $docenteId
+            );
+
+            $deletedCount = $queryDelete->delete();
+
+            Log::info("Preferencia Sin Cartilla: Se eliminaron {$deletedCount} preguntas", [
+                'asignatura' => $asignaturaId,
+                'sede_id' => $sedeId,
+                'grupo' => $grupoTeorico,
+                'parcial' => $parcial,
+            ]);
+        }
+
+        $config = $this->updateOrCreateConfig(
+            $asignaturaId,
+            $sedeId,
+            $grupoTeorico,
+            $parcial,
+            $conCartilla
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Configuración guardada correctamente',
+            'configuracion' => $config,
+        ]);
+    }
+
+    private function buildBancoDeleteQuery($asignaturaId, $sedeId, $grupoTeorico, $parcial, $docenteId = null)
+    {
+        $grupoNormalizado = $this->normalizarGrupoTeorico($grupoTeorico);
+        $queryDelete = BancoPregunta::where('asignatura_id', $asignaturaId)
+            ->where('sede_id', $sedeId)
+            ->where(function ($query) use ($grupoTeorico, $grupoNormalizado) {
+                $query->where('grupoTeorico', $grupoTeorico)
+                    ->orWhereRaw(
+                        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupoTeorico), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                        [$grupoNormalizado]
+                    )
+                    ->orWhere(function ($legacy) use ($grupoTeorico, $grupoNormalizado) {
+                        $legacy->where(function ($emptyGrupoTeorico) {
+                            $emptyGrupoTeorico->whereNull('grupoTeorico')
+                                ->orWhere('grupoTeorico', '');
+                        })->where(function ($legacyGrupo) use ($grupoTeorico, $grupoNormalizado) {
+                            $legacyGrupo->where('grupo', $grupoTeorico)
+                                ->orWhereRaw(
+                                    "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                                    [$grupoNormalizado]
+                                );
+                        });
+                    });
+            })
+            ->where('parcial', $this->normalizarTipoExamen($parcial));
+
+        $user = auth()->user();
+        $user?->loadMissing('rol');
+        $rolCodigo = $user?->rol?->codigo;
+
+        $rolesConAlcanceAmpliado = [
+            'SUPER_ADMIN',
+            'ADMIN',
+            'DIRECTOR_CARRERA',
+            'VICERRECTORADO',
+            'VICERRECTOR_SEDE',
+            'VICERRECTOR_NACIONAL',
+            'VICERRECTORADO_NACIONAL',
+            'DIRECCION_ACADEMICA',
+            'DIRECCIÓN ACADÉMICA',
+            'RESPONSABLE_EVALUACIONES',
+        ];
+
+        if ($docenteId && in_array($rolCodigo, $rolesConAlcanceAmpliado, true)) {
+            $queryDelete->where('docente_id', $docenteId);
+
+            return $queryDelete;
+        }
+
+        $docenteId = Docente::where('user_id', auth()->id())->first()?->id;
+
+        if ($docenteId) {
+            $queryDelete->where('docente_id', $docenteId);
+        } elseif (auth()->id()) {
+            $queryDelete->where('created_by', auth()->id());
+        }
+
+        return $queryDelete;
+    }
+
+    private function updateOrCreateConfig($asignaturaId, $sedeId, $grupoTeorico, $parcial, $conCartilla)
+    {
+        if (! $parcial || ! $sedeId) {
+            return null;
+        }
+
+        $parcialNormalizado = $this->normalizarTipoExamen($parcial);
+
+        return BancoPreguntaConfiguracion::updateOrCreate(
+            [
+                'asignatura_id' => $asignaturaId,
+                'sede_id' => $sedeId,
+                'grupo_teorico' => $grupoTeorico,
+                'parcial' => $parcialNormalizado,
+            ],
+            [
+                'con_cartilla' => $conCartilla,
+                'updated_by' => auth()->id(),
+            ]
+        );
+    }
+
+    private function assertCanManageCartillaConfig(
+        $asignaturaId,
+        $sedeId,
+        $grupoTeorico,
+        $parcial,
+        ?int $rolExamenId = null
+    ): RolExamen
+    {
+        $user = auth()->user();
+        $user?->loadMissing('rol');
+        $rolCodigo = $user?->rol?->codigo;
+        $rolesPermitidos = [
+            'SUPER_ADMIN',
+            'ADMIN',
+            'DIRECTOR_CARRERA',
+            'VICERRECTORADO',
+            'VICERRECTOR_SEDE',
+            'VICERRECTOR_NACIONAL',
+            'VICERRECTORADO_NACIONAL',
+            'DIRECCION_ACADEMICA',
+            'DIRECCIÓN ACADÉMICA',
+            'RESPONSABLE_EVALUACIONES',
+        ];
+
+        if (! in_array($rolCodigo, $rolesPermitidos, true)) {
+            abort(403, 'No tiene permiso para cambiar el estado de cartilla.');
+        }
+
+        $asignatura = Asignatura::find($asignaturaId);
+        $parcialNormalizado = $this->normalizarTipoExamen($parcial);
+        $grupoNormalizado = $this->normalizarGrupoTeorico($grupoTeorico);
+
+        if ($rolExamenId) {
+            $rolExamen = RolExamen::query()
+                ->where('id', $rolExamenId)
+                ->where('materia_codigo', $asignatura?->codigo)
+                ->where('sede_id', $sedeId)
+                ->where('tipo_examen', $parcialNormalizado)
+                ->first();
+        } else {
+            $rolExamen = RolExamen::query()
+                ->where('materia_codigo', $asignatura?->codigo)
+                ->where('sede_id', $sedeId)
+                ->where('tipo_examen', $parcialNormalizado)
+                ->where(function ($query) use ($grupoTeorico, $grupoNormalizado) {
+                    $query->where('grupo', $grupoTeorico)
+                        ->orWhereRaw(
+                            "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(grupo), 'G. ', ''), 'GRUPO ', ''), 'G-', ''), 'G', '') = ?",
+                            [$grupoNormalizado]
+                        );
+                })
+                ->orderByDesc('id')
+                ->first();
+        }
+
+        if (! $rolExamen) {
+            throw ValidationException::withMessages([
+                'rol_examen' => 'No se encontró un rol de examen para esta sede, asignatura, grupo y parcial.',
+            ]);
+        }
+
+        $estado = $this->normalizarEstadoRolExamen($rolExamen->estado);
+        if (! in_array($estado, ['programado', 'programados'], true)) {
+            throw ValidationException::withMessages([
+                'estado' => 'Solo se puede cambiar la cartilla mientras el examen esté en estado Programado.',
+            ]);
+        }
+
+        return $rolExamen;
+    }
+
+    private function normalizarGrupoTeorico($grupo): string
+    {
+        $grupo = strtoupper(trim((string) $grupo));
+
+        return str_replace(['G. ', 'GRUPO ', 'G-', 'G'], '', $grupo);
+    }
+
+    private function normalizarEstadoRolExamen($estado): string
+    {
+        $estado = trim((string) $estado);
+        $estado = iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $estado) ?: $estado;
+
+        return strtolower($estado);
     }
 
     private function normalizarTipoExamen($tipo)
     {
-        $tipo = strtolower(trim((string)$tipo));
+        $tipo = strtolower(trim((string) $tipo));
 
         $mapping = [
             '1er parcial' => '1er Parcial',
@@ -433,21 +1091,396 @@ class BancoPreguntaController extends Controller
 
         return $mapping[$tipo] ?? $tipo;
     }
+
+    private function tiposPreguntaPermitidos(): array
+    {
+        return [
+            'FALSO_VERDADERO',
+            'RESPUESTA_COMPUESTA',
+            'PREGUNTA_CON_CLAVE',
+            'SELECCION_SIMPLE',
+            'EMPAREJAMIENTO',
+            'OPCION_EMPAREJAMIENTO',
+            'PROBLEMA',
+            'SUBPROBLEMA',
+        ];
+    }
+
+    private function normalizarTipoPreguntaBanco(?string $tipo): ?string
+    {
+        return $this->normalizarTipoPreguntaManual($tipo);
+    }
+
+    private function contarGruposTipoPregunta(array $porTipo): array
+    {
+        $conteo = ['g1' => 0, 'g2' => 0, 'g3' => 0];
+
+        foreach ($porTipo as $tipo => $total) {
+            $grupo = $this->resolverGrupoTipoPregunta((string) $tipo);
+            if ($grupo) {
+                $conteo[$grupo] += (int) $total;
+            }
+        }
+
+        return $conteo;
+    }
+
+    private function resolverGrupoTipoPregunta(string $tipo): ?string
+    {
+        $tipoNormalizado = $this->normalizarTipoPreguntaBanco($tipo);
+
+        if (in_array($tipoNormalizado, ['FALSO_VERDADERO', 'PREGUNTA_CON_CLAVE', 'RESPUESTA_COMPUESTA'], true)) {
+            return 'g1';
+        }
+
+        if ($tipoNormalizado === 'SELECCION_SIMPLE') {
+            return 'g2';
+        }
+
+        if (in_array($tipoNormalizado, ['SUBPROBLEMA', 'OPCION_EMPAREJAMIENTO'], true)) {
+            return 'g3';
+        }
+
+        return null;
+    }
+
+    private function normalizarRespuestaBancoExcel($value)
+    {
+        $respuesta = mb_strtoupper(trim((string) $value));
+
+        if ($respuesta === '') {
+            return '';
+        }
+
+        if (preg_match('/^([A-E])(?:\s*[:\.\)\-]|\b)/u', $respuesta, $matches)) {
+            return $matches[1];
+        }
+
+        if (str_contains($respuesta, ',')) {
+            return array_map(
+                fn ($item) => $this->normalizarRespuestaBancoExcel($item),
+                explode(',', $respuesta)
+            );
+        }
+
+        return $respuesta;
+    }
+
+    private function normalizarTipoPreguntaManual(?string $tipo): ?string
+    {
+        $normalized = mb_strtoupper(trim((string) $tipo));
+        $normalized = strtr($normalized, [
+            'Á' => 'A',
+            'É' => 'E',
+            'Í' => 'I',
+            'Ó' => 'O',
+            'Ú' => 'U',
+            'Ü' => 'U',
+        ]);
+
+        $map = [
+            'FV' => 'FALSO_VERDADERO',
+            'FALSO_VERDADERO' => 'FALSO_VERDADERO',
+            'VERDADERO O FALSO' => 'FALSO_VERDADERO',
+            'FALSO O VERDADERO' => 'FALSO_VERDADERO',
+            'VERDADERO O FALSO SIMPLE' => 'FALSO_VERDADERO',
+            'RESPUESTA_COMPUESTA' => 'RESPUESTA_COMPUESTA',
+            'SELECCION_MULTIPLE' => 'RESPUESTA_COMPUESTA',
+            'SM' => 'RESPUESTA_COMPUESTA',
+            'RESPUESTA A/B/AMBAS/NINGUNA' => 'RESPUESTA_COMPUESTA',
+            'PREGUNTA_CON_CLAVE' => 'PREGUNTA_CON_CLAVE',
+            'PREGUNTA CON CLAVE' => 'PREGUNTA_CON_CLAVE',
+            'VERDADERO O FALSO COMPLEJAS' => 'PREGUNTA_CON_CLAVE',
+            'SELECCION_SIMPLE' => 'SELECCION_SIMPLE',
+            'SELECCION_UNICA' => 'SELECCION_SIMPLE',
+            'SELECCION SIMPLE' => 'SELECCION_SIMPLE',
+            'SS' => 'SELECCION_SIMPLE',
+            'SU' => 'SELECCION_SIMPLE',
+            'SELECCION DE LA MEJOR RESPUESTA' => 'SELECCION_SIMPLE',
+            'EMPAREJAMIENTO' => 'EMPAREJAMIENTO',
+            'EM' => 'EMPAREJAMIENTO',
+            'EMPAREJAMIENTO AMPLIADO' => 'EMPAREJAMIENTO',
+            'OPCION_EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION DE EMPAREJAMIENTO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION EMPAREJAMIENTO AMPLIADO' => 'OPCION_EMPAREJAMIENTO',
+            'OPCION DE EMPAREJAMIENTO AMPLIADO' => 'OPCION_EMPAREJAMIENTO',
+            'PROBLEMA' => 'PROBLEMA',
+            'PROBLEMA O CASO' => 'PROBLEMA',
+            'PR' => 'PROBLEMA',
+            'ITEMS AGRUPADOS POR CASO CLINICO O PROBLEMA' => 'PROBLEMA',
+            'SUBPROBLEMA' => 'SUBPROBLEMA',
+            'SUB PROBLEMA' => 'SUBPROBLEMA',
+            'SUBPREGUNTA' => 'SUBPROBLEMA',
+            'SP' => 'SUBPROBLEMA',
+            'SUBITEM DE CASO O PROBLEMA' => 'SUBPROBLEMA',
+        ];
+
+        return $map[$normalized] ?? $normalized;
+    }
+
+    private function sanitizePreguntaForResponse(BancoPregunta $pregunta): BancoPregunta
+    {
+        $pregunta->enunciado = $this->sanitizePreguntaText($pregunta->enunciado);
+        $pregunta->grupo = $this->sanitizePreguntaText($pregunta->grupo);
+        $pregunta->grupoTeorico = $this->sanitizePreguntaText($pregunta->grupoTeorico);
+        $pregunta->dificultad = $this->sanitizePreguntaText($pregunta->dificultad);
+        $pregunta->parcial = $this->sanitizePreguntaText($pregunta->parcial);
+        $pregunta->opciones = $this->sanitizePreguntaValue($pregunta->opciones);
+        $pregunta->respuesta_correcta = $this->sanitizePreguntaValue($pregunta->respuesta_correcta);
+
+        return $pregunta;
+    }
+
+    private function sanitizePreguntaPayload(array &$validated): void
+    {
+        foreach (['enunciado', 'grupo', 'grupoTeorico', 'parcial', 'dificultad'] as $field) {
+            if (array_key_exists($field, $validated) && is_string($validated[$field])) {
+                $validated[$field] = $this->sanitizePreguntaText($validated[$field]);
+            }
+        }
+
+        if (array_key_exists('opciones', $validated)) {
+            $validated['opciones'] = $this->sanitizePreguntaValue($validated['opciones']);
+        }
+
+        if (array_key_exists('respuesta_correcta', $validated)) {
+            $validated['respuesta_correcta'] = $this->sanitizePreguntaValue($validated['respuesta_correcta']);
+        }
+    }
+
+    private function sanitizePreguntaValue($value)
+    {
+        if (is_string($value)) {
+            return $this->sanitizePreguntaText($value);
+        }
+
+        if (is_array($value)) {
+            return array_map(fn ($item) => $this->sanitizePreguntaValue($item), $value);
+        }
+
+        return $value;
+    }
+
+    private function sanitizePreguntaText($value): string
+    {
+        $text = (string) ($value ?? '');
+
+        if ($text === '') {
+            return '';
+        }
+
+        $text = str_replace(
+            [
+                'F�cil',
+                'Dif�cil',
+                'Te�rico',
+                'relaci�n',
+                't�rmino',
+                'instrucci�n',
+                'informaci�n',
+                'visualizaci�n',
+                'importaci�n',
+                'configuraci�n',
+                'combinaci�n',
+                'despu�s',
+                'm�nimo',
+                'v�lidas',
+                'cl�nico',
+                'cl�nica',
+                'diagn�stico',
+                'diagn�stica',
+                'presi�n',
+                'sist�lica',
+                'diast�lica',
+                'activaci�n',
+                'parasimp�tica',
+                'simp�tica',
+                'contracci�n',
+                'relajaci�n',
+                'est�n',
+                'm�s',
+                'n�useas',
+                'pedi�trico',
+                'radiograf�a',
+                'ecograf�a',
+                '�ptico',
+                'raqu�deo',
+                'hipertensi�n',
+                'fibrilaci�n',
+                'Cu�les',
+                'cu�les',
+                'Qu�',
+                'qu�',
+                'est�',
+            ],
+            [
+                'Fácil',
+                'Difícil',
+                'Teórico',
+                'relación',
+                'término',
+                'instrucción',
+                'información',
+                'visualización',
+                'importación',
+                'configuración',
+                'combinación',
+                'después',
+                'mínimo',
+                'válidas',
+                'clínico',
+                'clínica',
+                'diagnóstico',
+                'diagnóstica',
+                'presión',
+                'sistólica',
+                'diastólica',
+                'activación',
+                'parasimpática',
+                'simpática',
+                'contracción',
+                'relajación',
+                'están',
+                'más',
+                'náuseas',
+                'pediátrico',
+                'radiografía',
+                'ecografía',
+                'óptico',
+                'raquídeo',
+                'hipertensión',
+                'fibrilación',
+                'Cuáles',
+                'cuáles',
+                'Qué',
+                'qué',
+                'está',
+            ],
+            $text
+        );
+
+        if (preg_match('/[ÃÂâ]/u', $text)) {
+            $decoded = $this->decodeLatin1Utf8String($text);
+            if ($this->mojibakeScore($decoded) < $this->mojibakeScore($text)) {
+                $text = $decoded;
+            }
+        }
+
+        return $text;
+    }
+
+    private function decodeLatin1Utf8String(string $text): string
+    {
+        $chars = preg_split('//u', $text, -1, PREG_SPLIT_NO_EMPTY);
+        $bytes = '';
+
+        foreach ($chars as $char) {
+            $ord = mb_ord($char, 'UTF-8');
+
+            if ($ord === false || $ord > 255) {
+                return $text;
+            }
+
+            $bytes .= chr($ord);
+        }
+
+        return mb_check_encoding($bytes, 'UTF-8') ? $bytes : $text;
+    }
+
+    private function mojibakeScore(string $text): int
+    {
+        preg_match_all('/[ÃÂâ�]/u', $text, $matches);
+
+        return count($matches[0]);
+    }
+
+    private function parsePreguntaPayload(array &$validated): void
+    {
+        if (isset($validated['opciones']) && is_string($validated['opciones'])) {
+            $decoded = json_decode($validated['opciones'], true);
+            $validated['opciones'] = is_array($decoded) ? $decoded : [];
+        }
+
+        if (isset($validated['respuesta_correcta']) && is_string($validated['respuesta_correcta'])) {
+            $trimmed = trim($validated['respuesta_correcta']);
+
+            if (str_starts_with($trimmed, '[')) {
+                $decoded = json_decode($trimmed, true);
+                $validated['respuesta_correcta'] = is_array($decoded) ? $decoded : [];
+            }
+        }
+    }
+
+    private function normalizePreguntaPayload(array &$validated): void
+    {
+        $tipo = $validated['tipo'] ?? null;
+        $requiereRespuesta = ! in_array($tipo, ['PROBLEMA', 'EMPAREJAMIENTO'], true);
+        $usaOpciones = in_array(
+            $tipo,
+            ['FALSO_VERDADERO', 'RESPUESTA_COMPUESTA', 'PREGUNTA_CON_CLAVE', 'SELECCION_SIMPLE', 'SUBPROBLEMA'],
+            true
+        );
+
+        if (! $requiereRespuesta) {
+            $validated['respuesta_correcta'] = [];
+            if ($tipo !== 'EMPAREJAMIENTO') {
+                $validated['opciones'] = [];
+            }
+            $validated['dificultad'] = '';
+
+            return;
+        }
+
+        $respuesta = $validated['respuesta_correcta'] ?? null;
+        $respuestaVacia = is_array($respuesta)
+            ? count(array_filter($respuesta, fn ($item) => trim((string) $item) !== '')) === 0
+            : trim((string) $respuesta) === '';
+
+        if ($respuestaVacia) {
+            throw ValidationException::withMessages([
+                'respuesta_correcta' => 'La respuesta correcta es obligatoria para este tipo de pregunta.',
+            ]);
+        }
+
+        if (! $usaOpciones) {
+            $validated['opciones'] = [];
+        }
+    }
+
+    private function storePreguntaImage(Request $request, array &$validated, ?BancoPregunta $pregunta = null): void
+    {
+        if (! $request->hasFile('image_file')) {
+            return;
+        }
+
+        if ($pregunta?->imagen) {
+            Storage::disk('public')->delete('preguntas/'.$pregunta->imagen);
+        }
+
+        $file = $request->file('image_file');
+        $filename = time().'_'.uniqid().'.'.$file->getClientOriginalExtension();
+        $file->storeAs('preguntas', $filename, 'public');
+        $validated['imagen'] = $filename;
+    }
+
     public function showImage($filename)
     {
-        $path = storage_path('app/public/preguntas/' . $filename);
-        if (!file_exists($path)) {
+        $path = storage_path('app/public/preguntas/'.$filename);
+        if (! file_exists($path)) {
             abort(404);
         }
+
         return response()->file($path);
     }
 
     public function getLogo()
     {
         $path = public_path('descargas/unitepc-logo.png');
-        if (!file_exists($path)) {
+        if (! file_exists($path)) {
             abort(404);
         }
+
         return response()->file($path);
     }
 }

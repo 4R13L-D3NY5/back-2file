@@ -82,7 +82,7 @@ class CarreraController extends Controller
             $query->where('semestre', $request->semestre);
         }
 
-        $asignaturas = $query->get(['id', 'codigo', 'nombre', 'semestre']);
+        $asignaturas = $query->get(['asignaturas.id', 'asignaturas.codigo', 'asignaturas.nombre', 'asignatura_carrera.semestre']);
 
         return response()->json($asignaturas);
     }

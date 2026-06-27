@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Docente;
+use App\Models\Rol;
+use App\Models\User;
 use Illuminate\Http\Request;
 
 class DocenteController extends Controller
@@ -246,7 +248,17 @@ class DocenteController extends Controller
                     'carrera' => $carreraId,
                     'carrera_nombre' => $carreraNombre,
                     'materiasData' => $materiasData,
-                    'grupos' => $grupos, // Include raw groups for frontend logic
+                    'grupos' => $grupos->map(function ($grupo) {
+                        return [
+                            'id' => $grupo->id,
+                            'nombre' => $grupo->nombre,
+                            'tipo' => $grupo->tipo,
+                            'sede_id' => $grupo->sede_id,
+                            'carrera_id' => $grupo->carrera_id,
+                            'asignatura_id' => $grupo->asignatura_id,
+                            'docente_id' => $grupo->docente_id,
+                        ];
+                    })->values(),
                     'estado' => $docente->estado, // Active/Inactive status
                     'sede' => $docente->sede, // Sede object
                     'sede_id' => $docente->sede_id,
@@ -359,6 +371,39 @@ class DocenteController extends Controller
     }
 
     /**
+     * Endpoint ligero para selectores: solo id, nombre_completo, sede_id.
+     * Sin relaciones pesadas → nunca provoca errores de memoria.
+     * GET /api/docentes-simple
+     */
+    public function listSimple(Request $request)
+    {
+        $query = Docente::query()->select('id', 'nombre_completo', 'sede_id');
+
+        if ($request->filled('sede_id')) {
+            $sedeId = $request->sede_id;
+            // Mostrar docentes cuya sede principal sea la indicada
+            // O que tengan grupos asignados en esa sede
+            $query->where(function ($q) use ($sedeId) {
+                $q->where('sede_id', $sedeId)
+                  ->orWhereHas('grupos', function ($sub) use ($sedeId) {
+                      $sub->where('sede_id', $sedeId);
+                  });
+            });
+        }
+
+        if ($request->filled('q')) {
+            $query->where('nombre_completo', 'like', "%{$request->q}%");
+        }
+
+        // Excluir docentes sin nombre
+        $query->whereNotNull('nombre_completo')->where('nombre_completo', '!=', '');
+
+        return response()->json(
+            $query->orderBy('nombre_completo')->get()
+        );
+    }
+
+    /**
      * Store a newly created resource in storage.
      */
     public function store(Request $request)
@@ -369,11 +414,44 @@ class DocenteController extends Controller
             'email' => 'nullable|email',
             'sede_id' => 'required|exists:sedes,id',
             'celular' => 'nullable|string',
-            'grado_academico' => 'nullable|string'
+            'grado_academico' => 'nullable|string',
+            'especialidad' => 'nullable|string'
         ]);
 
         $docente = Docente::create($validated);
-        return response()->json($docente, 201);
+
+        // ── Crear usuario automáticamente (mismo flujo que sincronización) ──
+        if ($docente->ci && !$docente->user_id) {
+            $user = User::where('username', $docente->ci)->first();
+
+            if (!$user) {
+                $parts = explode(' ', $docente->nombre_completo, 2);
+                $nombre = $parts[0] ?? $docente->nombre_completo;
+                $apellido = $parts[1] ?? 'Doe';
+
+                $docenteRoleId = Rol::where('codigo', 'DOCENTE')->value('id') ?? 6;
+
+                $user = User::create([
+                    'username' => $docente->ci,
+                    'email' => $docente->email ?: (strtolower($docente->ci) . '@unitepc.edu.bo'),
+                    'password' => $docente->ci, // cast 'hashed' del modelo lo hashea automaticamente
+                    'rol_id' => $docenteRoleId,
+                    'estado' => 1,
+                    'password_change_required' => false,
+                    'nombre' => $nombre,
+                    'apellido' => $apellido,
+                    'ci' => $docente->ci,
+                    'telefono' => $docente->celular ?? '',
+                    'carrera' => null,
+                    'sede_id' => $docente->sede_id,
+                ]);
+            }
+
+            $docente->user_id = $user->id;
+            $docente->save();
+        }
+
+        return response()->json($docente->fresh(['user']), 201);
     }
 
     /**

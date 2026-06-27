@@ -57,6 +57,7 @@ class MallaCurricularController extends Controller
             ->whereIn('grupos.asignatura_id', $asignaturaIds)
             ->whereNotNull('grupos.docente_id')
             ->whereNull('grupos.deleted_at')
+            ->where('grupos.estado', 'ACTIVO')
             ->select('grupos.asignatura_id', 'docentes.nombre_completo as docente')
             ->get()
             ->each(function ($row) use (&$docentesPorId) {

@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Grupo;
 use App\Models\Sede;
 use App\Models\SyncLog;
 use App\Services\PlanningSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -249,6 +251,88 @@ class SyncController extends Controller
     }
 
     /**
+     * Sincronizar una asignatura específica en una sede y carrera.
+     * POST /api/sync/asignatura
+     * Body: { gestion, sede_id, carrera, codigo_asignatura, plan_estudios (opcional, default 'N') }
+     */
+    public function syncAsignatura(Request $request)
+    {
+        $request->validate([
+            'gestion'            => 'required|string',
+            'sede_id'            => 'required|integer|exists:sedes,id',
+            'carrera'            => 'required|string|in:' . implode(',', self::CARRERAS),
+            'codigo_asignatura'  => 'required|string',
+            'plan_estudios'      => 'nullable|string',
+        ]);
+
+        $sede    = Sede::findOrFail($request->sede_id);
+        $carrera = strtoupper($request->carrera);
+        $gestion = $request->gestion;
+        $codigoAsignatura = $request->codigo_asignatura;
+        // plan_estudios es opcional: si no se envía, la API determina el plan real por sede
+        $planEstudios = $request->plan_estudios ?: null;
+
+        $inicio = microtime(true);
+
+        try {
+            $stats = $this->callApiAndSync($gestion, $sede, $carrera, $codigoAsignatura, $planEstudios);
+
+            $duracion = round(microtime(true) - $inicio, 2);
+
+            $log = SyncLog::create([
+                'sede_id'               => $sede->id,
+                'carrera'               => $carrera,
+                'gestion'               => $gestion,
+                'modo'                  => 'asignatura',
+                'codigo_asignatura'     => $codigoAsignatura,
+                'plan_estudios'         => $planEstudios,
+                'estado'                => 'ok',
+                'total_registros'       => $stats['total'],
+                'docentes_creados'      => $stats['docentes'],
+                'grupos_creados'        => $stats['grupos'],
+                'horarios_actualizados' => $stats['horarios'],
+                'diff_data'             => $stats['diff'] ?? null,
+                'duracion_segundos'     => $duracion,
+                'user_id'               => Auth::id(),
+            ]);
+
+            return response()->json([
+                'ok'                 => true,
+                'sede'               => $sede->nombre,
+                'carrera'            => $carrera,
+                'gestion'            => $gestion,
+                'codigo_asignatura'  => $codigoAsignatura,
+                'plan_estudios'      => $planEstudios,
+                'stats'              => $stats,
+                'diff'               => $stats['diff'] ?? null,
+                'log_id'             => $log->id,
+                'duracion'           => $duracion,
+            ]);
+        } catch (\Throwable $e) {
+            $duracion = round(microtime(true) - $inicio, 2);
+            Log::error("SyncController::syncAsignatura error: {$e->getMessage()}");
+
+            SyncLog::create([
+                'sede_id'           => $sede->id,
+                'carrera'           => $carrera,
+                'gestion'           => $gestion,
+                'modo'              => 'asignatura',
+                'codigo_asignatura' => $codigoAsignatura,
+                'plan_estudios'     => $planEstudios,
+                'estado'            => 'error',
+                'error_mensaje'     => $e->getMessage(),
+                'duracion_segundos' => $duracion,
+                'user_id'           => Auth::id(),
+            ]);
+
+            return response()->json([
+                'ok'    => false,
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Obtener historial de sincronizaciones.
      * GET /api/sync/logs
      */
@@ -272,6 +356,8 @@ class SyncController extends Controller
             'sede'                  => $l->sede?->nombre ?? '—',
             'sede_id'               => $l->sede_id,
             'carrera'               => $l->carrera ?? 'TODAS',
+            'codigo_asignatura'     => $l->codigo_asignatura,
+            'plan_estudios'         => $l->plan_estudios,
             'gestion'               => $l->gestion,
             'modo'                  => $l->modo,
             'estado'                => $l->estado,
@@ -300,13 +386,15 @@ class SyncController extends Controller
         $log = SyncLog::with('sede', 'user')->findOrFail($id);
 
         return response()->json([
-            'id'       => $log->id,
-            'sede'     => $log->sede?->nombre ?? '—',
-            'carrera'  => $log->carrera,
-            'gestion'  => $log->gestion,
-            'fecha'    => $log->created_at->format('d/m/Y H:i:s'),
-            'estado'   => $log->estado,
-            'diff'     => $log->diff_data,
+            'id'                => $log->id,
+            'sede'              => $log->sede?->nombre ?? '—',
+            'carrera'           => $log->carrera,
+            'codigo_asignatura' => $log->codigo_asignatura,
+            'plan_estudios'     => $log->plan_estudios,
+            'gestion'           => $log->gestion,
+            'fecha'             => $log->created_at->format('d/m/Y H:i:s'),
+            'estado'            => $log->estado,
+            'diff'              => $log->diff_data,
         ]);
     }
 
@@ -314,7 +402,7 @@ class SyncController extends Controller
     // PRIVADO: llama a la API externa y procesa con PlanningSyncService
     // ─────────────────────────────────────────────────────────────────────────
 
-    private function callApiAndSync(string $gestion, Sede $sede, string $carrera): array
+    private function callApiAndSync(string $gestion, Sede $sede, string $carrera, ?string $codigoAsignatura = null, ?string $planEstudios = null): array
     {
         $apiSedeId = $sede->id_api ?? $sede->id;
 
@@ -332,26 +420,72 @@ class SyncController extends Controller
             );
         }
 
-        $items = $response->json();
+        $allItems = $response->json();
 
-        if (!is_array($items) || empty($items)) {
+        if (!is_array($allItems) || empty($allItems)) {
             return ['total' => 0, 'docentes' => 0, 'grupos' => 0, 'horarios' => 0, 'diff' => null];
+        }
+
+        // Filtrar por asignatura si se especificó
+        // El plan_estudios NO se usa para filtrar: cada sede tiene su propio plan
+        // y ese valor viene directamente en el campo planEst de cada item de la API.
+        $itemsToSync = $allItems;
+        if ($codigoAsignatura !== null) {
+            $itemsToSync = array_filter($allItems, function ($item) use ($codigoAsignatura) {
+                return trim($item['siglaP'] ?? '') === $codigoAsignatura;
+            });
+            $itemsToSync = array_values($itemsToSync);
         }
 
         // ── Snapshot ANTES ──────────────────────────────────────────────────
         $snapshotAntes = $this->capturarSnapshot($sede->id, $carrera);
 
         $service = app(\App\Services\PlanningSyncService::class);
-        $stats   = $service->syncBatch($items);
+        $stats   = $service->syncBatch($itemsToSync);
+
+        // FIX: Post-sync forzado de docentes cuando se sincroniza una asignatura específica
+        if ($codigoAsignatura !== null) {
+            $this->forzarAsignacionDocentes($itemsToSync, $sede, $gestion);
+        }
 
         // ── Snapshot DESPUÉS ─────────────────────────────────────────────────
         $snapshotDespues = $this->capturarSnapshot($sede->id, $carrera);
 
-        // ── Generar Diff ─────────────────────────────────────────────────────
+        // ── Generar Diff base ────────────────────────────────────────────────
         $diff = $this->generarDiff($snapshotAntes, $snapshotDespues);
 
+        // ── Fase de Reconciliación (solo en sync manual del admin) ───────────
+        $carreraModel = \App\Models\Carrera::where('sigla', $carrera)->first();
+        if ($carreraModel) {
+            try {
+                $reconcile = $service->reconcile(
+                    $carreraModel->id,
+                    $sede->id,
+                    $gestion,
+                    $allItems
+                );
+
+                // Extender el diff con los resultados de la reconciliación
+                $diff['grupos_inactivados']        = $reconcile['grupos_inactivados']        ?? [];
+                $diff['asignaturas_desvinculadas']  = $reconcile['asignaturas_desvinculadas'] ?? [];
+                $diff['duplicados_fusionados']      = $reconcile['duplicados_fusionados']     ?? [];
+                $diff['conflictos_locales']         = $reconcile['conflictos_locales']        ?? [];
+
+                // Actualizar el resumen
+                $diff['resumen']['grupos_inactivados']       = count($diff['grupos_inactivados']);
+                $diff['resumen']['asignaturas_desvinculadas']= count($diff['asignaturas_desvinculadas']);
+                $diff['resumen']['duplicados_fusionados']    = count($diff['duplicados_fusionados']);
+                $diff['resumen']['conflictos_locales']       = count($diff['conflictos_locales']);
+                $diff['resumen']['total_cambios']           += count($diff['grupos_inactivados'])
+                                                             + count($diff['duplicados_fusionados']);
+            } catch (\Throwable $e) {
+                Log::error("SyncController::reconcile error: {$e->getMessage()}");
+                $diff['reconcile_error'] = $e->getMessage();
+            }
+        }
+
         return [
-            'total'    => count($items),
+            'total'    => count($itemsToSync),
             'docentes' => $stats['docentes']      ?? 0,
             'grupos'   => $stats['grupos']        ?? 0,
             'horarios' => $stats['horarios']      ?? 0,
@@ -359,6 +493,49 @@ class SyncController extends Controller
             'errores'  => $stats['errors']        ?? 0,
             'diff'     => $diff,
         ];
+    }
+
+    /**
+     * Resolver un conflicto local vs API.
+     * POST /api/sync/resolver-conflictos
+     * Body: { grupo_id, accion: 'aceptar_api'|'mantener_local', docente_id_api? }
+     */
+    public function resolverConflicto(Request $request)
+    {
+        $request->validate([
+            'grupo_id' => 'required|integer|exists:grupos,id',
+            'accion'   => 'required|in:aceptar_api,mantener_local',
+            'docente_ci_api' => 'nullable|string',
+        ]);
+
+        $grupo = Grupo::withoutGlobalScope('activo')->findOrFail($request->grupo_id);
+
+        if ($request->accion === 'aceptar_api') {
+            // Si se acepta la API, actualizar el docente con el de la API
+            if ($request->filled('docente_ci_api')) {
+                $docente = \App\Models\Docente::where('ci', $request->docente_ci_api)->first();
+                if ($docente) {
+                    $grupo->docente_id            = $docente->id;
+                    $grupo->modificado_localmente = false;
+                    $grupo->save();
+                }
+            } else {
+                $grupo->modificado_localmente = false;
+                $grupo->save();
+            }
+
+            return response()->json([
+                'ok'      => true,
+                'mensaje' => 'Conflicto resuelto: se aceptaron los datos de la API.',
+            ]);
+        }
+
+        // mantener_local: solo marcar como resuelto (no cambiar datos)
+        // El campo modificado_localmente permanece true para futuros syncs
+        return response()->json([
+            'ok'      => true,
+            'mensaje' => 'Conflicto resuelto: se mantienen los datos locales.',
+        ]);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -372,7 +549,8 @@ class SyncController extends Controller
         $carreraId    = $carreraModel?->id;
 
         // Grupos: snapshot de docente asignado y estado
-        $grupos = \App\Models\Grupo::with('docente', 'horarios')
+        // withoutGlobalScope: el snapshot necesita ver TODOS los grupos para el diff
+        $grupos = \App\Models\Grupo::withoutGlobalScope('activo')->with('docente', 'horarios')
             ->where('sede_id', $sedeId)
             ->when($carreraId, fn($q) => $q->where('carrera_id', $carreraId))
             ->get()
@@ -541,5 +719,55 @@ class SyncController extends Controller
         ];
 
         return $diff;
+    }
+
+    /**
+     * Post-sync forzado: asignar docentes a grupos locales que aun no lo tengan.
+     * Se usa como respaldo cuando updateOrCreate no encuentra el grupo existente
+     * (por ejemplo, si fue creado manualmente con atributos diferentes).
+     */
+    private function forzarAsignacionDocentes(array $items, Sede $sede, string $gestion): void
+    {
+        // Agrupar items por (grupo, tipoClase) para obtener docente unico por grupo
+        $gruposApi = [];
+        foreach ($items as $item) {
+            $nombreGrupo = $item['grupo'] ?? '';
+            $tipoCrudo = isset($item['tipoClase']) ? strtoupper(trim($item['tipoClase'])) : 'TEORICO';
+            $tipo = ($tipoCrudo === 'REGULAR') ? 'TEORICO' : $tipoCrudo;
+            $key = $nombreGrupo . '|' . $tipo;
+
+            if (!isset($gruposApi[$key])) {
+                $gruposApi[$key] = [
+                    'nombre' => $nombreGrupo,
+                    'tipo' => $tipo,
+                    'docente_nombre' => $item['docente'] ?? '',
+                    'docente_ci' => $item['ci'] ?? '',
+                ];
+            }
+        }
+
+        foreach ($gruposApi as $info) {
+            if (empty($info['nombre']) || empty($info['docente_ci'])) continue;
+
+            $grupo = Grupo::withoutGlobalScope('activo')
+                ->where('gestion', $gestion)
+                ->where('sede_id', $sede->id)
+                ->where('nombre', $info['nombre'])
+                ->where('tipo', $info['tipo'])
+                ->first();
+
+            if (!$grupo || $grupo->docente_id) continue;
+
+            $docente = Docente::withTrashed()->where('ci', $info['docente_ci'])->first();
+            if ($docente) {
+                Log::info('SyncController::forzarAsignacionDocentes - Asignando docente a grupo', [
+                    'grupo_id' => $grupo->id,
+                    'docente_id' => $docente->id,
+                    'docente_nombre' => $docente->nombre_completo,
+                ]);
+                $grupo->docente_id = $docente->id;
+                $grupo->save();
+            }
+        }
     }
 }

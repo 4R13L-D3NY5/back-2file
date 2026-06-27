@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SISA -  Gestion de Evaluaciones</title>
+  <!-- Tailwind CSS Play CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js for markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- Mermaid.js for visual flows -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <!-- Google Fonts: Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', sans-serif; background-color: #020617; }
+    /* Custom markdown classes */
+    .markdown-body h1 { font-size: 2rem; font-weight: 800; border-bottom: 1px solid #1e293b; padding-bottom: 0.5rem; margin-top: 2rem; margin-bottom: 1.25rem; color: #f8fafc; }
+    .markdown-body h2 { font-size: 1.5rem; font-weight: 700; border-bottom: 1px solid #1e293b; padding-bottom: 0.35rem; margin-top: 1.75rem; margin-bottom: 1rem; color: #f1f5f9; }
+    .markdown-body h3 { font-size: 1.25rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.75rem; color: #e2e8f0; }
+    .markdown-body h4 { font-size: 1.1rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #cbd5e1; }
+    .markdown-body p { margin-top: 0; margin-bottom: 1rem; line-height: 1.75; color: #cbd5e1; }
+    .markdown-body ul, .markdown-body ol { margin-top: 0; margin-bottom: 1rem; padding-left: 1.75rem; }
+    .markdown-body ul { list-style-type: disc; }
+    .markdown-body ol { list-style-type: decimal; }
+    .markdown-body li { margin-top: 0.25rem; margin-bottom: 0.25rem; line-height: 1.625; color: #cbd5e1; }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-top: 1.25rem; margin-bottom: 1.25rem; display: block; overflow-x: auto; }
+    .markdown-body th, .markdown-body td { border: 1px solid #334155; padding: 0.6rem 0.8rem; text-align: left; min-width: 120px; }
+    .markdown-body th { background-color: #1e293b; font-weight: 600; color: #f8fafc; }
+    .markdown-body td { color: #cbd5e1; }
+    .markdown-body tr:nth-child(even) td { background-color: rgba(30, 41, 59, 0.25); }
+    .markdown-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.9em; background-color: rgba(30, 41, 59, 0.6); padding: 0.2rem 0.4rem; border-radius: 0.25rem; color: #fb7185; }
+    .markdown-body pre { background-color: #0f172a; border: 1px solid #1e293b; border-radius: 0.5rem; padding: 1rem; overflow-x: auto; margin-top: 1.25rem; margin-bottom: 1.25rem; }
+    .markdown-body pre code { background-color: transparent; padding: 0; border-radius: 0; color: #e2e8f0; font-size: 0.95em; }
+    .markdown-body hr { border: 0; border-top: 1px solid #1e293b; margin: 1.75rem 0; }
+    .markdown-body a { color: #818cf8; text-decoration: none; font-weight: 500; transition: color 0.2s; }
+    .markdown-body a:hover { color: #c084fc; text-decoration: underline; }
+    
+    /* Mermaid styling */
+    .mermaid {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+      border-radius: 0.5rem;
+      margin: 1.25rem 0;
+      display: flex;
+      justify-content: center;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 flex min-h-screen">
+
+  <!-- Mobile Toggle Button -->
+  <button id="menu-toggle" class="lg:hidden fixed bottom-5 right-5 z-50 bg-indigo-600 text-white p-3.5 rounded-full shadow-lg hover:bg-indigo-500 focus:outline-none transition">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path id="menu-icon" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+    </svg>
+  </button>
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="w-80 bg-slate-900 border-r border-slate-800 flex flex-col fixed inset-y-0 left-0 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
+    <div class="p-6 border-b border-slate-800 bg-slate-950/80">
+      <div class="flex items-center gap-2.5">
+        <div class="w-8.5 h-8.5 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-md shadow-indigo-500/20">S</div>
+        <div>
+          <h1 class="text-base font-bold text-slate-100 leading-tight">SISA 2.0 Docs</h1>
+          <p class="text-[10px] text-slate-500">Documentación Técnica Local</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Sidebar Navigation -->
+    <nav class="flex-1 overflow-y-auto p-4 space-y-1">
+      <a href="README.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      Portal Principal
+    </a>
+<a href="01_autenticacion_seguridad.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      01. Autenticacion y Seguridad
+    </a>
+<a href="02_estructura_academica.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      02. Estructura Academica
+    </a>
+<a href="03_pac_y_bibliografia.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      03. PAC y Bibliografia
+    </a>
+<a href="04_materias_comunes.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      04. Materias Comunes
+    </a>
+<a href="05_planificacion_semestral.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      05. Planificacion Semestral
+    </a>
+<a href="06_control_clase_seguimiento.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      06. Control y Seguimiento
+    </a>
+<a href="07_banco_preguntas_evaluaciones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      07. Banco y Evaluaciones
+    </a>
+<a href="08_gestion_evaluaciones_y_examenes.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm bg-indigo-950/70 text-indigo-300 border-l-4 border-indigo-500 pl-3 font-semibold shadow-inner">
+      08. Gestion de Evaluaciones
+    </a>
+<a href="09_sincronizacion_y_patrones.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      09. Sincronizacion y Motores
+    </a>
+<a href="10_codegraph_dev_tools.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      10. CodeGraph - Herramientas Dev
+    </a>
+<a href="diagrama_er_completo.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      Diagrama ER Completo
+    </a>
+<a href="endpoints.html" class="flex items-center py-2.5 px-3 rounded-md transition duration-200 text-sm text-slate-400 hover:bg-slate-800/40 hover:text-slate-200 pl-4">
+      Endpoints de la API
+    </a>
+    </nav>
+    
+    <div class="p-4 border-t border-slate-800 text-center text-xs text-slate-500 bg-slate-950/40">
+      Desarrollado para UNITEPC
+    </div>
+  </aside>
+
+  <!-- Main Content Area -->
+  <main class="flex-1 lg:pl-80 min-h-screen flex flex-col bg-slate-950">
+    <div class="flex-1 max-w-4xl w-full mx-auto px-6 py-12 lg:px-12">
+      <article id="content" class="markdown-body">
+        <!-- Rendered markdown goes here -->
+      </article>
+    </div>
+  </main>
+
+  <!-- Raw Markdown Content Injected Safely -->
+  <script type="text/markdown" id="markdown-content"># Módulo 8: Gestión de Evaluaciones y Rol de Exámenes (SISA 2.0)
+
+Este módulo describe la arquitectura, la lógica del lado del cliente y los servicios del backend que gobiernan la **administración de evaluaciones** (configuración jerárquica) y el **Rol de Exámenes** (grilla interactiva de calendarización con validaciones duras en tiempo real). 
+
+---
+
+## 1. Ficha Técnica
+
+*   **Tecnología del Frontend:** Quasar Framework v2.x + Vue 3 (Composition API) + Pinia (Gestor de Estado).
+*   **Vistas de Frontend:** 
+    *   `src/pages/admin/AdministracionEvaluacionPage.vue` (Administración de directivas).
+    *   `src/pages/admin/EvaluacionesPage.vue` (Listado y control de evaluaciones).
+    *   `src/pages/director/RolExamenesPage.vue` (Grilla de calendarización para directores).
+    *   `src/pages/evaluaciones/RolExamenesEvaluacionPage.vue` (Vistas de evaluaciones del departamento).
+*   **Tecnología del Backend:** Laravel v12.x + PHP 8.2+ + Eloquent ORM + Form Requests.
+*   **Controladores Backend:**
+    *   `App\Http\Controllers\EvaluacionConfiguracionController` (Jerarquías y fallbacks).
+    *   `App\Http\Controllers\RolExamenController` (Calendarización, reglas de choque y cargas masivas).
+
+---
+
+## 2. Administración de Evaluaciones (`adm.Evaluaciones`)
+
+El submódulo `adm.Evaluaciones` permite regular de forma jerárquica y centralizada los parámetros y directivas institucionales que rigen la creación de evaluaciones en UNITEPC.
+
+### 2.1 Modelo de Configuración Jerárquica y Fallback
+
+Las políticas no son necesariamente homogéneas a nivel nacional. Por ello, el sistema implementa un árbol de herencia/especificidad con tres niveles:
+
+```mermaid
+graph TD
+    N[Nivel 1: Configuración Nacional] -->|Fallback si no hay específica| S[Nivel 2: Configuración Sede]
+    S -->|Fallback si no hay específica| C[Nivel 3: Configuración Carrera]
+    
+    style N fill:#1e1b4b,stroke:#4f46e5,stroke-width:2px,color:#fff
+    style S fill:#0f172a,stroke:#3b82f6,stroke-width:2px,color:#fff
+    style C fill:#1c1917,stroke:#f59e0b,stroke-width:2px,color:#fff
+```
+
+Al solicitar los parámetros para un docente y grupo de una materia, el backend ejecuta la función estática `EvaluacionConfiguracion::obtenerConfiguracionEfectiva($sedeId, $carreraId)` que opera bajo las siguientes reglas:
+1.  **Busca Carrera:** Si existe una fila específica para la combinación `sede_id` y `carrera_id` con `nivel = 'carrera'`, retorna dicha configuración.
+2.  **Busca Sede:** Si no se encuentra, busca una fila para `sede_id` con `nivel = 'sede'` y `carrera_id = null`.
+3.  **Aplica Nacional (Raíz):** En caso de ausencia de las anteriores, hereda la fila genérica con `nivel = 'nacional'`, `sede_id = null`, `carrera_id = null`.
+
+### 2.2 Estructura JSON de la Configuración (`configuracion`)
+
+Los parámetros del examen se almacenan en un campo estructurado de tipo `JSON` en la tabla `evaluacion_configuraciones`:
+
+```json
+{
+  "duracion_minutos_defecto": 90,
+  "tolerancia_ingreso_minutos": 15,
+  "mezclar_preguntas": true,
+  "mezclar_opciones": true,
+  "preguntas_total": 10,
+  "distribucion_dificultad": {
+    "facil": 4,
+    "medio": 4,
+    "dificil": 2
+  },
+  "permite_cartilla_virtual": true,
+  "publicacion_patron_demora_horas": 3
+}
+```
+
+> [!IMPORTANT]
+> **Regla de Validación Balanceada:** 
+> Al guardar una configuración en `guardarConfiguracion` (vía `EvaluacionConfiguracionController`), el sistema valida de manera dura en el backend que la suma de reactivos de dificultad:
+> $$\text{facil} + \text{medio} + \text{dificil} = \text{preguntas\_total}$$
+> En caso de discrepancia, el servidor aborta la transacción y responde con un código `422 Unprocessable Entity` para evitar inconsistencias en el motor de selección aleatoria.
+
+### 2.3 Detalle de Endpoints de Configuración
+
+#### Obtener Configuración Efectiva
+*   **Método:** `GET`
+*   **Ruta:** `/api/evaluaciones/configuracion`
+*   **Query Params:**
+    *   `nivel`: `"nacional" | "sede" | "carrera"` (Nivel a consultar)
+    *   `sede_id`: (int, opcional) ID de la sede
+    *   `carrera_id`: (int, opcional) ID de la carrera
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "success": true,
+      "configuracion": {
+        "duracion_minutos_defecto": 90,
+        "tolerancia_ingreso_minutos": 15,
+        "mezclar_preguntas": true,
+        "mezclar_opciones": true,
+        "preguntas_total": 10,
+        "distribucion_dificultad": {
+          "facil": 4,
+          "medio": 4,
+          "dificil": 2
+        }
+      },
+      "nivel_hallado": "sede",
+      "es_propia": true
+    }
+    ```
+
+#### Guardar/Actualizar Configuración
+*   **Método:** `POST`
+*   **Ruta:** `/api/evaluaciones/configuracion`
+*   **Payload (JSON):**
+    ```json
+    {
+      "nivel": "sede",
+      "sede_id": 2,
+      "carrera_id": null,
+      "configuracion": {
+        "duracion_minutos_defecto": 90,
+        "tolerancia_ingreso_minutos": 10,
+        "mezclar_preguntas": true,
+        "mezclar_opciones": true,
+        "preguntas_total": 20,
+        "distribucion_dificultad": {
+          "facil": 8,
+          "medio": 8,
+          "dificil": 4
+        }
+      }
+    }
+    ```
+*   **Response (`200 OK`):**
+    ```json
+    {
+      "success": true,
+      "message": "Configuración de evaluaciones guardada correctamente."
+    }
+    ```
+
+---
+
+## 3. Rol de Exámenes (Calendarización de Evaluaciones)
+
+El **Rol de Exámenes** es el módulo centralizado para programar de forma estricta las fechas, bloques horarios, aulas y paralelos de todos los parciales. A diferencia de las planificaciones comunes, el Rol de Exámenes implementa validaciones cruzadas críticas para impedir choques horarios de docentes, alumnos e infraestructura.
+
+```mermaid
+flowchart TD
+    A[Nueva Programación de Examen] --> B{Validar Rango de Semanas}
+    B -->|Fuera de Rango| B1[Warning: Fuera de Semana Sugerida]
+    B -->|En Rango| C{Validar Día del Grupo}
+    
+    C -->|No coincide con día de clase| C1[Warning: Día sin Horario Teórico]
+    C -->|Coincide con clase| D{Validar Colisión en el Semestre}
+    
+    D -->|Ya hay examen ese día en el semestre| E[Error Bloqueante: Max 1 Examen al día por Semestre]
+    D -->|Libre| F[Examen Agendado Correctamente]
+```
+
+### 3.1 Motor de Reglas y Validación de Choques (`validateExamRules`)
+
+Antes de agendar un examen (vía creación manual o importación de plantilla general), el sistema ejecuta el motor interno `validateExamRules` en el backend. Este analiza tres restricciones:
+
+#### 1. Rango de Semanas Académicas Sugeridas
+El sistema parametriza los rangos de semanas del calendario semestral (20 semanas en total) de acuerdo al tipo de parcial:
+
+| Tipo de Parcial | Rango de Semanas Válidas | Estado de Restricción |
+|---|---|---|
+| **1er Parcial** | Semanas $7 \text{ a } 9$ | Alerta (Warning No-Bloqueante) |
+| **2do Parcial** | Semanas $14 \text{ a } 16$ | Alerta (Warning No-Bloqueante) |
+| **Final** | Semanas $18 \text{ a } 20$ | Alerta (Warning No-Bloqueante) |
+| **2da Instancia** | Semanas $21 \text{ a } 25$ | Alerta (Warning No-Bloqueante) |
+
+Si el examen se programa en una semana diferente, se inyecta en el objeto `conflictos` la advertencia `"Fuera de semana sugerida (Semanas X-Y)"`.
+
+#### 2. Validación de Día de Clase Efectivo
+Para evitar que se convoque a los estudiantes en horarios fuera de su rutina académica convencional, el sistema recupera los horarios registrados para el grupo teórico (`tipo = 'TEORICO'`).
+*   Extrae el día de la semana de la fecha propuesta (ej. `2026-05-20` es miércoles $\rightarrow$ día `3`).
+*   Normaliza los nombres de los días de la base de datos locales (ej: `"Miercoles"`, `"miércoles"`, `"MIE"` $\rightarrow$ `3`).
+*   **Acción:** Si el examen se agenda en un día en el cual el paralelo no tiene clases teóricas registradas, añade el warning: `"El examen es el [Día], pero el grupo no tiene horario teórico ese día."`.
+
+#### 3. Regla Estricta de Sobrecarga de Estudiantes (Colisiones de Semestre)
+Es una directiva de la Vicerrectoría Académica que **ningún estudiante de un mismo semestre y carrera rinda más de un examen parcial por día**.
+*   **Algoritmo de Detección:**
+    1.  Identifica la asignatura que se intenta calendarizar y recupera el semestre del plan al que pertenece (vía relación de pivote en `asignatura_carrera` para el `carrera_id` provisto).
+    2.  Busca registros existentes en `rol_examenes` para la misma `carrera_id`, la misma `fecha` y el mismo semestre curricular.
+    3.  **Acción Bloqueante:** Si encuentra colisiones, se detiene la inserción y retorna: `"Ya existe otro examen programado para el semestre [S] en la fecha [F]. (Restricción: Máx 1 examen por día para el mismo semestre)"`.
+
+### 3.2 Endpoints del Rol de Exámenes
+
+#### Listar Rol de Exámenes Filtrado
+*   **Método:** `GET`
+*   **Ruta:** `/api/rol-examenes`
+*   **Query Params:** `sede_id`, `carrera_id`, `gestion`, `semestre`, `tipo_examen`
+*   **Response (`200 OK`):**
+    ```json
+    [
+      {
+        "id": 84,
+        "materia_codigo": "MED-201",
+        "materia_nombre": "Fisiología Humana",
+        "tipo_examen": "2do Parcial",
+        "grupo": "G1",
+        "semana": 14,
+        "fecha": "2026-06-03",
+        "hora_inicio": "08:00:00",
+        "hora_fin": "09:30:00",
+        "conflictos": {
+          "horario": "El examen es el Miércoles, pero el grupo no tiene horario teórico ese día."
+        }
+      }
+    ]
+    ```
+
+#### Crear Examen Individual Manual
+*   **Método:** `POST`
+*   **Ruta:** `/api/rol-examenes`
+*   **Payload:**
+    ```json
+    {
+      "gestion": "I-2026",
+      "carrera_id": 3,
+      "sede_id": 1,
+      "materia_codigo": "MED-201",
+      "materia_nombre": "Fisiología Humana",
+      "tipo_examen": "2do Parcial",
+      "semana": 14,
+      "fecha": "2026-06-03",
+      "hora_inicio": "08:00",
+      "hora_fin": "09:30"
+    }
+    ```
+*   **Response de Inserción Fallida por Colisión (`422 Unprocessable`):**
+    ```json
+    {
+      "message": "Ya existe otro examen programado para el semestre 3 en la fecha 2026-06-03. (Restricción: Máx 1 examen por día para el mismo semestre)"
+    }
+    ```
+
+---
+
+## 4. Flujo de Trabajo en la Interfaz de Usuario
+
+### 4.1 Pantalla de Configuración General
+En `AdministracionEvaluacionPage.vue`, el administrador selecciona la sede y la carrera. El frontend invoca `/api/evaluaciones/configuracion` y pinta el formulario interactivo:
+1.  **Selectores en cascada:** Sedes nacionales y sus correspondientes carreras activas.
+2.  **Parámetros reactivos:** Si se modifica `preguntas_total`, un watcher de Vue valida dinámicamente y distribuye las cantidades sugiriendo pesos por defecto en dificultades (ej: $40\%$ fácil, $40\%$ medio, $20\%$ difícil).
+3.  **Herencia Visual:** Muestra un badge dinámico ("Heredado de Nacional" o "Configuración Local") basándose en el campo `nivel_hallado` provisto por el backend.
+
+### 4.2 Grilla de Programación de Exámenes
+En `RolExamenesPage.vue`, el Director de Carrera programa el rol semestral mediante una grilla temporal de planificación:
+*   Visualiza en celdas de colores los exámenes agendados.
+*   **Indicadores de Advertencia:** Las celdas con advertencias (warnings) de semanas o discordancia de horario de clase se marcan con bordes naranjas y un tooltip que despliega el JSON formateado de `conflictos`.
+*   **Bloqueos Visuales:** Si intenta arrastrar o guardar un examen en una fecha colisionada (mismo semestre, mismo día), la grilla rechaza el cambio y despliega un diálogo de rechazo Toast con el mensaje de error provisto por el motor Laravel.
+</script>
+
+  <script>
+    // 1. Mobile Menu Toggle Logic
+    const menuToggle = document.getElementById('menu-toggle');
+    const sidebar = document.getElementById('sidebar');
+    let isSidebarOpen = false;
+    
+    menuToggle.addEventListener('click', () => {
+      isSidebarOpen = !isSidebarOpen;
+      if (isSidebarOpen) {
+        sidebar.classList.remove('-translate-x-full');
+        document.getElementById('menu-icon').setAttribute('d', 'M6 18L18 6M6 6l12 12');
+      } else {
+        sidebar.classList.add('-translate-x-full');
+        document.getElementById('menu-icon').setAttribute('d', 'M4 6h16M4 12h16M4 18h16');
+      }
+    });
+
+    // 2. Parse Markdown
+    const rawMarkdown = document.getElementById('markdown-content').textContent;
+    let parsedHtml = marked.parse(rawMarkdown);
+    
+    // Rewrite Markdown links (.md -> .html)
+    // Links in docs folder are like 'docs/01_...' or '../docs/01_...' or '01_...'
+    parsedHtml = parsedHtml.replace(/href="([^"]+)\.md(#.*)?"/g, (match, path, hash) => {
+      const basename = path.split('/').pop();
+      const newPath = basename + '.html' + (hash || '');
+      return `href="${newPath}"`;
+    });
+    
+    // Also rewrite README.md links to README.html
+    parsedHtml = parsedHtml.replace(/href="README\.md"/g, 'href="README.html"');
+    
+    const contentEl = document.getElementById('content');
+    contentEl.innerHTML = parsedHtml;
+
+    // 3. Convert language-mermaid blocks to raw divs for Mermaid.js
+    document.querySelectorAll('pre code.language-mermaid').forEach((block) => {
+      const pre = block.parentElement;
+      const mermaidCode = block.textContent.trim();
+      const div = document.createElement('div');
+      div.className = 'mermaid';
+      div.textContent = mermaidCode;
+      pre.replaceWith(div);
+    });
+
+    // 4. Style Alert Callouts (GitHub style blockquotes)
+    document.querySelectorAll('blockquote').forEach((bq) => {
+      let html = bq.innerHTML;
+      const alerts = {
+        'NOTE': {
+          title: 'Nota',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>',
+          bg: 'bg-blue-950/40 border-blue-500 text-blue-200',
+          titleColor: 'text-blue-400'
+        },
+        'TIP': {
+          title: 'Consejo',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>',
+          bg: 'bg-emerald-950/40 border-emerald-500 text-emerald-200',
+          titleColor: 'text-emerald-400'
+        },
+        'IMPORTANT': {
+          title: 'Importante',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-violet-950/40 border-violet-500 text-violet-200',
+          titleColor: 'text-violet-400'
+        },
+        'WARNING': {
+          title: 'Advertencia',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-amber-950/40 border-amber-500 text-amber-200',
+          titleColor: 'text-amber-400'
+        },
+        'CAUTION': {
+          title: 'Precaución',
+          icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>',
+          bg: 'bg-rose-950/40 border-rose-500 text-rose-200',
+          titleColor: 'text-rose-400'
+        }
+      };
+      
+      for (const [key, val] of Object.entries(alerts)) {
+        const pattern = new RegExp(`\\[!\${key}\\]`, 'g');
+        if (pattern.test(html)) {
+          let cleaned = html.replace(pattern, '').replace(/^\s*<br\s*\/?>\s*/i, '');
+          const container = document.createElement('div');
+          container.className = `my-6 p-4 rounded-r-lg border-l-4 ${val.bg}`;
+          container.innerHTML = `
+            <div class="flex items-center gap-2 font-bold mb-2 ${val.titleColor}">
+              ${val.icon}
+              <span>${val.title}</span>
+            </div>
+            <div class="alert-content text-slate-300 font-normal">${cleaned}</div>
+          `;
+          bq.replaceWith(container);
+          break;
+        }
+      }
+    });
+
+    // 5. Initialize Mermaid
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      securityLevel: 'loose',
+      themeVariables: {
+        background: '#0f172a',
+        primaryColor: '#6366f1',
+        primaryTextColor: '#f8fafc',
+        lineColor: '#334155'
+      }
+    });
+  </script>
+</body>
+</html>
