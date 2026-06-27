@@ -246,7 +246,7 @@ La gestión de materias comunes se concentra en `src/pages/director/MateriasComu
 
 La vinculación de materias comunes es una **operación puramente online**. Debido al riesgo de colisión de datos, a la complejidad del algoritmo de scoring, y a la necesidad de crear backups de base de datos antes de proceder, el sistema aplica las siguientes políticas de red:
 
-> [!IMPORTANT]
+> **Importante:**
 > El botón "Vincular Materias" y la acción de desvinculación se inhabilitan visualmente en la interfaz si el sensor del dispositivo reporta pérdida de conectividad (`Capacitor Network.getStatus().connected === false`).
 
 *   **Lectura Caché:** El listado de grupos de materias comunes se almacena localmente en la caché de Pinia del director. Esto permite al director de carrera visualizar las materias equivalentes y revisar su composición incluso en áreas de nula señal.

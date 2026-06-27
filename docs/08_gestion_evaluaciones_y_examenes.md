@@ -63,7 +63,7 @@ Los parámetros del examen se almacenan en un campo estructurado de tipo `JSON` 
 }
 ```
 
-> [!IMPORTANT]
+> **Importante:**
 > **Regla de Validación Balanceada:** 
 > Al guardar una configuración en `guardarConfiguracion` (vía `EvaluacionConfiguracionController`), el sistema valida de manera dura en el backend que la suma de reactivos de dificultad:
 > $$\text{facil} + \text{medio} + \text{dificil} = \text{preguntas\_total}$$

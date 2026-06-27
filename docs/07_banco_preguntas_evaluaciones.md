@@ -278,7 +278,7 @@ El control del calendario de exámenes reside en `RolExamenController`. Al impor
 
 Dado que el banco de preguntas y las evaluaciones son transacciones críticas y sujetas a estrictas regulaciones académicas, se aplican los siguientes mecanismos de resiliencia desconectada:
 
-> [!NOTE]
+> **Nota:**
 > La creación de bancos, edición de reactivos y generación de variantes de exámenes se consideran **operaciones puramente Online**. Sin embargo, la consulta y preparación de evaluaciones cuentan con soporte offline.
 
 *   **Caché de Banco Local:** El almacén Pinia `preguntas.js` descarga y retiene en local la cartilla de preguntas validadas de la materia en uso. El docente puede revisar la redacción de los incisos o planificar sus clases sin necesidad de internet en el aula.
