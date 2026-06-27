@@ -312,11 +312,26 @@ class RolExamenController extends Controller
             }
         }
 
-        $examenes = $query->groupBy('rol_examenes.id')
-            ->orderBy('rol_examenes.semana')
-            ->orderBy('rol_examenes.fecha')
-            ->orderBy('rol_examenes.hora_inicio')
-            ->get();
+        // Esta query usa groupBy('rol_examenes.id') con múltiples JOINs
+        // (asignatura_carrera, grupos, docentes) y agregaciones MAX/COALESCE.
+        // MySQL en modo ONLY_FULL_GROUP_BY rechaza columnas no-agregadas
+        // aunque sean funcionalmente dependientes de la PK cuando hay JOINs.
+        // Workaround documentado: desactivar ONLY_FULL_GROUP_BY a nivel de
+        // sesión para esta query. El groupBy('rol_examenes.id') ya garantiza
+        // una fila por examen (PK única), y los MAX() resuelven los duplicados
+        // producidos por los joins de tablas many-to-many.
+        $sqlModeAnterior = DB::selectOne('SELECT @@SESSION.sql_mode AS mode')->mode ?? '';
+        DB::statement("SET SESSION sql_mode = REPLACE('{$sqlModeAnterior}', 'ONLY_FULL_GROUP_BY', '')");
+
+        try {
+            $examenes = $query->groupBy('rol_examenes.id')
+                ->orderBy('rol_examenes.semana')
+                ->orderBy('rol_examenes.fecha')
+                ->orderBy('rol_examenes.hora_inicio')
+                ->get();
+        } finally {
+            DB::statement("SET SESSION sql_mode = '{$sqlModeAnterior}'");
+        }
 
         $examenes->transform(function ($examen) {
             $statsBanco = $this->calcularStatsBancoRolExamen($examen);
@@ -762,6 +777,17 @@ class RolExamenController extends Controller
             Log::warning('Subida de RolExamen: No se pudo determinar sede_id, usando default 1.');
         }
 
+        // Flag de reemplazo (borrar y reinsertar vs. modo aditivo)
+        // Default false: modo aditivo, no se pierden registros previos
+        $replace = $request->boolean('replace', false);
+
+        // Defensa: un Director de Carrera NUNCA puede borrar el rol del sistema,
+        // aunque el cliente intente forzar replace=true
+        if ($user && $user->rol && $user->rol->codigo === 'DIRECTOR_CARRERA') {
+            $replace = false;
+            Log::info("Subida de RolExamen: replace forzado a false para DIRECTOR_CARRERA ({$user->username})");
+        }
+
         try {
             $file = $request->file('file');
             $spreadsheet = IOFactory::load($file->getPathname());
@@ -790,13 +816,14 @@ class RolExamenController extends Controller
             DB::beginTransaction();
 
             // Lógica de LIMPIEZA PREVIA (Cleanup)
-            // Borrar exámenes existentes para esta gestión, carrera y sede antes de importar
-            if ($sedeId) {
-                RolExamen::where('gestion', $gestion)
+            // Solo se ejecuta si el cliente pidió replace=true y el rol lo permite
+            $deletedBefore = 0;
+            if ($replace && $sedeId) {
+                $deletedBefore = RolExamen::where('gestion', $gestion)
                     ->where('carrera_id', $carreraId)
                     ->where('sede_id', $sedeId)
                     ->delete();
-                Log::info("Limpieza de RolExamen completada para carrera {$carreraId}, sede {$sedeId}, gestión {$gestion}");
+                Log::info("Limpieza de RolExamen completada: {$deletedBefore} registros eliminados para carrera {$carreraId}, sede {$sedeId}, gestión {$gestion}");
             }
 
             foreach ($rowsProcessed as $index => $row) {
@@ -940,6 +967,8 @@ class RolExamenController extends Controller
             return response()->json([
                 'message' => "Se procesaron {$imported} registros de exámenes",
                 'imported' => $imported,
+                'replaced' => $replace,
+                'deleted_before' => $deletedBefore,
                 'errors' => $errors,
                 'warnings' => $warnings,
             ]);
