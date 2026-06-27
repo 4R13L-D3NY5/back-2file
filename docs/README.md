@@ -8,6 +8,18 @@ Esta documentación ha sido elaborada bajo estándares rigurosos de arquitectura
 
 ---
 
+## Certificación de Entrega y Código Fuente (GitLab UNITEPC)
+
+> [!NOTE]
+> **Estado de la Entrega Oficial:**
+> El código fuente en su totalidad y en su última versión actualmente en producción ha sido subido e integrado con éxito al servidor **GitLab** de la universidad asignado por el **Departamento de Sistemas**, con fecha de hoy **27/06/2026**.
+> 
+> Repositorios oficiales de entrega:
+> - **Frontend (UI Quasar):** [sisa-documentacion-ui](https://git.unitepc.solutions/investigacion/sisa-documentacion-ui.git)
+> - **Backend (API Laravel):** [sisa-documentacion](https://git.unitepc.solutions/investigacion/sisa-documentacion.git)
+
+---
+
 ## 1. Entorno Tecnológico y Versiones Oficiales
 
 El ecosistema de SISA 2.0 está construido sobre las siguientes versiones de frameworks y entornos de ejecución validadas en producción:
