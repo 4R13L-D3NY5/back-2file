@@ -359,6 +359,24 @@ Es una directiva de la Vicerrectoría Académica que **ningún estudiante de un 
     }
     ```
 
+#### Importación Masiva del Rol de Exámenes (Upload Excel)
+
+*   **Método:** `POST`
+*   **Ruta:** `/api/rol-examenes/upload`
+*   **Headers:** `Content-Type: multipart/form-data`, `Authorization: Bearer <token>`
+*   **Payload:**
+    *   `file`: Archivo binario Excel con la plantilla de calendarización oficial.
+    *   `gestion`: (string, ej: `"2026-I"`) Gestión académica de destino.
+    *   `carrera_id`: (int) ID de la carrera asociada.
+    *   `sede_id`: (int) ID de la sede a importar.
+    *   `replace`: (int/boolean, opcional) Indica si se deben limpiar previamente las asignaciones existentes de la carrera, sede y gestión en el sistema.
+        *   `replace = 1`: El backend realiza un borrado transaccional preventivo de los registros coincidentes antes de insertar los nuevos registros del archivo.
+        *   `replace = 0`: Modo aditivo. Los exámenes del Excel se añaden sin tocar los preexistentes en la base de datos.
+*   **Seguridad Activa (Barrera de Rol):**
+    Si el usuario autenticado posee el rol de `DIRECTOR_CARRERA`, el backend fuerza defensivamente el flag a `replace = false` e ignora cualquier intento de borrado masivo previo, protegiendo al sistema contra pérdida accidental de datos.
+*   **MySQL `ONLY_FULL_GROUP_BY` Session Bypass:**
+    El listado general de exámenes (`index()`) integra datos mediante `JOIN` y agregaciones complejas que MySQL estricto rechaza por la directiva `ONLY_FULL_GROUP_BY`. Para resolver esto sin comprometer la seguridad global del motor de base de datos, el controlador ejecuta la query en un bloque donde desactiva temporalmente el flag a nivel de sesión y lo restaura en una cláusula `finally` al concluir la transacción.
+
 ---
 
 ## 4. Flujo de Trabajo en la Interfaz de Usuario
@@ -372,8 +390,77 @@ En `AdministracionEvaluacionPage.vue`, el administrador selecciona la sede y la 
 ### 4.2 Grilla de Programación de Exámenes
 En `RolExamenesPage.vue`, el Director de Carrera programa el rol semestral mediante una grilla temporal de planificación:
 *   Visualiza en celdas de colores los exámenes agendados.
+*   **Toggle de Reemplazo:** Habilita el control "Reemplazar exámenes existentes (borrar y reinsertar)". Dicho control se muestra bloqueado y deshabilitado de forma reactiva si el rol del usuario autenticado es `DIRECTOR_CARRERA`.
 *   **Indicadores de Advertencia:** Las celdas con advertencias (warnings) de semanas o discordancia de horario de clase se marcan con bordes naranjas y un tooltip que despliega el JSON formateado de `conflictos`.
 *   **Bloqueos Visuales:** Si intenta arrastrar o guardar un examen en una fecha colisionada (mismo semestre, mismo día), la grilla rechaza el cambio y despliega un diálogo de rechazo Toast con el mensaje de error provisto por el motor Laravel.
+
+---
+
+## 5. Exámenes de Segunda Instancia
+
+La **Segunda Instancia** se encuentra plenamente habilitada y soportada para su gestión administrativa, calendarización en lote y evaluaciones manuales/digitales en el sistema.
+
+*   **Calendarización Sugerida:** El motor de validaciones ubica las segundas instancias de forma idónea entre las semanas 21 a 25 del calendario académico.
+*   **Acceso en Interfaz:** En `GestionEvaluacionesPage.vue` y `EvaluacionesPage.vue`, los controles permiten la selección y descarga de patrones específicos para segundas instancias.
+
+---
+
+## 6. Exámenes Virtuales (Virtual Exams)
+
+SISA 2.0 introduce soporte para evaluaciones en modalidad virtual, permitiendo tomar exámenes en línea controlados mediante sesiones de tiempo real y sincronización remota con plataformas externas.
+
+### 6.1 Arquitectura del Módulo y Modelo de Datos
+
+Las pruebas en línea se orquestan mediante la habilitación de la modalidad `virtual` (campo `modalidad` en la tabla `rol_examenes`) y se gestionan a través de cuatro entidades principales en la base de datos:
+
+```mermaid
+erDiagram
+    ROL_EXAMENES ||--o{ VIRTUAL_EXAM_SESSIONS : programa
+    VIRTUAL_EXAM_SESSIONS ||--o{ VIRTUAL_EXAM_ROSTERS : asigna
+    VIRTUAL_EXAM_ROSTERS ||--o{ VIRTUAL_EXAM_ATTEMPTS : realiza
+    VIRTUAL_EXAM_ATTEMPTS ||--o{ VIRTUAL_EXAM_ANSWERS : contiene
+
+    VIRTUAL_EXAM_SESSIONS {
+        bigint id PK
+        bigint rol_examen_id FK "Vínculo al Rol de Examen"
+        string pin "PIN de acceso para estudiantes"
+        datetime start_time "Inicio de la sesión"
+        datetime end_time "Cierre de la sesión"
+        string status "ACTIVE / COMPLETED / PAUSED"
+    }
+
+    VIRTUAL_EXAM_ROSTERS {
+        bigint id PK
+        bigint virtual_exam_session_id FK
+        bigint student_id FK "Estudiante asignado"
+        boolean attendance "Asistencia confirmada"
+    }
+
+    VIRTUAL_EXAM_ATTEMPTS {
+        bigint id PK
+        bigint virtual_exam_roster_id FK
+        datetime started_at
+        datetime submitted_at
+        string status "IN_PROGRESS / SUBMITTED / TIMED_OUT"
+        decimal score "Calificación obtenida"
+    }
+
+    VIRTUAL_EXAM_ANSWERS {
+        bigint id PK
+        bigint virtual_exam_attempt_id FK
+        bigint banco_pregunta_id FK "Pregunta respondida"
+        json chosen_options "Opciones marcadas"
+        boolean is_correct "Resultado lexical"
+    }
+```
+
+### 6.2 Flujo de Ejecución del Examen
+
+1. **Creación de la Sesión:** Un administrador o responsable con permisos inicia la sesión virtual desde `VirtualExamsPage.vue` para un examen programado. El sistema genera un código PIN de acceso dinámico.
+2. **Acceso del Estudiante:** El estudiante ingresa a la página pública `PublicVirtualExamPage.vue`, introduce su credencial (CI) y el PIN de la sesión activa.
+3. **Control de Intento:** Al iniciar la prueba se crea un registro `VirtualExamAttempt` con estado `IN_PROGRESS` y un temporizador forzado en el cliente según los minutos configurados.
+4. **Registro de Respuestas:** Las opciones marcadas se guardan de forma interactiva (enviando peticiones PATCH a la base de datos). Al concluir el tiempo o presionar guardar, el intento cambia a `SUBMITTED` y se evalúa el resultado comparándolo con el patrón del examen.
+
 </script>
 
   <script>

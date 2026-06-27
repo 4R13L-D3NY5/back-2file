@@ -1,4 +1,5 @@
 # Documentación Técnica Oficial — SISA 2.0
+
 ## Sistema de Documentación y Planificación Académica (UNITEPC)
 
 Bienvenido a la suite de documentación técnica de **SISA 2.0**, la plataforma oficial de la Universidad Técnica Privada Cosmos (UNITEPC) para la gestión integrada, planificación y control académico de sedes nacionales, carreras, materias y evaluaciones.
@@ -59,6 +60,7 @@ flowchart TB
 
 La documentación se ha estructurado en archivos Markdown independientes por módulo funcional para facilitar su lectura y mantenimiento evolutivo. Puede hacer clic en cada módulo para acceder a su ficha técnica, especificaciones de endpoints, diagramas ERD Mermaid y flujos de trabajo detallados:
 
+<<<<<<< HEAD
 | Archivo de Documentación | Módulo Funcional | Enfoque Tecnológico Clave |
 |---|---|---|
 | **[01. Autenticacion, Seguridad y Perfil](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/01_autenticacion_seguridad.md)** | Control de acceso, perfiles multi-rol y auditoria. | Laravel Sanctum, Router Guards, interceptores Axios, token cache offline. |
@@ -71,10 +73,25 @@ La documentación se ha estructurado en archivos Markdown independientes por mó
 | **[08. Gestion de Evaluaciones y Rol de Examenes](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/08_gestion_evaluaciones_y_examenes.md)** | Directivas de examenes y calendario del Rol de Examenes con validaciones. | Formulario jerarquico, validacion balanceada de dificultades, colision de semestres. |
 | **[09. Sincronizacion y Motores de Comparacion](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/09_sincronizacion_y_patrones.md)** | Sincronizacion centralizada, comparadores y bancos sin logros. | Snapshots pre/post sync, resolver conflictos local vs API, verificador lexical PDF, restauracion granular. |
 | **[10. CodeGraph - Herramientas de Desarrollo](10_codegraph_dev_tools.md)** | Grafo de conocimiento AST para navegacion inteligente del codigo. | Busqueda estructural sub-milisegundo, trazado de flujos, analisis de impacto, indexacion tree-sitter. |
+=======
+| Archivo de Documentación | Módulo Funcional | Enfoque Tecnológico Clave |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| **[01. Autenticación, Seguridad y Perfil](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/01_autenticacion_seguridad.md)** | Control de acceso, perfiles multi-rol y auditoría. | Laravel Sanctum, Router Guards, interceptores Axios, token caché offline. |
+| **[02. Estructura Académica](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/02_estructura_academica.md)** | Sedes, carreras, campus y mallas curriculares. | Selectores dinámicos en cascada, control jerárquico de sedes y aulas. |
+| **[03. PAC y Bibliografía](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/03_pac_y_bibliografia.md)** | Programa Analítico Curricular, Unidades, Temas y Libros. | Importación estructurada Word/Excel, validación de contenidos mínimos. |
+| **[04. Materias Comunes](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/04_materias_comunes.md)** | Merge Inteligente de Carpetas Equivalentes. | Algoritmo de scoring, replicación no destructiva, flags anti-recursión. |
+| **[05. Planificación Semestral](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/05_planificacion_semestral.md)** | Cronogramas, sesiones y dosificación de contenidos. | Grid semanal interactivo, auto-salvado debounced, copia de cronogramas. |
+| **[06. Control de Clase y Seguimiento](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/06_control_clase_seguimiento.md)** | Registro de avance offline, firmas y evidencias. | Capacitor Network, Capacitor Filesystem, Blobs/FormData, geocercas. |
+| **[07. Banco de Preguntas y Evaluaciones](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/07_banco_preguntas_evaluaciones.md)** | Gestión de reactivos y generador aleatorio de exámenes. | Balanceador de dificultades, de-duplicación SHA, bloqueo de 3h contra filtraciones. |
+| **[08. Gestión de Evaluaciones y Rol de Exámenes](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/08_gestion_evaluaciones_y_examenes.md)** | Directivas de exámenes y calendario del Rol de Exámenes con validaciones. | Formulario jerárquico, validación balanceada de dificultades, colisión de semestres. |
+| **[09. Sincronización y Motores de Comparación](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/09_sincronizacion_y_patrones.md)** | Sincronización centralizada, comparadores y bancos sin logros. | Snapshots pre/post sync, resolver conflictos local vs API, verificador lexical PDF, restauración granular. |
+
+> > > > > > > bb0efec01818361c4ce30bc06a0acd28515648ff
 
 ### Anexos Técnicos de Referencia:
-*   **[Diagrama ERD Completo de Base de Datos](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/diagrama_er_completo.md):** Mapa general de todas las tablas, llaves primarias, foráneas y relaciones del sistema.
-*   **[Especificación de Endpoints del API](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/endpoints.md):** Referencia rápida de todas las rutas configuradas en `routes/api.php` con ejemplos de payload y cabeceras.
+
+- **[Diagrama ERD Completo de Base de Datos](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/diagrama_er_completo.md):** Mapa general de todas las tablas, llaves primarias, foráneas y relaciones del sistema.
+- **[Especificación de Endpoints del API](file:///c:/PROYECTOS/SISTEMA%20ACADEMICO/back-2file/documentacion_tecnica/endpoints.md):** Referencia rápida de todas las rutas configuradas en `routes/api.php` con ejemplos de payload y cabeceras.
 
 ---
 
@@ -83,6 +100,7 @@ La documentación se ha estructurado en archivos Markdown independientes por mó
 Para poner en marcha el entorno de desarrollo local de SISA 2.0, siga los siguientes pasos:
 
 ### 4.1 Preparación del Backend (Laravel 12 API)
+
 1.  **Clonar el repositorio** y posicionarse dentro de la carpeta `back-2file/`.
 2.  Instalar dependencias de Composer:
     ```bash
@@ -106,6 +124,7 @@ Para poner en marcha el entorno de desarrollo local de SISA 2.0, siga los siguie
     ```
 
 ### 4.2 Preparación del Frontend (Quasar SPA)
+
 1.  Posicionarse dentro de la carpeta `Academico/`.
 2.  Instalar dependencias de Node.js:
     ```bash
@@ -116,7 +135,7 @@ Para poner en marcha el entorno de desarrollo local de SISA 2.0, siga los siguie
     ```bash
     quasar dev
     ```
-    *O alternativamente vía npm:*
+    _O alternativamente vía npm:_
     ```bash
     npm run dev
     ```
